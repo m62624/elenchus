@@ -1,0 +1,21 @@
+[package]
+name = "elenchus-solver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Forward-pass reasoning interpreter for elenchus: 3-valued Kleene evaluation of the Impossible/CNF clause IR into CONFLICT / WARNING / CONSISTENT results."
+readme = "README.md"
+keywords = ["logic", "reasoning", "verification", "kleene", "no-std"]
+categories = ["mathematics", "no-std", "development-tools"]
+
+[dependencies]
+elenchus-compiler = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[features]
+default = ["std"]
+# Propagates std to the compiler (enables FileResolver-based verification).
+std = ["elenchus-compiler/std"]

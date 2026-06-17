@@ -1,0 +1,9 @@
+---
+source: crates/elenchus-solver/tests/report.rs
+expression: "format!(\"{r}\")"
+---
+RESULT: CONFLICT
+  CONFLICT  fly_xor_swim (EXCLUSIVE)  [conflict.vrf:6]
+      Animal.B has flying
+      Animal.B has swimming
+SUMMARY: 1 conflicts, 0 warnings, 0 derived
