@@ -879,6 +879,32 @@ mod tests {
     }
 
     #[test]
+    fn two_libs_same_name_into_one_consumer() {
+        // A.vrf and B.vrf each define their OWN `x` (different bodies); C imports
+        // both. Both `x` coexist (per-source labels). Meanwhile the atom they
+        // share (S has a) unifies into ONE id — names are scoped, atoms are not.
+        let mut r = MemoryResolver::new();
+        r.add("A.vrf", "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has b\n");
+        r.add("B.vrf", "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has c\n");
+        r.add("C.vrf", "IMPORT \"A.vrf\"\nIMPORT \"B.vrf\"\n");
+        let c = compile("C.vrf", &r).unwrap();
+
+        // both `x` axioms contributed a clause, kept apart by source
+        assert_eq!(c.clauses.len(), 2);
+        assert!(c.clauses.iter().any(|cl| cl.origin.source == "A.vrf"
+            && cl.origin.axiom.as_deref() == Some("x")));
+        assert!(c.clauses.iter().any(|cl| cl.origin.source == "B.vrf"
+            && cl.origin.axiom.as_deref() == Some("x")));
+
+        // the shared atom `S has a` is a single interned id used by both clauses
+        let s_a = id(&c, &key("S", "has", Some("a")));
+        assert!(
+            c.clauses.iter().filter(|cl| cl.lits.iter().any(|l| l.atom == s_a)).count() == 2,
+            "both clauses must reference the same unified `S has a` atom"
+        );
+    }
+
+    #[test]
     fn redefinition_within_one_source_still_errors() {
         // But reusing a name with a different body *inside one source* is a mistake.
         let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
