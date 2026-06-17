@@ -148,6 +148,10 @@ pub enum CompileError {
     Parse { file: String, message: String },
     #[error("'{name}' redefined with a different body")]
     AxiomRedefinition { name: String },
+    #[error("import not found: {0}")]
+    ImportNotFound(String),
+    #[error("circular import: {0}")]
+    CircularImport(String),
 }
 
 // --- raw (key-based) intermediate, before interning ------------------------
@@ -209,6 +213,44 @@ impl Compiler {
         for stmt in &program.statements {
             self.add_statement(source, stmt)?;
         }
+        Ok(())
+    }
+
+    /// Resolve and flat-merge `path` and its transitive imports.
+    /// `visited` holds content hashes already merged (dedup); `stack` holds the
+    /// hashes on the current path (cycle detection).
+    fn load_recursive<R: Resolver>(
+        &mut self,
+        path: &str,
+        resolver: &R,
+        visited: &mut BTreeSet<String>,
+        stack: &mut Vec<String>,
+    ) -> Result<(), CompileError> {
+        let content = resolver.load(path)?;
+        let hash = hash_hex(content.as_bytes());
+        if visited.contains(&hash) {
+            return Ok(()); // already merged — idempotent
+        }
+        if stack.contains(&hash) {
+            return Err(CompileError::CircularImport(path.to_string()));
+        }
+        stack.push(hash.clone());
+
+        let program = elenchus_parser::parse(&content).map_err(|e| CompileError::Parse {
+            file: path.to_string(),
+            message: e.message,
+        })?;
+        for stmt in &program.statements {
+            if let Statement::Import(p) = stmt {
+                let resolved = resolver.resolve(path, p.data);
+                self.load_recursive(&resolved, resolver, visited, stack)?;
+            } else {
+                self.add_statement(path, stmt)?;
+            }
+        }
+
+        stack.pop();
+        visited.insert(hash);
         Ok(())
     }
 
@@ -457,10 +499,100 @@ impl Compiler {
     }
 }
 
-/// Convenience: compile a single source into the IR.
+/// Convenience: compile a single source into the IR. `IMPORT`s are recorded as
+/// pending, not resolved (use [`compile`] with a [`Resolver`] to resolve them).
 pub fn compile_source(source: &str, src: &str) -> Result<Compiled, CompileError> {
     let mut c = Compiler::new();
     c.add_source(source, src)?;
+    Ok(c.finalize())
+}
+
+// --- import resolution (source-agnostic) -----------------------------------
+
+/// Resolves `IMPORT "path"` to source text. The engine is source-agnostic: it
+/// consumes strings, so a file is merely one backing store. Mirrors
+/// vsm-grammar's `SourceResolver`.
+pub trait Resolver {
+    /// Load the raw source text for a resolved path.
+    fn load(&self, path: &str) -> Result<String, CompileError>;
+
+    /// Normalize `relative` against the importing source `base`.
+    /// Default: paths are absolute names, returned unchanged.
+    fn resolve(&self, _base: &str, relative: &str) -> String {
+        relative.to_string()
+    }
+}
+
+/// An in-memory resolver: serves sources from a name → content map. Pure
+/// `no_std`. Mirrors vsm-grammar's `MemoryResolver`.
+#[derive(Default)]
+pub struct MemoryResolver {
+    sources: BTreeMap<String, String>,
+}
+
+impl MemoryResolver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, path: &str, content: &str) -> &mut Self {
+        self.sources.insert(path.to_string(), content.to_string());
+        self
+    }
+}
+
+impl Resolver for MemoryResolver {
+    fn load(&self, path: &str) -> Result<String, CompileError> {
+        self.sources
+            .get(path)
+            .cloned()
+            .ok_or_else(|| CompileError::ImportNotFound(path.to_string()))
+    }
+}
+
+/// A filesystem-backed resolver. Mirrors vsm-grammar's `FileResolver`:
+/// relative imports resolve against the importing file's directory, with manual
+/// `..` normalization (no canonicalization, to keep a virtual layout).
+#[cfg(feature = "std")]
+pub struct FileResolver;
+
+#[cfg(feature = "std")]
+impl Resolver for FileResolver {
+    fn load(&self, path: &str) -> Result<String, CompileError> {
+        std::fs::read_to_string(path)
+            .map_err(|e| CompileError::ImportNotFound(alloc::format!("{}: {}", path, e)))
+    }
+
+    fn resolve(&self, base: &str, relative: &str) -> String {
+        use std::path::{Component, Path, PathBuf};
+        let parent = Path::new(base).parent().unwrap_or_else(|| Path::new("."));
+        let joined = parent.join(relative);
+        let mut out = PathBuf::new();
+        for component in joined.components() {
+            match component {
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::CurDir => {}
+                c => out.push(c),
+            }
+        }
+        out.to_string_lossy().into_owned()
+    }
+}
+
+/// Compile a root source and all its transitive `IMPORT`s into one IR.
+///
+/// Imports are flat-merged into a single shared atom universe (atoms unify by
+/// identity across files). Sources are content-addressed (sha256): a source
+/// already merged is skipped (dedup), and an import cycle is an error. Names of
+/// axioms/rules are global after merge — a redefinition with a different body
+/// is an error, an identical one is idempotent.
+pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
+    let mut c = Compiler::new();
+    let mut visited = BTreeSet::new();
+    let mut stack = Vec::new();
+    c.load_recursive(root, resolver, &mut visited, &mut stack)?;
     Ok(c.finalize())
 }
 
@@ -666,6 +798,90 @@ mod tests {
     fn import_is_recorded_pending() {
         let c = compile_source("<t>", "IMPORT \"physics.vrf\"\nFACT x a\n").unwrap();
         assert_eq!(c.pending_imports, vec!["physics.vrf".to_string()]);
+    }
+
+    #[test]
+    fn import_flat_merges_and_atoms_unify() {
+        // The library constrains `Engine.X has fuel`; the main file asserts it.
+        // After merge the atom must be ONE shared id (unification across files).
+        let mut r = MemoryResolver::new();
+        r.add(
+            "lib.vrf",
+            "AXIOM needs_fuel:\n    WHEN Engine.X has engine\n    THEN Engine.X has fuel\n",
+        );
+        r.add(
+            "main.vrf",
+            "IMPORT \"lib.vrf\"\nFACT Engine.X has engine\nFACT Engine.X has fuel\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert!(c.pending_imports.is_empty());
+        assert_eq!(c.clauses.len(), 1); // the imported axiom
+        assert_eq!(c.facts.len(), 2);
+
+        // `Engine.X has fuel` from the FACT and from the imported axiom share an id.
+        let fuel = key("Engine.X", "has", Some("fuel"));
+        let fuel_id = id(&c, &fuel);
+        assert!(c.facts.iter().any(|f| f.atom == fuel_id));
+        assert!(c.clauses[0].lits.iter().any(|l| l.atom == fuel_id));
+    }
+
+    #[test]
+    fn diamond_import_is_deduped() {
+        // main → a, b ; a → base ; b → base. base merged once.
+        let mut r = MemoryResolver::new();
+        r.add("base.vrf", "AXIOM b:\n    EXCLUSIVE\n        x a\n        x b\n");
+        r.add("a.vrf", "IMPORT \"base.vrf\"\n");
+        r.add("c.vrf", "IMPORT \"base.vrf\"\n");
+        r.add("main.vrf", "IMPORT \"a.vrf\"\nIMPORT \"c.vrf\"\n");
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.clauses.len(), 1); // base's single clause, not two
+    }
+
+    #[test]
+    fn circular_import_errors() {
+        let mut r = MemoryResolver::new();
+        r.add("a.vrf", "IMPORT \"b.vrf\"\n");
+        r.add("b.vrf", "IMPORT \"a.vrf\"\n");
+        let err = compile("a.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::CircularImport(_)));
+    }
+
+    #[test]
+    fn missing_import_errors() {
+        let mut r = MemoryResolver::new();
+        r.add("main.vrf", "IMPORT \"ghost.vrf\"\n");
+        let err = compile("main.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::ImportNotFound(_)));
+    }
+
+    #[test]
+    fn redefinition_across_imports_errors() {
+        let mut r = MemoryResolver::new();
+        r.add("lib.vrf", "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\n");
+        r.add(
+            "main.vrf",
+            "IMPORT \"lib.vrf\"\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n",
+        );
+        let err = compile("main.vrf", &r).unwrap_err();
+        assert_eq!(err, CompileError::AxiomRedefinition { name: "e".to_string() });
+    }
+
+    #[test]
+    fn import_demo_examples_resolve() {
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", include_str!("../../../docs/examples/physics.vrf"));
+        r.add(
+            "import-demo.vrf",
+            include_str!("../../../docs/examples/import-demo.vrf"),
+        );
+        let c = compile("import-demo.vrf", &r).unwrap();
+        assert!(c.pending_imports.is_empty());
+        // physics.vrf: one_path (EXCLUSIVE, 1 clause) + speed_order (impl, 1 clause)
+        assert_eq!(c.clauses.len(), 2);
+        // over_200 / over_100 unify between the facts and the imported axiom.
+        let over_100 = id(&c, &key("Motor", "over_100", None));
+        assert!(c.facts.iter().any(|f| f.atom == over_100));
+        assert!(c.clauses.iter().any(|cl| cl.lits.iter().any(|l| l.atom == over_100)));
     }
 
     #[test]
