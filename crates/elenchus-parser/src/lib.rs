@@ -529,9 +529,14 @@ mod tests {
         parse(src).expect("should parse")
     }
 
+    /// `(subject, predicate, object?)` of one atom, borrowed from the source.
+    type AtomShape<'a> = (&'a str, &'a str, Option<&'a str>);
+    /// A list axiom flattened to `(operator, its atoms)`.
+    type ListShape<'a> = (ListOp, Vec<AtomShape<'a>>);
+
     /// Atom data flattened to owned tuples — span-independent, for structural
     /// comparison (spans differ by offset, which is exactly what "cosmetic" means).
-    fn atom_shapes<'a>(p: &Program<'a>) -> Vec<(ListOp, Vec<(&'a str, &'a str, Option<&'a str>)>)> {
+    fn atom_shapes<'a>(p: &Program<'a>) -> Vec<ListShape<'a>> {
         p.statements
             .iter()
             .filter_map(|s| match s {
@@ -741,5 +746,93 @@ mod tests {
         assert!(shown.contains("line 2"));
         assert!(shown.contains("!garbage here"));
         assert!(shown.contains("^--- here"));
+    }
+
+    #[test]
+    fn crlf_line_endings() {
+        let p = prog("FACT a b\r\nCHECK a\r\n");
+        assert_eq!(p.statements.len(), 2);
+    }
+
+    #[test]
+    fn tabs_as_indentation() {
+        let p = prog("AXIOM e:\n\tEXCLUSIVE\n\t\tx a\n\t\tx b\n");
+        assert!(matches!(
+            p.statements[0],
+            Statement::Axiom {
+                body: Body::List { op: ListOp::Exclusive, .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_all_list_ops() {
+        for (kw, want) in [
+            ("EXCLUSIVE", ListOp::Exclusive),
+            ("FORBIDS", ListOp::Forbids),
+            ("ONEOF", ListOp::OneOf),
+            ("ATLEAST", ListOp::AtLeast),
+        ] {
+            let src = alloc::format!("AXIOM a:\n    {kw}\n        x a\n        x b\n");
+            match &prog(&src).statements[0] {
+                Statement::Axiom { body: Body::List { op, .. }, .. } => assert_eq!(*op, want),
+                other => panic!("{kw}: unexpected {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn check_bidirectional_without_subject() {
+        match &prog("CHECK BIDIRECTIONAL\n").statements[0] {
+            Statement::Check { subject, bidirectional } => {
+                assert!(subject.is_none());
+                assert!(bidirectional);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_and_comment_only_input_yield_no_statements() {
+        assert_eq!(prog("").statements.len(), 0);
+        assert_eq!(prog("// just a comment\n\n   \n").statements.len(), 0);
+    }
+
+    #[test]
+    fn negation_with_object() {
+        match &prog("NOT Creature.A has wing\n").statements[0] {
+            Statement::Negation(a) => {
+                assert_eq!(a.data.subject, "Creature.A");
+                assert_eq!(a.data.object, Some("wing"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn negated_consequent_then_not() {
+        let src = "AXIOM a:\n    WHEN x on\n    THEN NOT x off\n";
+        match &prog(src).statements[0] {
+            Statement::Axiom { body: Body::Impl { consequent, .. }, .. } => {
+                assert!(consequent[0].data.negated);
+                assert_eq!(consequent[0].data.atom.predicate, "off");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multiple_imports_then_facts() {
+        let p = prog("IMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nFACT x y\n");
+        assert!(matches!(p.statements[0], Statement::Import(_)));
+        assert!(matches!(p.statements[1], Statement::Import(_)));
+        assert!(matches!(p.statements[2], Statement::Fact(_)));
+    }
+
+    #[test]
+    fn trailing_comment_without_final_newline() {
+        let p = prog("FACT a b\n// trailing, no newline");
+        assert_eq!(p.statements.len(), 1);
     }
 }

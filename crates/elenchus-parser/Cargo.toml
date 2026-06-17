@@ -3,7 +3,11 @@ name = "elenchus-parser"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 description = "English-like DSL parser for the elenchus reasoning engine (facts, axioms, rules, checks)."
+readme = "README.md"
+keywords = ["dsl", "parser", "logic", "reasoning", "no-std"]
+categories = ["parser-implementations", "no-std"]
 
 [dependencies]
 nom = { workspace = true }

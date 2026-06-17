@@ -895,4 +895,63 @@ mod tests {
         assert_eq!(c.clauses.len(), 4);
         assert_eq!(c.atoms.len(), 7);
     }
+
+    #[test]
+    fn forbids_unfolds_pairwise() {
+        let src = "AXIOM f:\n    FORBIDS\n        x a\n        x b\n        x c\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.clauses.len(), 3); // C(3,2), like EXCLUSIVE
+        assert!(c.clauses.iter().all(|cl| cl.lits.len() == 2 && cl.lits.iter().all(|l| !l.negated)));
+    }
+
+    #[test]
+    fn rule_with_multiple_consequents() {
+        let src = "RULE r:\n    WHEN x a\n    THEN x b\n    AND  x c\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.rules.len(), 1);
+        assert_eq!(c.rules[0].consequent.len(), 2);
+    }
+
+    #[test]
+    fn negated_antecedent_literal_keeps_polarity() {
+        // WHEN NOT x a THEN x b  ==  Impossible([NOT x a, NOT x b])
+        let src = "AXIOM a:\n    WHEN NOT x a\n    THEN x b\n";
+        let c = compile_source("<t>", src).unwrap();
+        let xa = id(&c, &key("x", "a", None));
+        assert!(c.clauses[0].lits.contains(&Lit { atom: xa, negated: true }));
+    }
+
+    #[test]
+    fn rule_keeps_consequent_negation() {
+        let src = "RULE r:\n    WHEN x a\n    THEN NOT x b\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert!(c.rules[0].consequent[0].negated);
+    }
+
+    #[test]
+    fn compilation_is_deterministic() {
+        let src = "AXIOM e:\n    EXCLUSIVE\n        z z\n        a a\n        m m\nFACT q q\n";
+        assert_eq!(compile_source("<t>", src).unwrap(), compile_source("<t>", src).unwrap());
+    }
+
+    #[test]
+    fn empty_program_compiles_to_empty_ir() {
+        let c = compile_source("<t>", "// nothing here\n").unwrap();
+        assert!(c.atoms.is_empty() && c.clauses.is_empty() && c.facts.is_empty());
+    }
+
+    #[test]
+    fn same_clause_from_two_named_axioms_is_deduped() {
+        // Different names, identical logical content → one clause, no redefinition.
+        let src = "AXIOM e1:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e2:\n    EXCLUSIVE\n        x a\n        x b\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.clauses.len(), 1);
+    }
+
+    #[test]
+    fn object_distinguishes_atom_identity() {
+        // `x p a` and `x p b` differ only by object → two distinct atoms.
+        let c = compile_source("<t>", "FACT x p a\nFACT x p b\n").unwrap();
+        assert_eq!(c.atoms.len(), 2);
+    }
 }
