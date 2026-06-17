@@ -7,15 +7,13 @@ description = "Compiles parsed elenchus DSL into a canonical Impossible/CNF clau
 
 [dependencies]
 elenchus-parser = { workspace = true }
-nom = { workspace = true }
-nom_locate = { workspace = true }
 thiserror = { workspace = true }
-sha2 = { workspace = true, optional = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 
 [features]
 default = ["std"]
+# std unlocks the filesystem-backed import resolver (FileResolver).
 std = []
-hashing = ["dep:sha2"]

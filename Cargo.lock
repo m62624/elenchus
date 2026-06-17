@@ -81,8 +81,6 @@ version = "0.1.0"
 dependencies = [
  "elenchus-parser",
  "insta",
- "nom",
- "nom_locate",
  "sha2",
  "thiserror",
 ]
