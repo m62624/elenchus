@@ -4,6 +4,678 @@
 //! for line/column tracking, and a human-friendly `^--- here` error display.
 //! Syntax is line/keyword-oriented (not S-expressions) so small models cannot
 //! trip on parentheses or indentation.
+//!
+//! Grammar (see docs/SPEC.md, "Grammar (EBNF)"):
+//! - statements are newline-terminated; indentation is cosmetic, not significant;
+//! - keywords are ALWAYS CAPS, identifiers are content (case-sensitive, verbatim);
+//! - block boundaries (AXIOM/RULE bodies) are found by keywords, never by indent.
 #![no_std]
 
 extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+
+use nom::{
+    IResult, Parser,
+    branch::alt,
+    bytes::complete::{tag, take_while},
+    character::complete::{char, line_ending, satisfy, space0, space1},
+    combinator::{eof, opt, recognize, value},
+    multi::many0,
+    sequence::{delimited, preceded, terminated},
+};
+use nom_locate::LocatedSpan;
+
+/// Source code fragment with line and column tracking.
+pub type Span<'a> = LocatedSpan<&'a str>;
+
+/// Container for data associated with its source location.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Located<'a, T> {
+    /// The actual parsed data.
+    pub data: T,
+    /// The location in the source text (start of the construct).
+    pub span: Span<'a>,
+}
+
+// --- AST -------------------------------------------------------------------
+
+/// An atom is the triple `(subject, predicate, object?)` — the unit of identity.
+/// `Creature.A has flying` and `Creature.A has swimming` are DIFFERENT atoms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Atom<'a> {
+    pub subject: &'a str,
+    pub predicate: &'a str,
+    pub object: Option<&'a str>,
+}
+
+/// A literal is an atom, optionally negated (`NOT ...`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Literal<'a> {
+    pub negated: bool,
+    pub atom: Atom<'a>,
+}
+
+/// List constraint operators (body of a list-style `AXIOM`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListOp {
+    Exclusive,
+    Forbids,
+    OneOf,
+    AtLeast,
+}
+
+/// The body of an `AXIOM` or `RULE`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Body<'a> {
+    /// `EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST` over >= 2 atoms.
+    List {
+        op: ListOp,
+        atoms: Vec<Located<'a, Atom<'a>>>,
+    },
+    /// `WHEN ... [AND ...] THEN ... [AND ...]` — antecedent + consequent literals.
+    Impl {
+        antecedent: Vec<Located<'a, Literal<'a>>>,
+        consequent: Vec<Located<'a, Literal<'a>>>,
+    },
+}
+
+/// A top-level statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Statement<'a> {
+    /// `IMPORT "path"` — reuse another source (resolved by the compiler).
+    Import(Located<'a, &'a str>),
+    /// `FACT <atom>` — a TRUE assertion.
+    Fact(Located<'a, Atom<'a>>),
+    /// `NOT <atom>` — a FALSE assertion.
+    Negation(Located<'a, Atom<'a>>),
+    /// `AXIOM <name>: ...` — a checked first principle.
+    Axiom {
+        name: Located<'a, &'a str>,
+        body: Body<'a>,
+    },
+    /// `RULE <name>: ...` — a fact-producing inference rule.
+    Rule {
+        name: Located<'a, &'a str>,
+        body: Body<'a>,
+    },
+    /// `CHECK [subject] [BIDIRECTIONAL]` — a query.
+    Check {
+        subject: Option<Located<'a, &'a str>>,
+        bidirectional: bool,
+    },
+}
+
+/// A parsed program: a flat sequence of statements.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program<'a> {
+    pub statements: Vec<Statement<'a>>,
+}
+
+/// Reserved words — always CAPS, in full. An identifier may not equal any of these.
+pub const RESERVED: &[&str] = &[
+    "IMPORT",
+    "FACT",
+    "NOT",
+    "AXIOM",
+    "RULE",
+    "CHECK",
+    "BIDIRECTIONAL",
+    "WHEN",
+    "AND",
+    "THEN",
+    "EXCLUSIVE",
+    "FORBIDS",
+    "ONEOF",
+    "ATLEAST",
+];
+
+/// Whether `word` is a reserved keyword.
+pub fn is_reserved(word: &str) -> bool {
+    RESERVED.contains(&word)
+}
+
+// --- Error -----------------------------------------------------------------
+
+/// A friendly error structure that can be displayed to the user.
+#[derive(Debug)]
+pub struct ParseError<'a> {
+    /// The original full input string (needed for context).
+    pub source: &'a str,
+    /// The span where the error occurred.
+    pub span: Span<'a>,
+    /// A description of the error.
+    pub message: String,
+}
+
+impl<'a> fmt::Display for ParseError<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let line = self.span.location_line() as usize;
+        let column = self.span.get_column();
+        let full_line = self.source.lines().nth(line.saturating_sub(1)).unwrap_or("");
+        let indent = " ".repeat(if column > 0 { column - 1 } else { 0 });
+
+        write!(
+            f,
+            "Syntax Error at line {}, col {}: {}\n  | {}\n  | {}^--- here",
+            line, column, self.message, full_line, indent
+        )
+    }
+}
+
+// --- Parser primitives -----------------------------------------------------
+
+fn perr<T>(input: Span) -> IResult<Span, T> {
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Verify,
+    )))
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '.'
+}
+
+/// A bare identifier (does not reject reserved words).
+fn raw_identifier(input: Span) -> IResult<Span, Span> {
+    recognize((satisfy(|c| c.is_ascii_alphabetic()), take_while(is_ident_char))).parse(input)
+}
+
+/// An identifier that is not a reserved keyword.
+fn identifier(input: Span<'_>) -> IResult<Span<'_>, Located<'_, &str>> {
+    let start = input;
+    let (rest, sp) = raw_identifier(input)?;
+    if is_reserved(sp.fragment()) {
+        return perr(start);
+    }
+    Ok((
+        rest,
+        Located {
+            data: *sp.fragment(),
+            span: start,
+        },
+    ))
+}
+
+/// A line comment `// ... ` up to (but not including) the line ending.
+fn comment(input: Span) -> IResult<Span, Span> {
+    recognize((tag("//"), take_while(|c| c != '\n' && c != '\r'))).parse(input)
+}
+
+/// End of a statement line: trailing spaces, an optional trailing comment,
+/// then a line ending or EOF.
+fn eol(input: Span) -> IResult<Span, ()> {
+    value(
+        (),
+        (space0, opt(comment), alt((line_ending, eof))),
+    )
+    .parse(input)
+}
+
+/// A blank line or a full-line comment (must consume a line ending to progress).
+fn noise_line(input: Span) -> IResult<Span, ()> {
+    value((), (space0, opt(comment), line_ending)).parse(input)
+}
+
+/// Skip any number of blank / comment lines between statements.
+fn skip_noise(input: Span) -> IResult<Span, ()> {
+    value((), many0(noise_line)).parse(input)
+}
+
+// --- Atoms & literals ------------------------------------------------------
+
+fn atom(input: Span) -> IResult<Span, Located<Atom>> {
+    let start = input;
+    let (input, subject) = identifier(input)?;
+    let (input, _) = space1(input)?;
+    let (input, predicate) = identifier(input)?;
+    let (input, object) = opt(preceded(space1, identifier)).parse(input)?;
+    Ok((
+        input,
+        Located {
+            data: Atom {
+                subject: subject.data,
+                predicate: predicate.data,
+                object: object.map(|o| o.data),
+            },
+            span: start,
+        },
+    ))
+}
+
+fn literal(input: Span) -> IResult<Span, Located<Literal>> {
+    let start = input;
+    let (input, neg) = opt(terminated(tag("NOT"), space1)).parse(input)?;
+    let (input, a) = atom(input)?;
+    Ok((
+        input,
+        Located {
+            data: Literal {
+                negated: neg.is_some(),
+                atom: a.data,
+            },
+            span: start,
+        },
+    ))
+}
+
+/// An atom on its own (possibly indented) line: used inside list bodies.
+fn atom_line(input: Span) -> IResult<Span, Located<Atom>> {
+    let (input, _) = space0(input)?;
+    let (input, a) = atom(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, a))
+}
+
+// --- Bodies ----------------------------------------------------------------
+
+fn list_op(input: Span) -> IResult<Span, ListOp> {
+    alt((
+        value(ListOp::Exclusive, tag("EXCLUSIVE")),
+        value(ListOp::Forbids, tag("FORBIDS")),
+        value(ListOp::OneOf, tag("ONEOF")),
+        value(ListOp::AtLeast, tag("ATLEAST")),
+    ))
+    .parse(input)
+}
+
+fn list_body(input: Span) -> IResult<Span, Body> {
+    let (input, _) = space0(input)?;
+    let (input, op) = list_op(input)?;
+    let (input, _) = eol(input)?;
+    let (input, first) = atom_line(input)?;
+    let (input, second) = atom_line(input)?;
+    let (input, rest) = many0(atom_line).parse(input)?;
+
+    let mut atoms = vec![first, second];
+    atoms.extend(rest);
+    Ok((input, Body::List { op, atoms }))
+}
+
+fn and_line(input: Span) -> IResult<Span, Located<Literal>> {
+    let (input, _) = space0(input)?;
+    let (input, _) = (tag("AND"), space1).parse(input)?;
+    let (input, lit) = literal(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, lit))
+}
+
+fn impl_body(input: Span) -> IResult<Span, Body> {
+    // WHEN <literal>
+    let (input, _) = space0(input)?;
+    let (input, _) = (tag("WHEN"), space1).parse(input)?;
+    let (input, when) = literal(input)?;
+    let (input, _) = eol(input)?;
+    // {AND <literal>} — antecedent conditions
+    let (input, ante_rest) = many0(and_line).parse(input)?;
+    // THEN <literal>
+    let (input, _) = space0(input)?;
+    let (input, _) = (tag("THEN"), space1).parse(input)?;
+    let (input, then) = literal(input)?;
+    let (input, _) = eol(input)?;
+    // {AND <literal>} — additional consequents
+    let (input, cons_rest) = many0(and_line).parse(input)?;
+
+    let mut antecedent = vec![when];
+    antecedent.extend(ante_rest);
+    let mut consequent = vec![then];
+    consequent.extend(cons_rest);
+    Ok((
+        input,
+        Body::Impl {
+            antecedent,
+            consequent,
+        },
+    ))
+}
+
+// --- Statements ------------------------------------------------------------
+
+fn stmt_import(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = (tag("IMPORT"), space1).parse(input)?;
+    let start = input;
+    let (input, path) =
+        delimited(char('"'), take_while(|c| c != '"' && c != '\n'), char('"')).parse(input)?;
+    let (input, _) = eol(input)?;
+    Ok((
+        input,
+        Statement::Import(Located {
+            data: *path.fragment(),
+            span: start,
+        }),
+    ))
+}
+
+fn stmt_fact(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = (tag("FACT"), space1).parse(input)?;
+    let (input, a) = atom(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, Statement::Fact(a)))
+}
+
+fn stmt_negation(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = (tag("NOT"), space1).parse(input)?;
+    let (input, a) = atom(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, Statement::Negation(a)))
+}
+
+fn stmt_check(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = tag("CHECK").parse(input)?;
+    let (input, subject) = opt(preceded(space1, identifier)).parse(input)?;
+    let (input, bidir) = opt(preceded(space1, tag("BIDIRECTIONAL"))).parse(input)?;
+    let (input, _) = eol(input)?;
+    Ok((
+        input,
+        Statement::Check {
+            subject,
+            bidirectional: bidir.is_some(),
+        },
+    ))
+}
+
+fn stmt_axiom(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = (tag("AXIOM"), space1).parse(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = char(':').parse(input)?;
+    let (input, _) = eol(input)?;
+    let (input, body) = alt((list_body, impl_body)).parse(input)?;
+    Ok((input, Statement::Axiom { name, body }))
+}
+
+fn stmt_rule(input: Span) -> IResult<Span, Statement> {
+    let (input, _) = (tag("RULE"), space1).parse(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = char(':').parse(input)?;
+    let (input, _) = eol(input)?;
+    let (input, body) = impl_body(input)?;
+    Ok((input, Statement::Rule { name, body }))
+}
+
+fn statement(input: Span) -> IResult<Span, Statement> {
+    alt((
+        stmt_import,
+        stmt_fact,
+        stmt_axiom,
+        stmt_rule,
+        stmt_check,
+        stmt_negation,
+    ))
+    .parse(input)
+}
+
+fn program(input: Span) -> IResult<Span, Vec<Statement>> {
+    let (input, _) = skip_noise(input)?;
+    many0(terminated(statement, skip_noise)).parse(input)
+}
+
+/// Parse a full `.vrf` source into a [`Program`].
+///
+/// On error, returns a [`ParseError`] whose `Display` shows the offending line
+/// with a `^--- here` caret, mirroring vsm-parser.
+pub fn parse(src: &str) -> Result<Program<'_>, ParseError<'_>> {
+    let input = Span::new(src);
+    match program(input) {
+        Ok((rest, statements)) => {
+            if !trailing_is_empty(rest.fragment()) {
+                return Err(ParseError {
+                    source: src,
+                    span: rest,
+                    message: String::from("expected a statement (FACT/NOT/AXIOM/RULE/CHECK/IMPORT)"),
+                });
+            }
+            Ok(Program { statements })
+        }
+        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => Err(ParseError {
+            source: src,
+            span: e.input,
+            message: String::from("unexpected token"),
+        }),
+        Err(nom::Err::Incomplete(_)) => Err(ParseError {
+            source: src,
+            span: input,
+            message: String::from("incomplete input"),
+        }),
+    }
+}
+
+/// True if the unparsed tail is only whitespace and trailing comments.
+fn trailing_is_empty(tail: &str) -> bool {
+    for raw in tail.lines() {
+        let t = raw.trim();
+        if t.is_empty() || t.starts_with("//") {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+
+    fn prog(src: &str) -> Program<'_> {
+        parse(src).expect("should parse")
+    }
+
+    /// Atom data flattened to owned tuples — span-independent, for structural
+    /// comparison (spans differ by offset, which is exactly what "cosmetic" means).
+    fn atom_shapes<'a>(p: &Program<'a>) -> Vec<(ListOp, Vec<(&'a str, &'a str, Option<&'a str>)>)> {
+        p.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Axiom {
+                    body: Body::List { op, atoms },
+                    ..
+                } => Some((
+                    *op,
+                    atoms
+                        .iter()
+                        .map(|a| (a.data.subject, a.data.predicate, a.data.object))
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parses_fact_and_negation() {
+        let p = prog("FACT Creature.A has flying\nNOT Creature.A has cold_blood\n");
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.subject, "Creature.A");
+                assert_eq!(a.data.predicate, "has");
+                assert_eq!(a.data.object, Some("flying"));
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Negation(a) => {
+                assert_eq!(a.data.object, Some("cold_blood"));
+            }
+            other => panic!("expected negation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fact_without_object() {
+        let p = prog("FACT Motor over_100\n");
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.subject, "Motor");
+                assert_eq!(a.data.predicate, "over_100");
+                assert_eq!(a.data.object, None);
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_import() {
+        let p = prog("IMPORT \"physics.vrf\"\n");
+        match &p.statements[0] {
+            Statement::Import(path) => assert_eq!(path.data, "physics.vrf"),
+            other => panic!("expected import, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_exclusive_axiom() {
+        let src = "AXIOM fly_xor_swim:\n    EXCLUSIVE\n        Creature.A has flying\n        Creature.A has swimming\n";
+        let p = prog(src);
+        match &p.statements[0] {
+            Statement::Axiom { name, body } => {
+                assert_eq!(name.data, "fly_xor_swim");
+                match body {
+                    Body::List { op, atoms } => {
+                        assert_eq!(*op, ListOp::Exclusive);
+                        assert_eq!(atoms.len(), 2);
+                        assert_eq!(atoms[1].data.object, Some("swimming"));
+                    }
+                    other => panic!("expected list body, got {:?}", other),
+                }
+            }
+            other => panic!("expected axiom, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_implication_axiom_with_and() {
+        let src = "AXIOM wings_need_bone:\n    WHEN Creature.A has flying\n    THEN Creature.A has wing\n    AND  Creature.A has bone\n";
+        let p = prog(src);
+        match &p.statements[0] {
+            Statement::Axiom {
+                body: Body::Impl {
+                    antecedent,
+                    consequent,
+                },
+                ..
+            } => {
+                assert_eq!(antecedent.len(), 1);
+                assert_eq!(antecedent[0].data.atom.object, Some("flying"));
+                assert_eq!(consequent.len(), 2);
+                assert_eq!(consequent[0].data.atom.object, Some("wing"));
+                assert_eq!(consequent[1].data.atom.object, Some("bone"));
+            }
+            other => panic!("expected impl axiom, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn antecedent_and_goes_before_then() {
+        let src = "AXIOM deploy:\n    WHEN s tested\n    AND s reviewed\n    THEN s can_deploy\n";
+        let p = prog(src);
+        match &p.statements[0] {
+            Statement::Axiom {
+                body: Body::Impl {
+                    antecedent,
+                    consequent,
+                },
+                ..
+            } => {
+                assert_eq!(antecedent.len(), 2);
+                assert_eq!(consequent.len(), 1);
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_negated_literal_in_rule() {
+        let src = "RULE pick_slow:\n    WHEN NOT Motor over_100\n    THEN Motor uses slow_path\n";
+        let p = prog(src);
+        match &p.statements[0] {
+            Statement::Rule {
+                body: Body::Impl { antecedent, .. },
+                ..
+            } => {
+                assert!(antecedent[0].data.negated);
+                assert_eq!(antecedent[0].data.atom.predicate, "over_100");
+            }
+            other => panic!("expected rule, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_check_variants() {
+        let p = prog("CHECK Creature.A BIDIRECTIONAL\n");
+        match &p.statements[0] {
+            Statement::Check {
+                subject,
+                bidirectional,
+            } => {
+                assert_eq!(subject.as_ref().unwrap().data, "Creature.A");
+                assert!(bidirectional);
+            }
+            other => panic!("expected check, got {:?}", other),
+        }
+
+        let p = prog("CHECK\n");
+        match &p.statements[0] {
+            Statement::Check {
+                subject,
+                bidirectional,
+            } => {
+                assert!(subject.is_none());
+                assert!(!bidirectional);
+            }
+            other => panic!("expected check, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn comments_and_blanks_are_ignored() {
+        let src = "// header\n\nFACT a b   // trailing comment\n\n// tail\n";
+        let p = prog(src);
+        assert_eq!(p.statements.len(), 1);
+    }
+
+    #[test]
+    fn indentation_is_cosmetic() {
+        let flat = "AXIOM x:\nEXCLUSIVE\na b\na c\n";
+        let indented = "AXIOM x:\n        EXCLUSIVE\n  a b\n            a c\n";
+        // Spans differ by offset (cosmetic); the parsed structure must be identical.
+        assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
+    }
+
+    #[test]
+    fn full_creature_example_parses() {
+        let src = include_str!("../../../docs/examples/creature.vrf");
+        let p = prog(src);
+        // 2 FACT + 3 AXIOM + 1 RULE + 1 CHECK = 7
+        assert_eq!(p.statements.len(), 7);
+    }
+
+    #[test]
+    fn import_demo_example_parses() {
+        let src = include_str!("../../../docs/examples/import-demo.vrf");
+        let p = prog(src);
+        assert!(matches!(p.statements[0], Statement::Import(_)));
+    }
+
+    #[test]
+    fn reserved_word_cannot_be_identifier() {
+        // `WHEN` as a subject is illegal.
+        assert!(parse("FACT WHEN has x\n").is_err());
+    }
+
+    #[test]
+    fn pretty_error_points_at_offending_line() {
+        let src = "FACT a b\n!garbage here\nFACT c d\n";
+        let err = parse(src).expect_err("should fail");
+        let shown = format!("{}", err);
+        assert!(shown.contains("Syntax Error"));
+        assert!(shown.contains("line 2"));
+        assert!(shown.contains("!garbage here"));
+        assert!(shown.contains("^--- here"));
+    }
+}
