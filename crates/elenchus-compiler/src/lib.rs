@@ -190,8 +190,11 @@ pub struct Compiler {
     rules: Vec<RawRule>,
     checks: Vec<Check>,
     pending_imports: Vec<String>,
-    /// name → content hash of its body, for redefinition detection.
-    defined: BTreeMap<String, String>,
+    /// (source, name) → content hash of its body, for redefinition detection.
+    /// Scoped per source: axiom/rule names are labels, not global identifiers,
+    /// so different files (domains) may reuse a name. A clash is only an error
+    /// *within the same source*.
+    defined: BTreeMap<(String, String), String>,
     /// dedup of identical clauses by canonical content hash.
     clause_sigs: BTreeSet<String>,
     /// dedup of identical facts by (key, value).
@@ -322,15 +325,17 @@ impl Compiler {
         is_rule: bool,
     ) -> Result<(), CompileError> {
         let body_hash = hash_hex(canonical_body(name, body, is_rule).as_bytes());
-        match self.defined.get(name) {
+        let key = (source.to_string(), name.to_string());
+        match self.defined.get(&key) {
             Some(prev) if *prev == body_hash => return Ok(()), // identical → idempotent
             Some(_) => {
+                // Same name + different body *in the same source* — a real mistake.
                 return Err(CompileError::AxiomRedefinition {
                     name: name.to_string(),
                 });
             }
             None => {
-                self.defined.insert(name.to_string(), body_hash);
+                self.defined.insert(key, body_hash);
             }
         }
 
@@ -585,9 +590,11 @@ impl Resolver for FileResolver {
 ///
 /// Imports are flat-merged into a single shared atom universe (atoms unify by
 /// identity across files). Sources are content-addressed (sha256): a source
-/// already merged is skipped (dedup), and an import cycle is an error. Names of
-/// axioms/rules are global after merge — a redefinition with a different body
-/// is an error, an identical one is idempotent.
+/// already merged is skipped (dedup), and an import cycle is an error.
+///
+/// Axiom/rule names are per-source labels, not global identifiers: different
+/// files (domains) may reuse a name, and the report qualifies them by source. A
+/// name reused with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
     let mut c = Compiler::new();
     let mut visited = BTreeSet::new();
@@ -855,14 +862,27 @@ mod tests {
     }
 
     #[test]
-    fn redefinition_across_imports_errors() {
+    fn same_name_across_domains_coexists() {
+        // Two files may legitimately reuse an axiom NAME with different bodies
+        // (different domains). Names are per-source labels — both axioms apply,
+        // and the report qualifies them by source. NOT a redefinition error.
         let mut r = MemoryResolver::new();
-        r.add("lib.vrf", "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\n");
+        r.add("physics.vrf", "AXIOM safety:\n    EXCLUSIVE\n        x a\n        x b\n");
         r.add(
             "main.vrf",
-            "IMPORT \"lib.vrf\"\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n",
+            "IMPORT \"physics.vrf\"\nAXIOM safety:\n    EXCLUSIVE\n        x a\n        x c\n",
         );
-        let err = compile("main.vrf", &r).unwrap_err();
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.clauses.len(), 2); // a-b from physics, a-c from main
+        assert!(c.clauses.iter().any(|cl| cl.origin.source == "physics.vrf"));
+        assert!(c.clauses.iter().any(|cl| cl.origin.source == "main.vrf"));
+    }
+
+    #[test]
+    fn redefinition_within_one_source_still_errors() {
+        // But reusing a name with a different body *inside one source* is a mistake.
+        let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
+        let err = compile_source("main.vrf", src).unwrap_err();
         assert_eq!(err, CompileError::AxiomRedefinition { name: "e".to_string() });
     }
 

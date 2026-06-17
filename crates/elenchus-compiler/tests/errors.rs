@@ -31,15 +31,3 @@ fn missing_import() {
     let e = compile("main.vrf", &r).unwrap_err();
     insta::assert_snapshot!(format!("{e}"));
 }
-
-#[test]
-fn redefinition_across_imports() {
-    let mut r = MemoryResolver::new();
-    r.add("lib.vrf", "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\n");
-    r.add(
-        "main.vrf",
-        "IMPORT \"lib.vrf\"\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n",
-    );
-    let e = compile("main.vrf", &r).unwrap_err();
-    insta::assert_snapshot!(format!("{e}"));
-}

@@ -419,9 +419,19 @@ vsm-guard's CAS) is the natural tool for both:
 
 - **Dedup for reports.** The same axiom is not listed twice in a conflict pool;
   identical normalized content → identical content hash → one first principle.
-- **Redefinition is an error.** The same axiom **name** with a **different** body
-  is a genuine `AxiomRedefinition` error, caught by comparing content hashes under
-  one name.
+- **Redefinition is an error only within one source.** Axiom/rule names are
+  per-source **labels**, not global identifiers — nothing references an axiom by
+  name across files, so two different files (domains) may reuse a name with
+  different bodies; both apply, and the report qualifies them by source
+  (`physics.vrf:safety` vs `biology.vrf:safety`). Reusing a name with a different
+  body *inside the same source* is a genuine `AxiomRedefinition` error.
+
+> This is the one place we deliberately diverge from vsm-grammar. vsm
+> hash-namespaces rules so they stay *apart* and are referenced by alias. We need
+> the opposite for **atoms** (they must unify across files — that is the value of
+> importing axiom libraries), so atoms are global. We apply the same idea vsm uses
+> for namespacing only to the human-facing **labels** (per-source scoping) — never
+> to atoms — and there is no `AS` alias because axioms are never referenced by name.
 
 ### Cycle detection and dedup of sources
 
@@ -739,8 +749,10 @@ exclusive things). SAT will catch this: the CONFLICT pool then names axioms, not
 
 ### Duplicate axioms across imports
 Identical constraints (same content hash) are idempotent — merged into one clause,
-never a conflict (`P ∧ P ≡ P`). The same axiom name with a different body is an
-`AxiomRedefinition` error. See the IMPORT section.
+never a conflict (`P ∧ P ≡ P`). Axiom/rule names are per-source labels: the same
+name in two different files (domains) is fine (both apply, qualified by source);
+the same name with a different body *within one source* is an `AxiomRedefinition`
+error. See the IMPORT section.
 
 ### CHECK scope
 `CHECK <Subject>` reports on axioms and rules where this subject participates.
