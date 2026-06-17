@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"FACT lonely\\n\")"
+---
+Syntax Error at line 1, col 6: FACT expects an atom: <Subject> <predicate> [<object>]
+  | FACT lonely
+  |      ^--- here

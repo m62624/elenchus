@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-compiler/tests/errors.rs
+expression: "format!(\"{e}\")"
+---
+parse error in main.vrf: FACT expects an atom: <Subject> <predicate> [<object>]

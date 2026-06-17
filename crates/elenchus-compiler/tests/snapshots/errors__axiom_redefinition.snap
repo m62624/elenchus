@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-compiler/tests/errors.rs
+expression: "format!(\"{e}\")"
+---
+'e' redefined with a different body

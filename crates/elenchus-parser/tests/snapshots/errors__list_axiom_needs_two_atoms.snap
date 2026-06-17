@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"AXIOM modes:\\n    EXCLUSIVE\\n        Sys mode idle\\nCHECK Sys\\n\")"
+---
+Syntax Error at line 4, col 1: a list axiom needs at least two atoms
+  | CHECK Sys
+  | ^--- here

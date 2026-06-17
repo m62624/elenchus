@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"AXIOM modes\\n    EXCLUSIVE\\n        a b\\n        a c\\n\")"
+---
+Syntax Error at line 1, col 12: expected ':' after the axiom name
+  | AXIOM modes
+  |            ^--- here

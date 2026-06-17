@@ -1,0 +1,386 @@
+---
+source: crates/elenchus-compiler/tests/ir.rs
+expression: c
+---
+Compiled {
+    atoms: [
+        AtomKey {
+            subject: "Sys",
+            predicate: "broken",
+            object: None,
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "busy",
+            object: None,
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "can",
+            object: Some(
+                "deploy",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "checked",
+            object: Some(
+                "integration",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "checked",
+            object: Some(
+                "unit",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "mode",
+            object: Some(
+                "error",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "mode",
+            object: Some(
+                "halt",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "mode",
+            object: Some(
+                "idle",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "mode",
+            object: Some(
+                "run",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "notify",
+            object: Some(
+                "ops",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "owner",
+            object: Some(
+                "alice",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "owner",
+            object: Some(
+                "bob",
+            ),
+        },
+        AtomKey {
+            subject: "Sys",
+            predicate: "ready",
+            object: None,
+        },
+    ],
+    facts: [
+        Fact {
+            atom: 12,
+            value: True,
+            origin: Origin {
+                source: "complex.vrf",
+                line: 1,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+        Fact {
+            atom: 0,
+            value: False,
+            origin: Origin {
+                source: "complex.vrf",
+                line: 2,
+                axiom: None,
+                kind: "NOT",
+            },
+        },
+    ],
+    clauses: [
+        Clause {
+            lits: [
+                Lit {
+                    atom: 7,
+                    negated: false,
+                },
+                Lit {
+                    atom: 8,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 7,
+                    negated: false,
+                },
+                Lit {
+                    atom: 6,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 7,
+                    negated: false,
+                },
+                Lit {
+                    atom: 5,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 8,
+                    negated: false,
+                },
+                Lit {
+                    atom: 6,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 8,
+                    negated: false,
+                },
+                Lit {
+                    atom: 5,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 6,
+                    negated: false,
+                },
+                Lit {
+                    atom: 5,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 4,
+                axiom: Some(
+                    "modes",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 10,
+                    negated: false,
+                },
+                Lit {
+                    atom: 11,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 11,
+                axiom: Some(
+                    "exactly_one_owner",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 10,
+                    negated: true,
+                },
+                Lit {
+                    atom: 11,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 11,
+                axiom: Some(
+                    "exactly_one_owner",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 4,
+                    negated: true,
+                },
+                Lit {
+                    atom: 3,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 16,
+                axiom: Some(
+                    "at_least_one_check",
+                ),
+                kind: "ATLEAST",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 12,
+                    negated: false,
+                },
+                Lit {
+                    atom: 4,
+                    negated: false,
+                },
+                Lit {
+                    atom: 0,
+                    negated: true,
+                },
+                Lit {
+                    atom: 2,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 21,
+                axiom: Some(
+                    "deploy_gate",
+                ),
+                kind: "AXIOM",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 12,
+                    negated: false,
+                },
+                Lit {
+                    atom: 4,
+                    negated: false,
+                },
+                Lit {
+                    atom: 0,
+                    negated: true,
+                },
+                Lit {
+                    atom: 9,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 21,
+                axiom: Some(
+                    "deploy_gate",
+                ),
+                kind: "AXIOM",
+            },
+        },
+    ],
+    rules: [
+        Rule {
+            antecedent: [
+                Lit {
+                    atom: 8,
+                    negated: false,
+                },
+            ],
+            consequent: [
+                Lit {
+                    atom: 1,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "complex.vrf",
+                line: 28,
+                axiom: Some(
+                    "derive_busy",
+                ),
+                kind: "RULE",
+            },
+        },
+    ],
+    checks: [
+        Check {
+            subject: Some(
+                "Sys",
+            ),
+            bidirectional: true,
+        },
+    ],
+    pending_imports: [],
+}

@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"RULE r:\\n    WHEN x a\\n    THEN\\n\")"
+---
+Syntax Error at line 3, col 9: THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
+  |     THEN
+  |         ^--- here

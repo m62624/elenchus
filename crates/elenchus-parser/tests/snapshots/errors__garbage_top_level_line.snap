@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"FACT a b\\n%%% not a statement\\nFACT c d\\n\")"
+---
+Syntax Error at line 2, col 1: expected a statement (IMPORT/FACT/NOT/AXIOM/RULE/CHECK)
+  | %%% not a statement
+  | ^--- here

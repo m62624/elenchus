@@ -1,0 +1,106 @@
+---
+source: crates/elenchus-compiler/tests/ir.rs
+expression: c
+---
+Compiled {
+    atoms: [
+        AtomKey {
+            subject: "Motor",
+            predicate: "over_100",
+            object: None,
+        },
+        AtomKey {
+            subject: "Motor",
+            predicate: "over_200",
+            object: None,
+        },
+        AtomKey {
+            subject: "Motor",
+            predicate: "uses",
+            object: Some(
+                "fast_path",
+            ),
+        },
+        AtomKey {
+            subject: "Motor",
+            predicate: "uses",
+            object: Some(
+                "slow_path",
+            ),
+        },
+    ],
+    facts: [
+        Fact {
+            atom: 1,
+            value: True,
+            origin: Origin {
+                source: "import-demo.vrf",
+                line: 7,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+        Fact {
+            atom: 0,
+            value: False,
+            origin: Origin {
+                source: "import-demo.vrf",
+                line: 8,
+                axiom: None,
+                kind: "NOT",
+            },
+        },
+    ],
+    clauses: [
+        Clause {
+            lits: [
+                Lit {
+                    atom: 2,
+                    negated: false,
+                },
+                Lit {
+                    atom: 3,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "physics.vrf",
+                line: 4,
+                axiom: Some(
+                    "one_path",
+                ),
+                kind: "EXCLUSIVE",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 1,
+                    negated: false,
+                },
+                Lit {
+                    atom: 0,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "physics.vrf",
+                line: 9,
+                axiom: Some(
+                    "speed_order",
+                ),
+                kind: "AXIOM",
+            },
+        },
+    ],
+    rules: [],
+    checks: [
+        Check {
+            subject: Some(
+                "Motor",
+            ),
+            bidirectional: false,
+        },
+    ],
+    pending_imports: [],
+}

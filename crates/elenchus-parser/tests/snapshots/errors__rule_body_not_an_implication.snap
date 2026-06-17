@@ -1,0 +1,7 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"RULE r:\\n    EXCLUSIVE\\n        x a\\n        x b\\n\")"
+---
+Syntax Error at line 2, col 1: a rule body must be WHEN ... THEN
+  |     EXCLUSIVE
+  | ^--- here
