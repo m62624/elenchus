@@ -1,0 +1,17 @@
+// Example: an explicit conflict — two facts violate an axiom.
+
+FACT Animal.B has flying
+FACT Animal.B has swimming
+
+AXIOM fly_xor_swim:
+    EXCLUSIVE
+        Animal.B has flying
+        Animal.B has swimming
+
+CHECK Animal.B
+
+// Expected result:
+// CONFLICT  fly_xor_swim
+//   FACT Animal.B has flying    [line 3]
+//   FACT Animal.B has swimming  [line 4]
+//   → EXCLUSIVE: at most one may be TRUE

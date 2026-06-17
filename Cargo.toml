@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/elenchus-parser",
+    "crates/elenchus-compiler",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Mansur Azatbek <mansur62624@gmail.com>"]
+
+[workspace.dependencies]
+
+# Local Crates
+elenchus-parser = { path = "crates/elenchus-parser" }
+elenchus-compiler = { path = "crates/elenchus-compiler" }
+
+# Shared Dependencies (versions pinned 1:1 with the vsm workspace)
+nom = { version = "8.0.0", default-features = false, features = ["alloc"] }
+nom_locate = { version = "5.0.0", default-features = false, features = [
+    "alloc",
+] }
+thiserror = "2.0"
+sha2 = { version = "0.10.9", default-features = false }
+
+# Snapshot testing for parser error output
+insta = "1.41"

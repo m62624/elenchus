@@ -1,0 +1,13 @@
+[package]
+name = "elenchus-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "English-like DSL parser for the elenchus reasoning engine (facts, axioms, rules, checks)."
+
+[dependencies]
+nom = { workspace = true }
+nom_locate = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

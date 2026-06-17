@@ -1,0 +1,37 @@
+// Example: investigating creature A on an unknown planet.
+// One explorer says it flies, another says it swims.
+// The book says: it cannot do both at once.
+
+FACT Creature.A has flying
+FACT Creature.A has warm_blood
+// has swimming not mentioned → UNKNOWN
+
+// First principles (axioms — cannot be violated)
+AXIOM fly_xor_swim:
+    EXCLUSIVE
+        Creature.A has flying
+        Creature.A has swimming
+
+AXIOM wings_need_bone:
+    WHEN Creature.A has flying
+    THEN Creature.A has wing
+    AND  Creature.A has bone
+
+AXIOM no_dual_temp:
+    FORBIDS
+        Creature.A has warm_blood
+        Creature.A has cold_blood
+
+// Inference rule — the engine derives a fact
+RULE needs_oxygen:
+    WHEN Creature.A has flying
+    THEN Creature.A needs oxygen
+
+CHECK Creature.A BIDIRECTIONAL
+
+// Expected result:
+// CONSISTENT      fly_xor_swim     — swimming = UNKNOWN, no conflict
+// WARNING         wings_need_bone  — needs: has wing, has bone
+// CONSISTENT      no_dual_temp     — cold_blood = UNKNOWN
+// DERIVED         needs oxygen     — from RULE + FACT has flying
+// UNDERDETERMINED fly_xor_swim     — alternative: has swimming=TRUE also passes
