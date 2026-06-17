@@ -1,0 +1,258 @@
+---
+source: crates/elenchus-compiler/tests/file_imports.rs
+expression: c
+---
+Compiled {
+    atoms: [
+        AtomKey {
+            subject: "Car",
+            predicate: "brakes",
+            object: Some(
+                "ok",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "engine",
+            object: Some(
+                "running",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "engine",
+            object: Some(
+                "warm",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "gear",
+            object: Some(
+                "drive",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "gear",
+            object: Some(
+                "park",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "gear",
+            object: Some(
+                "reverse",
+            ),
+        },
+        AtomKey {
+            subject: "Car",
+            predicate: "has",
+            object: Some(
+                "fuel",
+            ),
+        },
+    ],
+    facts: [
+        Fact {
+            atom: 1,
+            value: True,
+            origin: Origin {
+                source: "tests/fixtures/car.vrf",
+                line: 6,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+        Fact {
+            atom: 3,
+            value: True,
+            origin: Origin {
+                source: "tests/fixtures/car.vrf",
+                line: 7,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+        Fact {
+            atom: 6,
+            value: True,
+            origin: Origin {
+                source: "tests/fixtures/car.vrf",
+                line: 8,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+        Fact {
+            atom: 0,
+            value: True,
+            origin: Origin {
+                source: "tests/fixtures/car.vrf",
+                line: 9,
+                axiom: None,
+                kind: "FACT",
+            },
+        },
+    ],
+    clauses: [
+        Clause {
+            lits: [
+                Lit {
+                    atom: 4,
+                    negated: false,
+                },
+                Lit {
+                    atom: 3,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/core/base.vrf",
+                line: 2,
+                axiom: Some(
+                    "exactly_one_gear",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 4,
+                    negated: false,
+                },
+                Lit {
+                    atom: 5,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/core/base.vrf",
+                line: 2,
+                axiom: Some(
+                    "exactly_one_gear",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 3,
+                    negated: false,
+                },
+                Lit {
+                    atom: 5,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/core/base.vrf",
+                line: 2,
+                axiom: Some(
+                    "exactly_one_gear",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 4,
+                    negated: true,
+                },
+                Lit {
+                    atom: 3,
+                    negated: true,
+                },
+                Lit {
+                    atom: 5,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/core/base.vrf",
+                line: 2,
+                axiom: Some(
+                    "exactly_one_gear",
+                ),
+                kind: "ONEOF",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 1,
+                    negated: false,
+                },
+                Lit {
+                    atom: 6,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/std/engine.vrf",
+                line: 4,
+                axiom: Some(
+                    "engine_needs_fuel",
+                ),
+                kind: "AXIOM",
+            },
+        },
+        Clause {
+            lits: [
+                Lit {
+                    atom: 3,
+                    negated: false,
+                },
+                Lit {
+                    atom: 0,
+                    negated: true,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/std/safety.vrf",
+                line: 5,
+                axiom: Some(
+                    "drive_safely",
+                ),
+                kind: "AXIOM",
+            },
+        },
+    ],
+    rules: [
+        Rule {
+            antecedent: [
+                Lit {
+                    atom: 1,
+                    negated: false,
+                },
+            ],
+            consequent: [
+                Lit {
+                    atom: 2,
+                    negated: false,
+                },
+            ],
+            origin: Origin {
+                source: "tests/fixtures/std/engine.vrf",
+                line: 8,
+                axiom: Some(
+                    "running_implies_warm",
+                ),
+                kind: "RULE",
+            },
+        },
+    ],
+    checks: [
+        Check {
+            subject: Some(
+                "Car",
+            ),
+            bidirectional: true,
+        },
+    ],
+    pending_imports: [],
+}

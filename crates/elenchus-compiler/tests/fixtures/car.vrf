@@ -1,0 +1,11 @@
+// A concrete car. The model writes only FACTs; the first principles come from
+// the imported engine + safety libraries, which share the core base (a diamond).
+IMPORT "std/engine.vrf"
+IMPORT "std/safety.vrf"
+
+FACT Car engine running
+FACT Car gear drive
+FACT Car has fuel
+FACT Car brakes ok
+
+CHECK Car BIDIRECTIONAL

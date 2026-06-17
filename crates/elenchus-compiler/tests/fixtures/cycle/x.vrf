@@ -1,0 +1,2 @@
+// Mutually recursive imports — must be detected, not loop forever.
+IMPORT "y.vrf"

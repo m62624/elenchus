@@ -1,0 +1,7 @@
+// Safety domain. Also reuses the shared core invariants (so core/base.vrf is a
+// diamond import: pulled by both engine.vrf and safety.vrf, merged only once).
+IMPORT "../core/base.vrf"
+
+AXIOM drive_safely:
+    WHEN Car gear drive
+    THEN Car brakes ok
