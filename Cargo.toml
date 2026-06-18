@@ -5,6 +5,7 @@ members = [
     "crates/elenchus-compiler",
     "crates/elenchus-solver",
     "crates/elenchus-cli",
+    "crates/elenchus-mcp",
 ]
 
 [workspace.package]

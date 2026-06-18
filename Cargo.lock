@@ -212,6 +212,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "elenchus-mcp"
+version = "0.1.0"
+dependencies = [
+ "elenchus-solver",
+ "serde_json",
+]
+
+[[package]]
 name = "elenchus-parser"
 version = "0.1.0"
 dependencies = [

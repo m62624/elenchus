@@ -1,0 +1,18 @@
+[package]
+name = "elenchus-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Model Context Protocol (MCP) server for the elenchus reasoning engine: exposes an `elenchus_check` tool over stdio JSON-RPC for AI agents."
+readme = "README.md"
+keywords = ["mcp", "logic", "reasoning", "sat", "ai"]
+categories = ["command-line-utilities", "mathematics"]
+
+[[bin]]
+name = "elenchus-mcp"
+path = "src/main.rs"
+
+[dependencies]
+elenchus-solver = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
