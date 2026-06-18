@@ -57,12 +57,22 @@ or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
 
 ## Install
 
-Two binaries ship as prebuilt downloads on every tagged release (built by
-cargo-dist for **Linux, Windows and macOS, x64 & arm64**): the `elenchus` CLI
-(crate `elenchus-cli`) and the `elenchus-mcp` server (crate `elenchus-mcp`).
-Pick whichever method you like — all of them pull the *same* prebuilt artifacts.
+Two binaries — the `elenchus` CLI (crate `elenchus-cli`) and the `elenchus-mcp`
+server (crate `elenchus-mcp`) — built for **Linux, Windows and macOS (x64 &
+arm64)** on every tagged release.
 
-### 1. `cargo binstall` (recommended)
+**Pick the one method that's convenient — you don't need more than one.** They all
+install the *same* binaries. Quick guide:
+
+| If you… | Use |
+|---|---|
+| have `cargo` and want the simplest cross-platform install | **`cargo binstall`** |
+| are on macOS / Linux with Homebrew | **Homebrew** |
+| don't want a Rust toolchain | **installer script**, or the Windows **`.msi`** |
+| want managed install/uninstall on Windows | **`.msi`** |
+| want to compile it yourself | **from source** |
+
+### `cargo binstall` (recommended)
 
 [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the
 prebuilt binary instead of compiling. It reads the release's cargo-dist
@@ -73,7 +83,17 @@ $ cargo binstall elenchus-cli     # the `elenchus` CLI
 $ cargo binstall elenchus-mcp     # the `elenchus-mcp` server
 ```
 
-### 2. Installer scripts (no Rust toolchain needed)
+### Homebrew (macOS / Linux)
+
+From the [`m62624/homebrew-elenchus`](https://github.com/m62624/homebrew-elenchus)
+tap; `brew upgrade` / `brew uninstall` then manage it like any formula:
+
+```console
+$ brew install m62624/elenchus/elenchus-cli     # the `elenchus` CLI
+$ brew install m62624/elenchus/elenchus-mcp     # the `elenchus-mcp` server
+```
+
+### Installer scripts (no Rust toolchain)
 
 Each binary has its own script on the
 [Releases page](https://github.com/m62624/elenchus/releases); `latest` always
@@ -91,13 +111,14 @@ $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/relea
 > powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
 ```
 
-On **Windows** there is also a `.msi` per binary (`elenchus-cli-*.msi`,
-`elenchus-mcp-*.msi`) on the Releases page. The MSI registers the app in **"Add or
-remove programs"**, so it upgrades and uninstalls cleanly through the normal
-Windows UI — the friendlier choice over the PowerShell script if you want managed
-install/uninstall.
+### Windows `.msi` (managed install/uninstall)
 
-### 3. From source
+Each binary also ships a `.msi` (`elenchus-cli-*.msi`, `elenchus-mcp-*.msi`) on the
+Releases page. Double-click to install; it registers the app in **"Add or remove
+programs"**, so upgrades and uninstalls go through the normal Windows UI — the
+friendlier choice over the PowerShell script.
+
+### From source
 
 Needs a Rust toolchain; compiles locally and works on any platform Rust targets.
 Both crates are published to crates.io, so you can build straight from there:
@@ -123,6 +144,8 @@ own install tracking, so plain `cargo uninstall` works):
 $ cargo uninstall elenchus-cli      # removes the `elenchus` binary
 $ cargo uninstall elenchus-mcp
 ```
+
+**Installed with Homebrew:** `brew uninstall elenchus-cli elenchus-mcp`.
 
 **Installed from a Windows `.msi`:** uninstall from **"Add or remove programs"**
 (or Settings → Apps), exactly like any other Windows app.

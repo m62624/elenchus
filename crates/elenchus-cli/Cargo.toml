@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Command-line interface for the elenchus reasoning engine: check a .vrf string or file and report CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT."
 readme = "README.md"
 keywords = ["logic", "reasoning", "verification", "cli", "sat"]
