@@ -4,7 +4,8 @@ name: Release
 # `pin/v0.1.0`:  prepare (bump the workspace version, make an RC branch) → tests
 # (run CI on the RC) → tag (create the real `vX.Y.Z`) → dist (cargo-dist builds
 # the binaries + installers for all targets and publishes the GitHub Release) →
-# sync (open a PR bringing the version bump back to main).
+# crates.io (publish source crates only after binaries succeed) → sync (open a
+# PR bringing the version bump back to main).
 on:
   push:
     tags:
@@ -92,15 +93,16 @@ jobs:
       tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
 
-  # crates.io publish, in parallel with `dist` (both gate on the real tag). This
-  # is what makes `cargo install <crate>` / `cargo binstall <crate>` resolve by
-  # name. `cargo publish --workspace` publishes every member in dependency order
-  # (parser -> compiler -> solver -> cli -> mcp) and waits for the index between
-  # crates; the two binary crates publish as source crates too. The libraries'
-  # `dist = false` only affects cargo-dist, not crates.io — all 5 are published.
+  # crates.io publish waits for `dist`, so a failed binary/installer release
+  # cannot burn immutable crate versions. This is what makes `cargo install
+  # <crate>` / `cargo binstall <crate>` resolve by name. `cargo publish
+  # --workspace` publishes every member in dependency order (parser -> compiler
+  # -> solver -> cli -> mcp) and waits for the index between crates; the two
+  # binary crates publish as source crates too. The libraries' `dist = false`
+  # only affects cargo-dist, not crates.io — all 5 are published.
   publish-crates:
     name: Publish to crates.io
-    needs: [prepare, tag]
+    needs: [prepare, tag, dist]
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

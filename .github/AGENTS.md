@@ -49,11 +49,11 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
 - `workflows/release.yml` (orchestrator) → triggered by pushing a `pin/v*` tag.
   **Flow:** `prepare` (parse the version, create `rc/vX.Y.Z`, `cargo set-version
   --workspace`, commit, push the RC, delete the pin tag) → `tests` (calls `ci.yml`
-  against the RC) → `tag` (create the real `vX.Y.Z`) → then two jobs run in
-  parallel off that tag: `dist` (calls `bin-release.yml` — binaries + GitHub
-  Release) and `publish-crates` (`cargo publish --workspace --locked` from the
-  tag — publishes all 5 crates to crates.io in dependency order, including the
-  two binary crates) → `sync` (needs both; opens a PR from the RC to the
+  against the RC) → `tag` (create the real `vX.Y.Z`) → `dist` (calls
+  `bin-release.yml` — binaries + GitHub Release) → `publish-crates` (`cargo
+  publish --workspace --locked` from the tag — publishes all 5 crates to
+  crates.io in dependency order, including the two binary crates, only after the
+  binary release succeeds) → `sync` (needs both; opens a PR from the RC to the
   repository's **default branch** — not hardcoded).
 - `workflows/bin-release.yml` → the cargo-dist-generated workflow, kept intact
   except its trigger was changed to `on: workflow_call` (inputs: `tag`) and every

@@ -74,6 +74,12 @@ targets = [
 ]
 pr-run-mode = "plan"
 
+# Build aarch64-windows on a NATIVE Windows runner. By default dist cross-builds
+# it on Linux via cargo-xwin, but the `.msi` needs WiX v3's `candle.exe` (a
+# Windows binary that can't run under xwin) — so it must build on Windows.
+[workspace.metadata.dist.github-custom-runners]
+aarch64-pc-windows-msvc = "windows-2022"
+
 [profile.dist]
 inherits = "release"
 lto = "thin"
