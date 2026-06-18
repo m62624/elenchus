@@ -1,21 +1,19 @@
-# elenchus — a formal reasoning-verification engine
+# elenchus — a simplified SAT checker for small local LLMs
 
-> A small model writes facts and first principles in a simple language.
-> A Rust engine does all the logic for it and catches contradictions mathematically.
-> The model cannot lie at the inference level — only at the axiom level.
-> And a mistake in an axiom we catch early and mechanically.
+> A small model writes facts and first principles in a simple language; a Rust
+> engine does the boolean bookkeeping and flags contradictions. The model can only
+> get an axiom wrong — never a step in a long chain — and that is caught mechanically.
 >
-> In one line: a small, simplified SAT utility for small models — it does the
-> boolean bookkeeping they are bad at, and nothing more.
+> In one line: a small SAT checker with three-valued logic (TRUE / FALSE /
+> UNKNOWN), aimed at small local models. Nothing more.
 
-This document is the specification. It is written so that a person who has never
-heard of SAT solvers or three-valued logic can follow it. First — why this is
-needed and what was invented before us. Then — how exactly it works. At the very
-end — what we deliberately did NOT include and why.
+This document is the specification. It is written so that someone who has never
+heard of SAT solvers or three-valued logic can follow it: first why it exists,
+then how it works, and at the end what it leaves out.
 
-The name *elenchus* (ἔλεγχος) is the Socratic method of cross-examination: you
-take someone's claims and interrogate them against first principles until a
-contradiction surfaces. That is literally what this engine does to a set of facts.
+The name comes from *elenchus* (ἔλεγχος) — Socratic refutation by finding
+contradictions. That is just the spirit of it; mechanically this is a small
+consistency/SAT checker, not a dialogue.
 
 ---
 
@@ -48,7 +46,7 @@ assembles them into a logical system and checks automatically: consistent / not
 consistent / not enough data. The model physically cannot err "in the middle of
 the reasoning" — because it is not the one doing the reasoning.
 
-## Honestly: this is not magic
+## Limits — this is not magic
 
 It is worth stating the boundary up front. The model writes the axioms at the
 start. If it writes a wrong first principle, the engine will not save it —
@@ -70,45 +68,12 @@ That is, we do not remove the error. We make it **visible early**.
 
 ---
 
-# Part II. What was invented before us
+# Part II. The core ideas
 
-We invent almost nothing. All the math is ready, decades (even centuries) old. It
-is useful to know whose shoulders we stand on — and why we do not take the most
-ambitious path.
+## Logic
 
-| Who | When | What they gave |
-|---|---|---|
-| **Aristotle** | ~350 BC | The laws of thought: identity, non-contradiction, excluded middle |
-| **Leibniz** | ~1690 | The principle of sufficient reason + the `calculemus` dream — "let us compute" instead of arguing |
-| **Boole** | 1847 | Boolean algebra: logic as algebra over 0 and 1 |
-| **De Morgan** | 1847 | De Morgan's laws — how to rewrite AND/OR/NOT in terms of one another |
-| **Sheffer** | 1913 | Proved: a single NAND (`NOT(A AND B)`) suffices for all of logic |
-| **Shannon** | 1938 | Connected logic to electrical circuits — hence the whole digital world |
-| **Kleene** | 1938 | Three-valued logic: TRUE / FALSE / **UNKNOWN** |
-| **Robinson** | 1965 | Resolution — mechanical derivation of contradictions |
-| **Davis–Putnam, DPLL** | 1960–62 | The first practical SAT solvers |
-| **Prolog / Datalog** | 1972+ | Logic programming (but closed-world: "not stated = false") |
-| **minisat, z3** | 2000s | Industrial SAT / SMT solvers the industry runs on |
-
-And there is a path we **deliberately do not take**: the proof assistants **Lean**
-and **Coq**. They are genuinely powerful — they can prove all of mathematics
-rigorously, and people build serious work on them. The catch is their language:
-it is rich and demanding, hard to write well even for experts and out of reach
-for a small local model. So this is not a knock on Lean — it is just the wrong
-tool for *this* job. Our rule: take exactly as much logic as is needed to check
-reasoning, and no more.
-
----
-
-# Part III. Three things we understood
-
-## What we understood about logic
-
-All of logic reduces to two operations: **NOT + AND**. This set is enough to
-express any boolean function — it is a theorem of boolean algebra (and Sheffer
-showed back in 1913 that even a single NAND suffices). Shannon in 1938 showed the
-adjacent and no less important fact: this same logic *is* electrical circuits, the
-hardware itself.
+All of logic reduces to two operations: **NOT + AND**. That is enough to express
+any boolean function (a standard result of boolean algebra).
 
 De Morgan's laws show how all other operations follow from NOT+AND:
 
@@ -118,13 +83,8 @@ IMPLIES(A → B) = NOT(A AND NOT B)
 XOR(A, B)      = NOT(NOT(A AND NOT B) AND NOT(NOT A AND B))
 ```
 
-And Aristotle's three laws are not separate rules that must be programmed. In
-classical logic they are **theorems** that already live inside NOT+AND. Leibniz
-added a fourth — sufficient reason — but that is not a logical law, it is an
-epistemic principle ("every truth has a cause").
-
-**Conclusion: there is no need to encode all of science. A single primitive
-`Impossible([...])` covers everything.**
+So we don't encode many rules. A single primitive — `Impossible([...])` —
+expressed in NOT+AND form is enough for everything the checker does.
 
 > ⚠️ A subtlety worth knowing in advance. We use not classical logic but
 > three-valued logic (see below). In it, the law of excluded middle (`A ∨ ¬A`
@@ -133,7 +93,7 @@ epistemic principle ("every truth has a cause").
 > deliberately relax excluded middle — that is precisely what gives us the right
 > to say "I don't know."
 
-## What we understood about knowledge
+## Knowledge
 
 The world cannot be split into TRUE and FALSE alone. That is what Prolog does:
 "not mentioned = false" (the closed-world assumption). The problem is that the
@@ -153,7 +113,7 @@ value, not hidden falsehood.
 Notice how this echoes the law of excluded middle above: by allowing UNKNOWN, we
 have rejected "either TRUE or FALSE, no third option." There is a third.
 
-## What we understood about verification
+## Verification
 
 A single forward pass is not enough. The engine can say CONSISTENT (no
 contradictions), and yet the system is **underdetermined**: a different set of
@@ -177,7 +137,7 @@ CONFLICT         — a direct contradiction
 
 ---
 
-# Part IV. Specification
+# Part III. Specification
 
 ## The single primitive: Impossible
 
@@ -397,11 +357,10 @@ abstraction (mirroring vsm-grammar's `SourceResolver` / `MemoryResolver` /
 `FileResolver`): `IMPORT "physics.vrf"` asks the resolver for the string named
 `physics.vrf`, however it is stored (file, in-memory map, network).
 
-This is the killer feature for a small model. The whole thesis is "the model can
-only err at the axiom level." A vetted axiom library turns this into "the model
-**cannot** err at the axiom level at all" — it writes only `FACT` lines and pulls
-the first principles from a curated, human-reviewed library. It also saves the
-small model's context: its generated file is just facts.
+This matters for a small model. The model can only err at the axiom level; a
+vetted axiom library removes even that — the model writes only `FACT` lines and
+pulls the first principles from a curated, reviewed library. It also saves
+context: the generated file is just facts.
 
 ### Semantics: flat merge into one shared atom universe
 
@@ -653,9 +612,8 @@ EXIT_CODE: 1
 
 ## UNKNOWN, WARNING and three-valued forward chaining
 
-This is the heart of the system. The engine aims at **simple logic**: it
-immediately shows what converges, and honestly shows what cannot be computed —
-because an UNKNOWN component participates in the needed inference.
+The engine shows what converges, and shows what cannot be computed — because an
+UNKNOWN component takes part in the needed inference.
 
 ### Confident vs blocked
 
@@ -781,7 +739,7 @@ In these positions a literal is allowed — a predicate or its negation (`NOT ..
 
 ---
 
-# Part V. Implementation
+# Part IV. Implementation
 
 ## What we take ready-made, what we write ourselves
 
@@ -791,8 +749,8 @@ We write no heavy math. Everything of our own is the parser, the gluing, and the
 |---|---|
 | `.vrf` parser | written by us (`nom` + `nom_locate`, `no_std`) — crate `elenchus-parser` |
 | Import resolution, desugaring, atom interning, content-addressing | written by us — crate `elenchus-compiler` |
-| Boolean logic, CONFLICT / CONSISTENT | a no_std port of `varisat` — future crate `elenchus-solver` |
-| Backward pass / UNDERDETERMINED | `varisat` in all-SAT mode (enumerate all models) |
+| Boolean logic, CONFLICT / CONSISTENT | a small CDCL SAT core (varisat's algorithm), `no_std` — crate `elenchus-solver` |
+| Backward pass / UNDERDETERMINED | that same SAT core in all-SAT mode (enumerate all models) |
 | Three-valuedness (UNKNOWN not passed to SAT) | a thin layer, written by us |
 | WARNING pool, provenance, hints | our layer, written by us |
 | Output formatting | ourselves |
@@ -805,7 +763,7 @@ elenchus/
     elenchus-parser/    no_std; text → AST; nom + nom_locate; Span/Located/pretty errors
     elenchus-compiler/  no_std + std; AST → canonical Impossible/CNF clause IR;
                         Resolver-based IMPORT, desugaring, atom interner, sha256 CAS
-    elenchus-solver/    (future) no_std port of varisat; std + multithread features
+    elenchus-solver/    no_std; 3-valued forward pass + a small CDCL SAT core
 ```
 
 Dependency versions are pinned 1:1 with the vsm workspace (`nom` 8, `nom_locate`
@@ -813,24 +771,20 @@ Dependency versions are pinned 1:1 with the vsm workspace (`nom` 8, `nom_locate`
 S-expressions), but in vsm-parser's style: zero-copy over `&str`, `Span`/`Located`
 for line/column tracking, and a human-friendly `^--- here` error display.
 
-> **Honestly about varisat.** A SAT solver knows only TRUE/FALSE. It knows nothing
-> about UNKNOWN or about WARNING — we carry the whole WARNING pool ourselves on top
-> of it. Alternative models (UNDERDETERMINED) it can do: it finds a solution, adds
-> a blocking clause, solves again — so all variants are enumerated (all-SAT). The
-> single bottleneck: before passing to SAT we must convert values **cleanly** —
-> TRUE → true, FALSE → false, and UNKNOWN must NOT be passed, but collected
-> separately. Passing UNKNOWN as false → false CONFLICTs; as true → false
-> CONSISTENTs. This is the one place where you must be precise.
+> **Note on the SAT core.** A SAT solver knows only TRUE/FALSE — not UNKNOWN or
+> WARNING, so the WARNING pool is carried in our own layer on top. For
+> UNDERDETERMINED it enumerates models (find a solution, add a blocking clause,
+> solve again — all-SAT). The one place to be careful: UNKNOWN must NOT be passed
+> to SAT (collect it separately). Passing UNKNOWN as false fabricates CONFLICTs;
+> as true fabricates CONSISTENTs.
 
-## Project goal: phase 1 only
+## Scope: boolean only
 
-**We build one thing — the boolean engine (phase 1).** It checks structural
-consistency: contradictions, cycles, missing premises, underdetermination. This is
-exactly what the small model loses on a long chain of reasoning.
+The engine checks structural consistency: contradictions, cycles, missing
+premises, underdetermination — what a small model tends to lose over a long chain.
 
-Arithmetic and computation the engine does NOT do — those are done by the
-generated code itself and by tests. For the task "help the model plan and write
-code," this is enough.
+It does **no** arithmetic or computation; those stay in the generated code and its
+tests. For helping a model plan and write code, the boolean checks are enough.
 
 ## Integration (plan)
 
@@ -845,47 +799,29 @@ optional step via the npm wrapper.
 
 ---
 
-# Part VI. What is NOT included and why
+# Part V. What this is not (and the alternatives)
 
-Here is everything we deliberately left out, and what complexity it removed for the
-model. Each point is a place where we consciously stopped: the goal is a language
-a small model can actually write, not the most expressive logic possible.
+This is a **boolean SAT checker with three-valued logic** (TRUE / FALSE /
+UNKNOWN) on top, and nothing else. It does not do numbers/arithmetic,
+quantifiers (∀/∃), probabilities, nested axioms, or type/schema declarations.
+Numbers become named boolean atoms (`Motor over_100`); their order is stated as an
+axiom — see "How code tasks map into boolean logic". That keeps the language
+small enough for a local model to write reliably.
 
-| What we excluded | Why | What it would mean for the model |
-|---|---|---|
-| **Numbers and arithmetic** (`speed = 100`, `derive`) | `Impossible` works over boolean values, not numbers. That is SMT, a different engine. | The model would have to write formulas and computation chains — exactly what it errs at most. Instead: number → boolean atom. |
-| **Quantifiers** (∀x, ∃x — "for all," "exists") | They sharply complicate both the parser and the solver. | The model would get confused about variable scope. For checking concrete facts they are not needed. |
-| **Probabilities** | That is different math (Bayesian), not boolean logic. | Mixing "probable" and "true" is a source of calibration errors — exactly the model's weakness. |
-| **Nested axioms** | Axioms are always flat. | Nesting = deep structure the model holds poorly. A flat list is easier to write and read. |
-| **Types and entity schemas** | No `type`, `class`, schema declarations. | Extra ceremony before writing a fact. The model writes a fact immediately, with no preamble. |
+If you need more than boolean consistency, use a different tool — they already
+exist, there's no reason to reinvent them:
 
-## Phase 2 (optional, most likely not needed): z3
+- **Plain SAT** — if you just want a solver to embed/study, [varisat](https://github.com/jix/varisat)
+  is the CDCL solver whose algorithm our `elenchus-solver` follows.
+- **Arithmetic / numeric proofs (SMT)** — if you need to prove things *about
+  numbers* (`x > 0 ⇒ x + 1 > 1` for all `x`), that is SMT, which is strictly more
+  powerful. Use [z3](https://github.com/Z3Prover/z3) (Rust crate `z3-sys`); its
+  input language is SMT-LIB.
 
-If one day it becomes necessary to prove **numeric** statements without running
-code (`x > 0 ⇒ x + 1 > 1` for all x) — there is a ready SMT solver **z3**
-(open-source, MIT license, Microsoft Research; Rust crate `z3-sys`). No math from
-scratch would be needed — z3 *is* the ready "math system," and its input language
-SMT-LIB is something like "LaTeX for computation."
-
-But for coding it is almost certainly overkill:
-
-- z3's language (SMT-LIB) — Lisp-like parentheses, **hard for small models**;
-- z3 is a heavy native C++ dependency, not pure Rust;
-- arithmetic in code is already checked by **the compiler and tests** — no point duplicating.
-
-So z3 stays a theoretical "later" possibility, not a planned phase.
-
-### Untangling the "you can't prove it without computing" confusion
-
-These are two independent things that are easy to confuse:
-
-```
-Structurally consistent?  → phase 1 (boolean form, are there contradictions)
-Numerically correct?      → code + tests (or z3, if really needed)
-```
-
-Phase 1 catches a huge class of errors WITHOUT a single number. You do not need to
-"compute the whole world" for the engine to be useful — it is about logic, not numbers.
+For code, arithmetic is usually checked by the compiler and tests anyway, so the
+boolean checker covers a large class of bugs without a single number. Structural
+consistency (contradictions?) and numeric correctness (right value?) are
+independent — this tool only does the first.
 
 ---
 

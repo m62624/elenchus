@@ -5,15 +5,15 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-A formal reasoning-verification engine. You write **facts** and **first
-principles** (axioms) in a tiny English-like DSL; a Rust engine does all the
-logical inference and catches contradictions mathematically. The model can only
-err at the axiom level — never in the middle of a long reasoning chain — and that
-error is caught early and mechanically.
+A small **SAT checker with three-valued logic** (TRUE / FALSE / UNKNOWN), aimed at
+small local LLMs. You write **facts** and **first principles** (axioms) in a tiny
+English-like DSL; a Rust engine does the boolean bookkeeping and flags
+contradictions. The model can only get an axiom wrong — never a step in a long
+chain — and that is caught mechanically.
 
-The name *elenchus* (ἔλεγχος) is the Socratic method of cross-examining claims
-against first principles until a contradiction surfaces — exactly what the engine
-does to a set of facts.
+The name comes from *elenchus* (ἔλεγχος) — Socratic refutation by finding
+contradictions; that's just the spirit of it. Mechanically it's a small
+consistency/SAT checker, not a dialogue.
 
 > **Full specification:** [`docs/SPEC.md`](docs/SPEC.md) — the epistemic basis
 > (three-valued Kleene logic), the single `Impossible` primitive and its sugar,
