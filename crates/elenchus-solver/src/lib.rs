@@ -32,7 +32,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use elenchus_compiler::{AtomId, Compiled, Lit, Origin, Value};
+use elenchus_compiler::{AtomId, Clause, Compiled, Lit, Origin, Value};
 pub use elenchus_compiler::{CompileError, MemoryResolver, Resolver, compile, compile_source};
 
 /// Three-valued truth (Kleene). UNKNOWN is a first-class value, not hidden FALSE.
@@ -137,171 +137,230 @@ fn conjunction(model: &[V3], lits: &[Lit]) -> V3 {
     result
 }
 
-/// Evaluate a compiled program with the forward pass.
-pub fn solve(c: &Compiled) -> Report {
-    let n = c.atoms.len();
-    let mut model = vec![V3::Unknown; n];
-    let mut conflicts: Vec<Conflict> = Vec::new();
-    let mut warnings: Vec<Warning> = Vec::new();
-    let mut derived: Vec<Derived> = Vec::new();
+/// The status of one `Impossible` clause under the current model.
+enum ClauseEval {
+    /// Every literal is forced TRUE → the constraint is violated.
+    Violated,
+    /// Some literal is FALSE → the literals cannot all hold → satisfied.
+    Satisfied,
+    /// No FALSE literal, but an UNKNOWN remains: the check is blocked on these atoms.
+    Blocked(Vec<AtomId>),
+}
 
-    // 1. Seed the model from confident facts; catch FACT X + NOT X.
-    let mut true_origin: Vec<Option<Origin>> = vec![None; n];
-    let mut false_origin: Vec<Option<Origin>> = vec![None; n];
-    for f in &c.facts {
-        let slot = match f.value {
-            Value::True => &mut true_origin,
-            Value::False => &mut false_origin,
-        };
-        if slot[f.atom as usize].is_none() {
-            slot[f.atom as usize] = Some(f.origin.clone());
+fn eval_clause(model: &[V3], clause: &Clause) -> ClauseEval {
+    let mut any_false = false;
+    let mut all_true = true;
+    let mut blocked = Vec::new();
+    for l in &clause.lits {
+        match lit_value(model, l) {
+            V3::False => {
+                any_false = true;
+                all_true = false;
+            }
+            V3::Unknown => {
+                all_true = false;
+                blocked.push(l.atom);
+            }
+            V3::True => {}
         }
     }
-    for a in 0..n {
-        match (&true_origin[a], &false_origin[a]) {
-            (Some(t), Some(_)) => {
-                model[a] = V3::True;
-                conflicts.push(Conflict {
-                    origin: t.clone(),
-                    atoms: vec![alloc::format!("{} (asserted both TRUE and FALSE)", label(c, a as AtomId))],
-                });
-            }
-            (Some(_), None) => model[a] = V3::True,
-            (None, Some(_)) => model[a] = V3::False,
-            (None, None) => {}
+    if all_true {
+        ClauseEval::Violated
+    } else if any_false {
+        ClauseEval::Satisfied
+    } else {
+        ClauseEval::Blocked(blocked)
+    }
+}
+
+/// Working state of the forward + backward evaluation, evaluated as a pipeline.
+struct Eval<'a> {
+    c: &'a Compiled,
+    model: Vec<V3>,
+    conflicts: Vec<Conflict>,
+    warnings: Vec<Warning>,
+    derived: Vec<Derived>,
+}
+
+impl<'a> Eval<'a> {
+    fn new(c: &'a Compiled) -> Self {
+        Eval {
+            c,
+            model: vec![V3::Unknown; c.atoms.len()],
+            conflicts: Vec::new(),
+            warnings: Vec::new(),
+            derived: Vec::new(),
         }
     }
 
-    // 2. Forward-chain RULEs to a fixpoint.
-    loop {
-        let mut changed = false;
-        for r in &c.rules {
-            if conjunction(&model, &r.antecedent) != V3::True {
-                continue; // rule does not fire (FALSE or blocked by UNKNOWN)
+    fn label(&self, a: AtomId) -> String {
+        label(self.c, a)
+    }
+
+    /// 1. Seed the model from confident facts; `FACT X` + `NOT X` is a CONFLICT.
+    fn seed_facts(&mut self) {
+        let c = self.c;
+        let n = c.atoms.len();
+        let mut t: Vec<Option<Origin>> = vec![None; n];
+        let mut f: Vec<Option<Origin>> = vec![None; n];
+        for fact in &c.facts {
+            let slot = match fact.value {
+                Value::True => &mut t,
+                Value::False => &mut f,
+            };
+            if slot[fact.atom as usize].is_none() {
+                slot[fact.atom as usize] = Some(fact.origin.clone());
             }
-            for cl in &r.consequent {
-                let target = if cl.negated { V3::False } else { V3::True };
-                let slot = &mut model[cl.atom as usize];
-                match *slot {
-                    V3::Unknown => {
-                        *slot = target;
-                        changed = true;
-                        derived.push(Derived {
-                            atom: label(c, cl.atom),
-                            value: if cl.negated { Value::False } else { Value::True },
-                            origin: r.origin.clone(),
-                        });
-                    }
-                    v if v == target => {}
-                    _ => conflicts.push(Conflict {
-                        origin: r.origin.clone(),
+        }
+        for a in 0..n {
+            match (&t[a], &f[a]) {
+                (Some(o), Some(_)) => {
+                    self.model[a] = V3::True;
+                    self.conflicts.push(Conflict {
+                        origin: o.clone(),
                         atoms: vec![alloc::format!(
-                            "{} (derived value contradicts a known fact)",
-                            label(c, cl.atom)
+                            "{} (asserted both TRUE and FALSE)",
+                            self.label(a as AtomId)
                         )],
-                    }),
+                    });
                 }
+                (Some(_), None) => self.model[a] = V3::True,
+                (None, Some(_)) => self.model[a] = V3::False,
+                (None, None) => {}
             }
-        }
-        if !changed {
-            break;
         }
     }
 
-    // 3. Evaluate Impossible clauses (the desugared AXIOMs).
-    for clause in &c.clauses {
-        let mut any_false = false;
-        let mut all_true = true;
-        let mut unknown_atoms: Vec<AtomId> = Vec::new();
-        for l in &clause.lits {
-            match lit_value(&model, l) {
-                V3::False => {
-                    any_false = true;
-                    all_true = false;
+    /// 2. Forward-chain RULEs to a fixpoint, deriving facts (Kleene antecedent).
+    fn saturate_rules(&mut self) {
+        let c = self.c;
+        loop {
+            let mut changed = false;
+            for r in &c.rules {
+                if conjunction(&self.model, &r.antecedent) != V3::True {
+                    continue; // rule does not fire (FALSE, or blocked by UNKNOWN)
                 }
-                V3::Unknown => {
-                    all_true = false;
-                    unknown_atoms.push(l.atom);
+                for cl in &r.consequent {
+                    let target = if cl.negated { V3::False } else { V3::True };
+                    match self.model[cl.atom as usize] {
+                        V3::Unknown => {
+                            self.model[cl.atom as usize] = target;
+                            changed = true;
+                            self.derived.push(Derived {
+                                atom: self.label(cl.atom),
+                                value: if cl.negated { Value::False } else { Value::True },
+                                origin: r.origin.clone(),
+                            });
+                        }
+                        v if v == target => {}
+                        _ => self.conflicts.push(Conflict {
+                            origin: r.origin.clone(),
+                            atoms: vec![alloc::format!(
+                                "{} (derived value contradicts a known fact)",
+                                self.label(cl.atom)
+                            )],
+                        }),
+                    }
                 }
-                V3::True => {}
+            }
+            if !changed {
+                break;
             }
         }
+    }
 
-        if all_true {
-            // Impossible([..]) with every literal TRUE → the constraint is violated.
-            conflicts.push(Conflict {
-                origin: clause.origin.clone(),
-                atoms: clause.lits.iter().map(|l| label(c, l.atom)).collect(),
-            });
-        } else if any_false {
-            // Some literal is FALSE → the literals cannot all be TRUE → satisfied.
-        } else {
-            // No FALSE literal, not all TRUE → an UNKNOWN blocks the check.
-            // Implication axioms warn (missing required data); list axioms treat
-            // UNKNOWN as "no conflict yet" and stay consistent.
-            if clause.origin.kind == "AXIOM" {
-                warnings.push(Warning {
+    /// 3. Evaluate every `Impossible` clause against the model.
+    fn check_axioms(&mut self) {
+        let c = self.c;
+        for clause in &c.clauses {
+            match eval_clause(&self.model, clause) {
+                ClauseEval::Violated => self.conflicts.push(Conflict {
                     origin: clause.origin.clone(),
-                    blocked_by: unknown_atoms.iter().map(|a| label(c, *a)).collect(),
-                });
+                    atoms: clause.lits.iter().map(|l| self.label(l.atom)).collect(),
+                }),
+                ClauseEval::Satisfied => {}
+                // Implication axioms warn on missing data; list axioms treat
+                // UNKNOWN as "no conflict yet" and stay consistent.
+                ClauseEval::Blocked(unknowns) if clause.origin.kind == "AXIOM" => {
+                    self.warnings.push(Warning {
+                        origin: clause.origin.clone(),
+                        blocked_by: unknowns.iter().map(|a| self.label(*a)).collect(),
+                    });
+                }
+                ClauseEval::Blocked(_) => {}
             }
         }
     }
 
-    // 4. Backward pass (model finding), only when a CHECK requests BIDIRECTIONAL.
-    //    Encodes the axioms + rules + confident facts as CNF and asks the SAT
-    //    core how many models exist (projected onto the constrained atoms):
-    //    0 → the system is jointly unsatisfiable (CONFLICT the forward pass may
-    //    have missed); ≥2 → an alternative model exists (UNDERDETERMINED).
-    let mut underdetermined: Option<String> = None;
-    if c.checks.iter().any(|ch| ch.bidirectional) {
-        let (cnf, project) = build_cnf(c);
+    /// Backward pass (model finding), run only when a CHECK requests BIDIRECTIONAL.
+    /// Encodes axioms + rules + facts as CNF and asks the SAT core for models.
+    /// No model means the system is jointly unsatisfiable (a CONFLICT the forward
+    /// pass may have missed). Two or more models means an alternative exists; we
+    /// return the UNDERDETERMINED witness — the first constrained atom the two
+    /// models disagree on.
+    fn backward_pass(&mut self) -> Option<String> {
+        if !self.c.checks.iter().any(|ch| ch.bidirectional) {
+            return None;
+        }
+        let (cnf, project) = build_cnf(self.c);
         let found = sat::models(&cnf, &project, 2);
         match found.len() {
-            0 if conflicts.is_empty() => conflicts.push(Conflict {
-                origin: Origin {
-                    source: String::from("<system>"),
-                    line: 0,
-                    axiom: None,
-                    kind: "UNSAT",
-                },
-                atoms: vec![String::from("the axioms and facts are jointly unsatisfiable")],
-            }),
+            0 if self.conflicts.is_empty() => {
+                self.conflicts.push(Conflict {
+                    origin: Origin {
+                        source: String::from("<system>"),
+                        line: 0,
+                        axiom: None,
+                        kind: "UNSAT",
+                    },
+                    atoms: vec![String::from("the axioms and facts are jointly unsatisfiable")],
+                });
+                None
+            }
             n if n >= 2 => {
-                // Witness: the first constrained atom on which the two models
-                // disagree — asserting it would pin the system down.
                 let (m0, m1) = (&found[0], &found[1]);
-                underdetermined = project
+                project
                     .iter()
                     .find(|&&v| m0[v as usize] != m1[v as usize])
-                    .map(|&v| label(c, v))
-                    .or_else(|| Some(String::from("a free atom")));
+                    .map(|&v| self.label(v))
+                    .or_else(|| Some(String::from("a free atom")))
             }
-            _ => {}
+            _ => None,
         }
     }
 
-    // Deterministic ordering: by source then line.
-    conflicts.sort_by_key(|c| key(&c.origin));
-    warnings.sort_by_key(|w| key(&w.origin));
-
-    let status = if !conflicts.is_empty() {
-        Status::Conflict
-    } else if underdetermined.is_some() {
-        Status::Underdetermined
-    } else if !warnings.is_empty() {
-        Status::Warning
-    } else {
-        Status::Consistent
-    };
-
-    Report {
-        status,
-        conflicts,
-        warnings,
-        derived,
-        underdetermined,
+    /// Run the backward pass, sort deterministically, and assemble the report.
+    fn finish(mut self) -> Report {
+        let underdetermined = self.backward_pass();
+        self.conflicts.sort_by_key(|c| key(&c.origin));
+        self.warnings.sort_by_key(|w| key(&w.origin));
+        let status = if !self.conflicts.is_empty() {
+            Status::Conflict
+        } else if underdetermined.is_some() {
+            Status::Underdetermined
+        } else if !self.warnings.is_empty() {
+            Status::Warning
+        } else {
+            Status::Consistent
+        };
+        Report {
+            status,
+            conflicts: self.conflicts,
+            warnings: self.warnings,
+            derived: self.derived,
+            underdetermined,
+        }
     }
+}
+
+/// Evaluate a compiled program: the three-valued forward pass, then the backward
+/// pass on `BIDIRECTIONAL`.
+pub fn solve(c: &Compiled) -> Report {
+    let mut e = Eval::new(c);
+    e.seed_facts();
+    e.saturate_rules();
+    e.check_axioms();
+    e.finish()
 }
 
 /// Encode the axioms (`Impossible` clauses), rules (as implications), and
