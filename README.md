@@ -91,6 +91,12 @@ $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/relea
 > powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
 ```
 
+On **Windows** there is also a `.msi` per binary (`elenchus-cli-*.msi`,
+`elenchus-mcp-*.msi`) on the Releases page. The MSI registers the app in **"Add or
+remove programs"**, so it upgrades and uninstalls cleanly through the normal
+Windows UI — the friendlier choice over the PowerShell script if you want managed
+install/uninstall.
+
 ### 3. From source
 
 Needs a Rust toolchain; compiles locally and works on any platform Rust targets.
@@ -118,10 +124,13 @@ $ cargo uninstall elenchus-cli      # removes the `elenchus` binary
 $ cargo uninstall elenchus-mcp
 ```
 
-**Installed with the scripts above:** cargo-dist does not ship an uninstaller, so
-remove the binaries and their install receipts by hand. By default the binaries
-land in `~/.cargo/bin` (note: `cargo uninstall` won't touch these — cargo didn't
-track them), and a receipt is written per app.
+**Installed from a Windows `.msi`:** uninstall from **"Add or remove programs"**
+(or Settings → Apps), exactly like any other Windows app.
+
+**Installed with the shell/PowerShell scripts:** cargo-dist does not ship an
+uninstaller, so remove the binaries and their install receipts by hand. By default
+the binaries land in `~/.cargo/bin` (note: `cargo uninstall` won't touch these —
+cargo didn't track them), and a receipt is written per app.
 
 ```console
 # Linux / macOS

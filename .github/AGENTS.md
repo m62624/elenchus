@@ -13,9 +13,16 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   base run it (an integration branch collecting many PRs is supported).
 - Binary releases ship only the two binaries — the `elenchus` CLI and the
   `elenchus-mcp` server. The three libraries set `dist = false`.
-- Installers are `shell` + `powershell` only (no Homebrew). `cargo binstall`
+- Installers are `shell` + `powershell` + `msi` (no Homebrew). `cargo binstall`
   works on top of the cargo-dist `dist-manifest.json` with no extra config, for
   both `elenchus-cli` and `elenchus-mcp`.
+- The Windows `.msi` needs per-package WiX config: `[package.metadata.wix]`
+  (`upgrade-guid`/`path-guid`, both `license`/`eula = false`) plus a committed
+  `crates/<bin>/wix/main.wxs`. The GUIDs are stable identities and must match the
+  `.wxs` — never regenerate/change them. These were produced once via `dist init`
+  in a throwaway clone (NOT in-tree, which would clobber `release.yml`). MSI
+  builds inside `dist build`; no extra CI step (WiX v3 is pre-installed on the
+  GitHub Windows runners), so `bin-release.yml` is unchanged.
 - The cargo-dist workflow is customized (`workflow_call`), so `dist generate`
   is **not** run to keep it in sync; `allow-dirty = ["ci"]` is set so `dist plan`
   does not fail on it. Do not blindly run `dist init`/`dist generate` — it would
@@ -44,7 +51,7 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   repository's **default branch** — not hardcoded).
 - `workflows/bin-release.yml` → the cargo-dist-generated workflow, kept intact
   except its trigger was changed to `on: workflow_call` (inputs: `tag`) and every
-  checkout uses `ref: ${{ inputs.tag }}`. Builds binaries + shell/powershell
+  checkout uses `ref: ${{ inputs.tag }}`. Builds binaries + shell/powershell/msi
   installers for the 6 configured targets and publishes the GitHub Release. The
   generated `publish-homebrew-formula` job was removed by hand (Homebrew is no
   longer an installer); if you ever rerun `dist generate`, drop it again.

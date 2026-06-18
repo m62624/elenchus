@@ -48,11 +48,13 @@ serde_json = "1"
 [workspace.metadata.dist]
 cargo-dist-version = "0.31.0"
 ci = ["github"]
-# Shipped as prebuilt-binary installers only: a POSIX `sh` script (Linux/macOS)
-# and a PowerShell script (Windows). No Homebrew tap. `cargo binstall` layers on
-# top for free — it reads the release's cargo-dist `dist-manifest.json`, so no
-# extra Cargo.toml config is needed (see the README install section).
-installers = ["shell", "powershell"]
+# Shipped as prebuilt-binary installers: a POSIX `sh` script (Linux/macOS), a
+# PowerShell script (Windows), and a Windows `.msi` (registers in "Add or remove
+# programs", so it uninstalls/upgrades cleanly; needs the per-package WiX
+# `upgrade-guid` below). No Homebrew tap. `cargo binstall` layers on top for free
+# — it reads the release's cargo-dist `dist-manifest.json`, so no extra config is
+# needed (see the README install section).
+installers = ["shell", "powershell", "msi"]
 # The release workflow is customized (workflow_call, driven by the pin/v*
 # orchestrator), so don't fail `dist plan` for the CI file being "out of date".
 allow-dirty = ["ci"]
