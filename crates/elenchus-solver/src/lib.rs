@@ -109,6 +109,117 @@ impl Report {
             Status::Consistent => 0,
         }
     }
+
+    /// Render the report as a single-line JSON object (for tooling / MCP).
+    /// Hand-written so the crate stays dependency-free and `no_std`.
+    pub fn to_json(&self) -> String {
+        use core::fmt::Write as _;
+        let mut s = String::new();
+        let _ = write!(s, "{{\"status\":");
+        json_str(status_name(self.status), &mut s);
+        let _ = write!(s, ",\"exit_code\":{}", self.exit_code());
+
+        s.push_str(",\"conflicts\":[");
+        for (i, c) in self.conflicts.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&c.origin, &mut s);
+            s.push_str(",\"atoms\":");
+            json_array(&c.atoms, &mut s);
+            s.push('}');
+        }
+        s.push_str("],\"warnings\":[");
+        for (i, w) in self.warnings.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&w.origin, &mut s);
+            s.push_str(",\"blocked_by\":");
+            json_array(&w.blocked_by, &mut s);
+            s.push('}');
+        }
+        s.push_str("],\"derived\":[");
+        for (i, d) in self.derived.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push('{');
+            json_origin_fields(&d.origin, &mut s);
+            s.push_str(",\"atom\":");
+            json_str(&d.atom, &mut s);
+            let _ = write!(s, ",\"value\":{}", matches!(d.value, Value::True));
+            s.push('}');
+        }
+        s.push_str("],\"underdetermined\":");
+        match &self.underdetermined {
+            Some(atom) => json_str(atom, &mut s),
+            None => s.push_str("null"),
+        }
+        s.push('}');
+        s
+    }
+}
+
+fn status_name(s: Status) -> &'static str {
+    match s {
+        Status::Consistent => "CONSISTENT",
+        Status::Underdetermined => "UNDERDETERMINED",
+        Status::Warning => "WARNING",
+        Status::Conflict => "CONFLICT",
+    }
+}
+
+/// Push a JSON-escaped string literal (including the surrounding quotes).
+fn json_str(value: &str, out: &mut String) {
+    use core::fmt::Write as _;
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+fn json_array(items: &[String], out: &mut String) {
+    out.push('[');
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        json_str(item, out);
+    }
+    out.push(']');
+}
+
+/// `"axiom":..,"kind":..,"source":..,"line":..` (no braces).
+fn json_origin_fields(o: &Origin, out: &mut String) {
+    use core::fmt::Write as _;
+    out.push_str("\"axiom\":");
+    match &o.axiom {
+        Some(name) => json_str(name, out),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"kind\":");
+    json_str(o.kind, out);
+    out.push_str(",\"source\":");
+    json_str(&o.source, out);
+    let _ = write!(out, ",\"line\":{}", o.line);
+}
+
+/// Open an object `{` and write the origin fields.
+fn json_origin(o: &Origin, out: &mut String) {
+    out.push('{');
+    json_origin_fields(o, out);
 }
 
 fn label(c: &Compiled, a: AtomId) -> String {

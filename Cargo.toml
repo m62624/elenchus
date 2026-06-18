@@ -4,6 +4,7 @@ members = [
     "crates/elenchus-parser",
     "crates/elenchus-compiler",
     "crates/elenchus-solver",
+    "crates/elenchus-cli",
 ]
 
 [workspace.package]
@@ -18,6 +19,9 @@ license = "MIT"
 elenchus-parser = { path = "crates/elenchus-parser", version = "0.1.0" }
 elenchus-compiler = { path = "crates/elenchus-compiler", version = "0.1.0", default-features = false }
 elenchus-solver = { path = "crates/elenchus-solver", version = "0.1.0", default-features = false }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 # Shared Dependencies (versions pinned 1:1 with the vsm workspace)
 nom = { version = "8.0.0", default-features = false, features = ["alloc"] }

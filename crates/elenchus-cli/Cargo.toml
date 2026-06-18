@@ -1,0 +1,20 @@
+[package]
+name = "elenchus-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for the elenchus reasoning engine: check a .vrf string or file and report CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT."
+readme = "README.md"
+keywords = ["logic", "reasoning", "verification", "cli", "sat"]
+categories = ["command-line-utilities", "mathematics"]
+
+[[bin]]
+name = "elenchus"
+path = "src/main.rs"
+
+[dependencies]
+# std is required here (this is a binary): enable it on the otherwise-no_std libs.
+elenchus-solver = { workspace = true, features = ["std"] }
+elenchus-compiler = { workspace = true, features = ["std"] }
+clap = { workspace = true }
