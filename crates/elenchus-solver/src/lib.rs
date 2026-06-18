@@ -13,15 +13,19 @@
 //!      **WARNING** (blocked by missing data), for list axioms (EXCLUSIVE/FORBIDS/
 //!      ONEOF/ATLEAST) it is CONSISTENT (UNKNOWN means "no conflict yet").
 //!
-//! This is **phase 1**: the forward pass needs no SAT backend. The backward pass
-//! (`UNDERDETERMINED` via all-SAT / model finding) and a varisat port are future
-//! work in this crate.
+//! On `CHECK ... BIDIRECTIONAL` a **backward pass** also runs: the axioms, rules
+//! and confident facts are encoded as CNF and handed to a small in-crate CDCL SAT
+//! core ([`sat`], replicating varisat's algorithm) to count models — 0 means the
+//! system is jointly unsatisfiable (a CONFLICT the forward pass may miss), ≥2
+//! means an alternative model exists (`UNDERDETERMINED`).
 #![no_std]
 
 extern crate alloc;
 
 #[cfg(feature = "std")]
 extern crate std;
+
+pub mod sat;
 
 use alloc::string::String;
 use alloc::vec;
@@ -49,10 +53,13 @@ impl V3 {
     }
 }
 
-/// Overall verdict for the system (UNDERDETERMINED is deferred to the backward pass).
+/// Overall verdict for the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Consistent,
+    /// The constraints are satisfiable but do not pin a unique assignment — an
+    /// alternative model exists (found by the backward pass on `BIDIRECTIONAL`).
+    Underdetermined,
     Warning,
     Conflict,
 }
@@ -227,12 +234,37 @@ pub fn solve(c: &Compiled) -> Report {
         }
     }
 
+    // 4. Backward pass (model finding), only when a CHECK requests BIDIRECTIONAL.
+    //    Encodes the axioms + rules + confident facts as CNF and asks the SAT
+    //    core how many models exist (projected onto the constrained atoms):
+    //    0 → the system is jointly unsatisfiable (CONFLICT the forward pass may
+    //    have missed); ≥2 → an alternative model exists (UNDERDETERMINED).
+    let mut underdetermined = false;
+    if c.checks.iter().any(|ch| ch.bidirectional) {
+        let (cnf, project) = build_cnf(c);
+        match sat::models_upto(&cnf, &project, 2) {
+            0 if conflicts.is_empty() => conflicts.push(Conflict {
+                origin: Origin {
+                    source: String::from("<system>"),
+                    line: 0,
+                    axiom: None,
+                    kind: "UNSAT",
+                },
+                atoms: vec![String::from("the axioms and facts are jointly unsatisfiable")],
+            }),
+            n if n >= 2 => underdetermined = true,
+            _ => {}
+        }
+    }
+
     // Deterministic ordering: by source then line.
     conflicts.sort_by_key(|c| key(&c.origin));
     warnings.sort_by_key(|w| key(&w.origin));
 
     let status = if !conflicts.is_empty() {
         Status::Conflict
+    } else if underdetermined {
+        Status::Underdetermined
     } else if !warnings.is_empty() {
         Status::Warning
     } else {
@@ -245,6 +277,59 @@ pub fn solve(c: &Compiled) -> Report {
         warnings,
         derived,
     }
+}
+
+/// Encode the axioms (`Impossible` clauses), rules (as implications), and
+/// confident facts (as unit clauses) into CNF for the backward pass. Also
+/// returns the constrained atoms (those appearing in a clause or rule) to
+/// project model counting onto.
+fn build_cnf(c: &Compiled) -> (sat::Cnf, Vec<sat::Var>) {
+    use sat::SatLit;
+    let mut cnf = sat::Cnf::new(c.atoms.len());
+    let mut constrained = vec![false; c.atoms.len()];
+    let mark = |a: AtomId, constrained: &mut [bool]| constrained[a as usize] = true;
+
+    // Impossible([L1..Ln]) == (¬L1 ∨ … ∨ ¬Ln); ¬L of (atom, negated) is (atom, negated).
+    for clause in &c.clauses {
+        let lits = clause
+            .lits
+            .iter()
+            .map(|l| {
+                mark(l.atom, &mut constrained);
+                SatLit::new(l.atom, l.negated)
+            })
+            .collect();
+        cnf.add_clause(lits);
+    }
+    // RULE WHEN A.. THEN C.. == for each C: (¬A1 ∨ … ∨ C).
+    for r in &c.rules {
+        for cons in &r.consequent {
+            let mut lits: Vec<SatLit> = r
+                .antecedent
+                .iter()
+                .map(|a| {
+                    mark(a.atom, &mut constrained);
+                    SatLit::new(a.atom, a.negated)
+                })
+                .collect();
+            mark(cons.atom, &mut constrained);
+            lits.push(SatLit::new(cons.atom, !cons.negated));
+            cnf.add_clause(lits);
+        }
+    }
+    // Confident facts as unit clauses.
+    for f in &c.facts {
+        let lit = match f.value {
+            Value::True => SatLit::positive(f.atom),
+            Value::False => SatLit::negative(f.atom),
+        };
+        cnf.add_clause(vec![lit]);
+    }
+
+    let project = (0..c.atoms.len() as AtomId)
+        .filter(|&a| constrained[a as usize])
+        .collect();
+    (cnf, project)
 }
 
 fn key(o: &Origin) -> (String, u32) {
@@ -267,6 +352,7 @@ impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Status::Consistent => "CONSISTENT",
+            Status::Underdetermined => "UNDERDETERMINED",
             Status::Warning => "WARNING",
             Status::Conflict => "CONFLICT",
         })
@@ -384,6 +470,39 @@ mod tests {
         // rule derives `A needs oxygen` TRUE, but it's asserted FALSE.
         let r = verify_source("<t>", "FACT A has flying\nNOT A needs oxygen\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
+    }
+
+    #[test]
+    fn bidirectional_finds_alternative_model_underdetermined() {
+        // EXCLUSIVE(a,b) with no facts: {FF, TF, FT} all satisfy → not unique.
+        let r = verify_source(
+            "<t>",
+            "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+        )
+        .unwrap();
+        assert_eq!(r.status, Status::Underdetermined);
+    }
+
+    #[test]
+    fn fact_pins_unique_model_consistent() {
+        // Same axiom, but FACT x a forces b false → the only model → CONSISTENT.
+        let r = verify_source(
+            "<t>",
+            "FACT x a\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+        )
+        .unwrap();
+        assert_eq!(r.status, Status::Consistent);
+    }
+
+    #[test]
+    fn no_bidirectional_skips_backward_pass() {
+        // Plain CHECK: alternatives are not searched → stays CONSISTENT, not UNDERDETERMINED.
+        let r = verify_source(
+            "<t>",
+            "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+        )
+        .unwrap();
+        assert_eq!(r.status, Status::Consistent);
     }
 
     #[test]
