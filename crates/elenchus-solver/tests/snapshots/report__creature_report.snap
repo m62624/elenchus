@@ -8,4 +8,5 @@ RESULT: WARNING
   WARNING   wings_need_bone (AXIOM)  [creature.vrf:15]
       blocked by: Creature.A has bone
   DERIVED   Creature.A needs oxygen = TRUE   from needs_oxygen (RULE)  [creature.vrf:26]
-SUMMARY: 0 conflicts, 2 warnings, 1 derived
+SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
+EXIT_CODE: 1

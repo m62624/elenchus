@@ -16,15 +16,15 @@ license = "MIT"
 
 # Local Crates (version pinned so the crates can be published to crates.io)
 elenchus-parser = { path = "crates/elenchus-parser", version = "0.1.0" }
-elenchus-compiler = { path = "crates/elenchus-compiler", version = "0.1.0" }
-elenchus-solver = { path = "crates/elenchus-solver", version = "0.1.0" }
+elenchus-compiler = { path = "crates/elenchus-compiler", version = "0.1.0", default-features = false }
+elenchus-solver = { path = "crates/elenchus-solver", version = "0.1.0", default-features = false }
 
 # Shared Dependencies (versions pinned 1:1 with the vsm workspace)
 nom = { version = "8.0.0", default-features = false, features = ["alloc"] }
 nom_locate = { version = "5.0.0", default-features = false, features = [
     "alloc",
 ] }
-thiserror = "2.0"
+thiserror = { version = "2.0", default-features = false }
 sha2 = { version = "0.10.9", default-features = false }
 
 # Snapshot testing for parser error output

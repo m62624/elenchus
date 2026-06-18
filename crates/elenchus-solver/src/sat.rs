@@ -397,20 +397,21 @@ pub fn solve(cnf: &Cnf) -> Option<Vec<bool>> {
     if s.run() { Some(s.model()) } else { None }
 }
 
-/// Count distinct models, projected onto `project` variables, up to `limit`
-/// (all-SAT via blocking clauses). Returns `min(#models_over_projection, limit)`.
-pub fn models_upto(cnf: &Cnf, project: &[Var], limit: usize) -> usize {
+/// Enumerate up to `limit` models, distinct over the `project` variables
+/// (all-SAT via blocking clauses). Each returned model is a full assignment.
+pub fn models(cnf: &Cnf, project: &[Var], limit: usize) -> Vec<Vec<bool>> {
+    let mut out = Vec::new();
     if project.is_empty() {
-        // No projection dimension: satisfiable ⇒ exactly one (trivial) projection.
-        return if solve(cnf).is_some() { 1.min(limit) } else { 0 };
+        if limit > 0 && let Some(m) = solve(cnf) {
+            out.push(m);
+        }
+        return out;
     }
     let mut work = cnf.clone();
-    let mut count = 0;
-    while count < limit {
+    while out.len() < limit {
         match solve(&work) {
             None => break,
             Some(model) => {
-                count += 1;
                 // Block this exact projection so the next solve finds a different one.
                 let block: Vec<SatLit> = project
                     .iter()
@@ -422,11 +423,17 @@ pub fn models_upto(cnf: &Cnf, project: &[Var], limit: usize) -> usize {
                         }
                     })
                     .collect();
+                out.push(model);
                 work.add_clause(block);
             }
         }
     }
-    count
+    out
+}
+
+/// Count distinct models projected onto `project`, up to `limit`.
+pub fn models_upto(cnf: &Cnf, project: &[Var], limit: usize) -> usize {
+    models(cnf, project, limit).len()
 }
 
 #[cfg(test)]

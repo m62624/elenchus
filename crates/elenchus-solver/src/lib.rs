@@ -95,6 +95,20 @@ pub struct Report {
     pub conflicts: Vec<Conflict>,
     pub warnings: Vec<Warning>,
     pub derived: Vec<Derived>,
+    /// When `UNDERDETERMINED`, the label of an atom left free by the constraints
+    /// (asserting it would pin the model down).
+    pub underdetermined: Option<String>,
+}
+
+impl Report {
+    /// CLI-style exit code: 0 = consistent, 1 = underdetermined/warnings, 2 = conflicts.
+    pub fn exit_code(&self) -> i32 {
+        match self.status {
+            Status::Conflict => 2,
+            Status::Underdetermined | Status::Warning => 1,
+            Status::Consistent => 0,
+        }
+    }
 }
 
 fn label(c: &Compiled, a: AtomId) -> String {
@@ -239,10 +253,11 @@ pub fn solve(c: &Compiled) -> Report {
     //    core how many models exist (projected onto the constrained atoms):
     //    0 → the system is jointly unsatisfiable (CONFLICT the forward pass may
     //    have missed); ≥2 → an alternative model exists (UNDERDETERMINED).
-    let mut underdetermined = false;
+    let mut underdetermined: Option<String> = None;
     if c.checks.iter().any(|ch| ch.bidirectional) {
         let (cnf, project) = build_cnf(c);
-        match sat::models_upto(&cnf, &project, 2) {
+        let found = sat::models(&cnf, &project, 2);
+        match found.len() {
             0 if conflicts.is_empty() => conflicts.push(Conflict {
                 origin: Origin {
                     source: String::from("<system>"),
@@ -252,7 +267,16 @@ pub fn solve(c: &Compiled) -> Report {
                 },
                 atoms: vec![String::from("the axioms and facts are jointly unsatisfiable")],
             }),
-            n if n >= 2 => underdetermined = true,
+            n if n >= 2 => {
+                // Witness: the first constrained atom on which the two models
+                // disagree — asserting it would pin the system down.
+                let (m0, m1) = (&found[0], &found[1]);
+                underdetermined = project
+                    .iter()
+                    .find(|&&v| m0[v as usize] != m1[v as usize])
+                    .map(|&v| label(c, v))
+                    .or_else(|| Some(String::from("a free atom")));
+            }
             _ => {}
         }
     }
@@ -263,7 +287,7 @@ pub fn solve(c: &Compiled) -> Report {
 
     let status = if !conflicts.is_empty() {
         Status::Conflict
-    } else if underdetermined {
+    } else if underdetermined.is_some() {
         Status::Underdetermined
     } else if !warnings.is_empty() {
         Status::Warning
@@ -276,6 +300,7 @@ pub fn solve(c: &Compiled) -> Report {
         conflicts,
         warnings,
         derived,
+        underdetermined,
     }
 }
 
@@ -377,6 +402,10 @@ impl fmt::Display for Report {
             writeln!(f, "  WARNING   {}", axiom_tag(&w.origin))?;
             writeln!(f, "      blocked by: {}", w.blocked_by.join(", "))?;
         }
+        if let Some(atom) = &self.underdetermined {
+            writeln!(f, "  UNDERDETERMINED  an alternative model exists")?;
+            writeln!(f, "      pin it down: add  FACT {atom}  or  NOT {atom}")?;
+        }
         for d in &self.derived {
             let v = match d.value {
                 Value::True => "TRUE",
@@ -390,13 +419,16 @@ impl fmt::Display for Report {
                 axiom_tag(&d.origin)
             )?;
         }
-        write!(
+        let underdetermined = usize::from(self.status == Status::Underdetermined);
+        writeln!(
             f,
-            "SUMMARY: {} conflicts, {} warnings, {} derived",
+            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived",
             self.conflicts.len(),
+            underdetermined,
             self.warnings.len(),
             self.derived.len()
-        )
+        )?;
+        write!(f, "EXIT_CODE: {}", self.exit_code())
     }
 }
 
