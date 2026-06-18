@@ -1,22 +1,26 @@
 //! A compact, single-threaded CDCL SAT solver in `no_std`, replicating the core
-//! algorithm of varisat (jix/varisat):
+//! algorithm of varisat (jix/varisat) in a readable, lazy style.
 //!
-//! - a **trail** of assigned literals partitioned into **decision levels**
-//!   (`prop/assignment.rs`);
-//! - **two-watched-literal** unit propagation (`prop/long.rs`);
-//! - **1-UIP conflict analysis** with clause learning (`analyze_conflict.rs`);
-//! - **non-chronological backjumping** to the asserting level;
-//! - **VSIDS** activity-based decisions with **phase saving**.
+//! The solver is a small **state machine**: [`Solver::step`] performs exactly one
+//! transition and returns a [`Step`] saying which way the search went
+//! (propagated / hit a conflict / made a decision / SAT / UNSAT). [`Solver::search`]
+//! drives steps to a terminal state. Model enumeration is a lazy [`Models`]
+//! iterator that solves **incrementally** — each `next()` adds a blocking clause
+//! and continues from the existing state rather than re-solving from scratch.
 //!
-//! varisat's surrounding infrastructure — proof/DRAT logging, clause-DB garbage
-//! collection, the assumptions framework, the `partial_ref` context, restarts,
-//! and multithreading — is intentionally left out; this is the bare solving core
-//! we need for the backward pass (consistency + model finding over small inputs).
+//! Pieces mirror varisat's modules: the trail + decision levels
+//! (`prop/assignment.rs`), two-watched-literal propagation (`prop/long.rs`),
+//! 1-UIP conflict analysis with clause learning (`analyze_conflict.rs`),
+//! non-chronological backjumping, and VSIDS decisions with phase saving.
+//! Its infrastructure (proof/DRAT logging, clause-DB GC, assumptions, restarts,
+//! the `partial_ref` context, multithreading) is intentionally omitted.
 
 extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
+
+// --- literals & formulas ---------------------------------------------------
 
 /// A boolean variable, identified by a dense index.
 pub type Var = u32;
@@ -68,6 +72,9 @@ impl Cnf {
     }
 }
 
+// --- internal state --------------------------------------------------------
+
+/// Why a variable was assigned — needed for conflict analysis and backtracking.
 #[derive(Clone, Copy)]
 enum Reason {
     Decision,
@@ -75,15 +82,30 @@ enum Reason {
     Long(usize),
 }
 
+/// One watched-literal entry: a clause plus a cached "other" literal so a true
+/// blocking literal lets us skip the clause entirely.
 #[derive(Clone, Copy)]
 struct Watch {
     cref: usize,
     blocking: SatLit,
 }
 
+/// The outcome of a single CDCL transition. Makes the search direction explicit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Step {
+    /// A clause was falsified; it was analyzed, learned, and backjumped.
+    LearntFromConflict,
+    /// A new decision literal was assigned.
+    Decided,
+    /// Every variable is assigned — the formula is satisfied.
+    Sat,
+    /// A conflict at decision level 0 — the formula is unsatisfiable.
+    Unsat,
+}
+
 struct Solver {
     num_vars: usize,
-    clauses: Vec<Vec<SatLit>>, // originals + learned
+    clauses: Vec<Vec<SatLit>>, // originals + learned + blocking
     watches: Vec<Vec<Watch>>,  // indexed by literal code; a clause watching `w` lives in watches[!w]
     assign: Vec<Option<bool>>, // per var
     level: Vec<u32>,           // per var (valid when assigned)
@@ -94,7 +116,8 @@ struct Solver {
     activity: Vec<f64>,
     var_inc: f64,
     polarity: Vec<bool>, // phase saving
-    ok: bool,            // false once a top-level conflict makes it UNSAT
+    seen: Vec<bool>,     // reusable scratch for analyze (invariant: all-false between calls)
+    ok: bool,            // false once the formula is known UNSAT
 }
 
 impl Solver {
@@ -113,6 +136,7 @@ impl Solver {
             activity: vec![0.0; n],
             var_inc: 1.0,
             polarity: vec![false; n],
+            seen: vec![false; n],
             ok: true,
         };
         for clause in &cnf.clauses {
@@ -121,40 +145,82 @@ impl Solver {
         s
     }
 
+    // -- assignment queries --
+
     fn lit_is_true(&self, l: SatLit) -> bool {
         self.assign[l.var() as usize] == Some(!l.is_negative())
     }
     fn lit_is_false(&self, l: SatLit) -> bool {
         self.assign[l.var() as usize] == Some(l.is_negative())
     }
+    fn current_level(&self) -> u32 {
+        self.decisions.len() as u32
+    }
 
+    // -- clause loading --
+
+    fn watch(&mut self, cref: usize, a: SatLit, b: SatLit) {
+        self.watches[a.negate().code()].push(Watch { cref, blocking: b });
+        self.watches[b.negate().code()].push(Watch { cref, blocking: a });
+    }
+
+    /// Attach a clause under the *current* assignment. Both watched literals must
+    /// be non-false, or the clause is unit/conflicting and is handled directly.
+    /// This is what makes incremental clause addition (blocking clauses added
+    /// mid-search, at level 0) correct — naively watching `lits[0..2]` would break
+    /// the invariant when one is already false.
     fn add_clause(&mut self, lits: &[SatLit]) {
         if !self.ok {
             return;
         }
-        match lits.len() {
-            0 => self.ok = false,
-            1 => {
-                let l = lits[0];
-                if self.lit_is_false(l) {
-                    self.ok = false;
-                } else if !self.lit_is_true(l) {
-                    self.enqueue(l, Reason::Unit);
+        if lits.is_empty() {
+            self.ok = false;
+            return;
+        }
+        if lits.len() == 1 {
+            let l = lits[0];
+            if self.lit_is_false(l) {
+                self.ok = false;
+            } else if !self.lit_is_true(l) {
+                self.enqueue(l, Reason::Unit);
+            }
+            return;
+        }
+
+        // Find up to two non-false literals to watch.
+        let mut clause = lits.to_vec();
+        let mut first = None;
+        let mut second = None;
+        for (i, &l) in clause.iter().enumerate() {
+            if !self.lit_is_false(l) {
+                if first.is_none() {
+                    first = Some(i);
+                } else {
+                    second = Some(i);
+                    break;
                 }
             }
-            _ => {
-                let cref = self.clauses.len();
-                let w0 = lits[0];
-                let w1 = lits[1];
-                self.watches[w0.negate().code()].push(Watch {
-                    cref,
-                    blocking: w1,
-                });
-                self.watches[w1.negate().code()].push(Watch {
-                    cref,
-                    blocking: w0,
-                });
-                self.clauses.push(lits.to_vec());
+        }
+        let cref = self.clauses.len();
+        match (first, second) {
+            // Every literal is false under the current assignment → conflict.
+            (None, _) => self.ok = false,
+            // Exactly one non-false literal → the clause is unit; assert it.
+            (Some(a), None) => {
+                clause.swap(0, a);
+                self.watch(cref, clause[0], clause[1]);
+                let unit = clause[0];
+                self.clauses.push(clause);
+                if !self.lit_is_true(unit) {
+                    self.enqueue(unit, Reason::Long(cref));
+                }
+            }
+            // Two non-false literals → watch them (moved to positions 0 and 1).
+            (Some(a), Some(b)) => {
+                clause.swap(0, a);
+                clause.swap(1, b);
+                self.watch(cref, clause[0], clause[1]);
+                self.clauses.push(clause);
             }
         }
     }
@@ -162,84 +228,98 @@ impl Solver {
     fn enqueue(&mut self, l: SatLit, reason: Reason) {
         let v = l.var() as usize;
         self.assign[v] = Some(!l.is_negative());
-        self.level[v] = self.decisions.len() as u32;
+        self.level[v] = self.current_level();
         self.reason[v] = reason;
         self.trail.push(l);
     }
 
-    /// Two-watched-literal unit propagation. Returns the conflicting clause, if any.
+    // -- propagation (two-watched-literal) --
+
+    /// Unit-propagate to a fixpoint. Returns the conflicting clause, if any.
     fn propagate(&mut self) -> Option<usize> {
         while self.qhead < self.trail.len() {
             let p = self.trail[self.qhead];
             self.qhead += 1;
-            let fl = p.negate(); // the watched literal that just became false
-
-            let mut ws = core::mem::take(&mut self.watches[p.code()]);
-            let mut i = 0;
-            let mut write = 0;
-            let mut conflict = None;
-            while i < ws.len() {
-                let w = ws[i];
-                i += 1;
-                if self.lit_is_true(w.blocking) {
-                    ws[write] = w;
-                    write += 1;
-                    continue;
-                }
-                let cref = w.cref;
-                if self.clauses[cref][0] == fl {
-                    self.clauses[cref].swap(0, 1);
-                }
-                let other = self.clauses[cref][0];
-                let nw = Watch {
-                    cref,
-                    blocking: other,
-                };
-                if other != w.blocking && self.lit_is_true(other) {
-                    ws[write] = nw;
-                    write += 1;
-                    continue;
-                }
-                // Look for a non-false replacement among the unwatched literals.
-                let mut found = false;
-                let len = self.clauses[cref].len();
-                for k in 2..len {
-                    let ck = self.clauses[cref][k];
-                    if !self.lit_is_false(ck) {
-                        self.clauses[cref][1] = ck;
-                        self.clauses[cref][k] = fl;
-                        self.watches[ck.negate().code()].push(nw);
-                        found = true;
-                        break;
-                    }
-                }
-                if found {
-                    continue; // watch moved off `p`'s list
-                }
-                // No replacement: keep watching `fl`.
-                ws[write] = nw;
-                write += 1;
-                if self.lit_is_false(other) {
-                    // conflict: preserve the rest of the list unprocessed
-                    while i < ws.len() {
-                        ws[write] = ws[i];
-                        write += 1;
-                        i += 1;
-                    }
-                    conflict = Some(cref);
-                    break;
-                } else {
-                    self.enqueue(other, Reason::Long(cref));
-                }
-            }
-            ws.truncate(write);
-            self.watches[p.code()] = ws;
-            if conflict.is_some() {
-                return conflict;
+            if let Some(cref) = self.propagate_lit(p) {
+                return Some(cref);
             }
         }
         None
     }
+
+    /// Process the clauses watching `!p` after `p` became true.
+    fn propagate_lit(&mut self, p: SatLit) -> Option<usize> {
+        let fl = p.negate(); // the watched literal that just became false
+        let mut ws = core::mem::take(&mut self.watches[p.code()]);
+        let mut read = 0;
+        let mut write = 0;
+        let mut conflict = None;
+
+        while read < ws.len() {
+            let w = ws[read];
+            read += 1;
+
+            // A satisfied clause (true blocking literal) needs no inspection.
+            if self.lit_is_true(w.blocking) {
+                ws[write] = w;
+                write += 1;
+                continue;
+            }
+
+            let cref = w.cref;
+            if self.clauses[cref][0] == fl {
+                self.clauses[cref].swap(0, 1);
+            }
+            let other = self.clauses[cref][0];
+            let kept = Watch { cref, blocking: other };
+
+            if other != w.blocking && self.lit_is_true(other) {
+                ws[write] = kept;
+                write += 1;
+                continue;
+            }
+
+            // Try to move the watch to a non-false unwatched literal.
+            if let Some(repl) = self.find_replacement(cref, fl) {
+                self.watches[repl.negate().code()].push(kept);
+                continue; // watch left this list
+            }
+
+            // No replacement: keep watching `fl`; the clause is unit or conflicting.
+            ws[write] = kept;
+            write += 1;
+            if self.lit_is_false(other) {
+                while read < ws.len() {
+                    ws[write] = ws[read];
+                    write += 1;
+                    read += 1;
+                }
+                conflict = Some(cref);
+                break;
+            }
+            self.enqueue(other, Reason::Long(cref));
+        }
+
+        ws.truncate(write);
+        self.watches[p.code()] = ws;
+        conflict
+    }
+
+    /// Find a non-false literal in `clause[2..]`, swap it into the watched slot.
+    fn find_replacement(&mut self, cref: usize, fl: SatLit) -> Option<SatLit> {
+        let len = self.clauses[cref].len();
+        for k in 2..len {
+            let ck = self.clauses[cref][k];
+            if !self.lit_is_false(ck) {
+                self.clauses[cref][1] = ck;
+                self.clauses[cref][k] = fl;
+                return Some(ck);
+            }
+        }
+        None
+    }
+
+    // -- conflict analysis (1-UIP) --
 
     fn bump(&mut self, v: usize) {
         self.activity[v] += self.var_inc;
@@ -251,23 +331,25 @@ impl Solver {
         }
     }
 
-    /// 1-UIP conflict analysis. Returns (learned clause, backjump level).
+    /// Learn an asserting clause from `conflict` and return (clause, backjump level).
+    /// Uses the reusable `seen` buffer and restores it to all-false on exit.
     fn analyze(&mut self, conflict: usize) -> (Vec<SatLit>, u32) {
-        let cur_level = self.decisions.len() as u32;
-        let mut seen = vec![false; self.num_vars];
+        let cur_level = self.current_level();
         let mut learned: Vec<SatLit> = vec![SatLit(0)]; // slot 0 = asserting literal
+        let mut touched: Vec<Var> = Vec::new();
         let mut counter = 0usize;
         let mut idx = self.trail.len();
         let mut p: Option<SatLit> = None;
         let mut confl = conflict;
 
         loop {
-            let start = if p.is_some() { 1 } else { 0 }; // reason clause has p at index 0
+            let start = if p.is_some() { 1 } else { 0 }; // a reason clause has p at index 0
             for j in start..self.clauses[confl].len() {
                 let q = self.clauses[confl][j];
                 let v = q.var() as usize;
-                if !seen[v] && self.level[v] > 0 {
-                    seen[v] = true;
+                if !self.seen[v] && self.level[v] > 0 {
+                    self.seen[v] = true;
+                    touched.push(v as Var);
                     self.bump(v);
                     if self.level[v] == cur_level {
                         counter += 1;
@@ -276,49 +358,57 @@ impl Solver {
                     }
                 }
             }
-            // Pick the most recently assigned `seen` literal on the trail.
+            // The most recently assigned `seen` literal on the trail.
             loop {
                 idx -= 1;
-                if seen[self.trail[idx].var() as usize] {
+                if self.seen[self.trail[idx].var() as usize] {
                     break;
                 }
             }
             let lit = self.trail[idx];
-            let v = lit.var() as usize;
-            seen[v] = false;
+            self.seen[lit.var() as usize] = false;
             counter -= 1;
             p = Some(lit);
             if counter == 0 {
                 break;
             }
-            confl = match self.reason[v] {
+            confl = match self.reason[lit.var() as usize] {
                 Reason::Long(c) => c,
-                _ => unreachable!("a current-level resolved literal must have a clause reason"),
+                _ => unreachable!("a resolved current-level literal must have a clause reason"),
             };
         }
         learned[0] = p.unwrap().negate();
 
-        let backjump = if learned.len() == 1 {
-            0
-        } else {
-            let mut max_i = 1;
-            let mut max_l = self.level[learned[1].var() as usize];
-            for (i, &lit) in learned.iter().enumerate().skip(2) {
-                let l = self.level[lit.var() as usize];
-                if l > max_l {
-                    max_l = l;
-                    max_i = i;
-                }
-            }
-            learned.swap(1, max_i);
-            max_l
-        };
+        let backjump = self.assertion_level(&mut learned);
         self.var_inc *= 1.0 / 0.95; // VSIDS decay
+
+        for v in touched {
+            self.seen[v as usize] = false; // restore the scratch buffer
+        }
         (learned, backjump)
     }
 
+    /// Move the highest-level non-asserting literal to index 1 and return its
+    /// level (the level to backjump to), or 0 for a unit clause.
+    fn assertion_level(&self, learned: &mut [SatLit]) -> u32 {
+        if learned.len() == 1 {
+            return 0;
+        }
+        let mut max_i = 1;
+        let mut max_l = self.level[learned[1].var() as usize];
+        for (i, &lit) in learned.iter().enumerate().skip(2) {
+            let l = self.level[lit.var() as usize];
+            if l > max_l {
+                max_l = l;
+                max_i = i;
+            }
+        }
+        learned.swap(1, max_i);
+        max_l
+    }
+
     fn backtrack(&mut self, level: u32) {
-        if self.decisions.len() as u32 <= level {
+        if self.current_level() <= level {
             return;
         }
         let new_len = self.decisions[level as usize];
@@ -332,6 +422,21 @@ impl Solver {
         self.qhead = new_len;
     }
 
+    /// Install a freshly learned clause and enqueue its asserting literal.
+    fn learn(&mut self, learned: Vec<SatLit>) {
+        if learned.len() == 1 {
+            self.enqueue(learned[0], Reason::Unit);
+        } else {
+            let cref = self.clauses.len();
+            self.watch(cref, learned[0], learned[1]);
+            let assert_lit = learned[0];
+            self.clauses.push(learned);
+            self.enqueue(assert_lit, Reason::Long(cref));
+        }
+    }
+
+    // -- decisions --
+
     fn pick_branch(&self) -> Option<SatLit> {
         let mut best: Option<usize> = None;
         let mut best_act = -1.0;
@@ -344,44 +449,44 @@ impl Solver {
         best.map(|v| SatLit::new(v as Var, self.polarity[v]))
     }
 
-    fn run(&mut self) -> bool {
+    // -- the state machine --
+
+    /// Perform one CDCL transition.
+    fn step(&mut self) -> Step {
+        if let Some(cref) = self.propagate() {
+            if self.decisions.is_empty() {
+                return Step::Unsat;
+            }
+            let (learned, backjump) = self.analyze(cref);
+            self.backtrack(backjump);
+            self.learn(learned);
+            Step::LearntFromConflict
+        } else {
+            match self.pick_branch() {
+                None => Step::Sat,
+                Some(lit) => {
+                    self.decisions.push(self.trail.len());
+                    self.enqueue(lit, Reason::Decision);
+                    Step::Decided
+                }
+            }
+        }
+    }
+
+    /// Drive steps until SAT or UNSAT. Re-entrant: after [`Solver::block`] adds a
+    /// clause and resets to level 0, calling this again continues the search.
+    fn search(&mut self) -> bool {
         if !self.ok {
             return false;
         }
-        if self.propagate().is_some() {
-            return false; // conflict implied by the unit/top-level clauses
-        }
         loop {
-            if let Some(cref) = self.propagate() {
-                if self.decisions.is_empty() {
-                    return false; // conflict at level 0 → UNSAT
+            match self.step() {
+                Step::Sat => return true,
+                Step::Unsat => {
+                    self.ok = false;
+                    return false;
                 }
-                let (learned, backjump) = self.analyze(cref);
-                self.backtrack(backjump);
-                if learned.len() == 1 {
-                    self.enqueue(learned[0], Reason::Unit);
-                } else {
-                    let cref = self.clauses.len();
-                    self.watches[learned[0].negate().code()].push(Watch {
-                        cref,
-                        blocking: learned[1],
-                    });
-                    self.watches[learned[1].negate().code()].push(Watch {
-                        cref,
-                        blocking: learned[0],
-                    });
-                    let assert_lit = learned[0];
-                    self.clauses.push(learned);
-                    self.enqueue(assert_lit, Reason::Long(cref));
-                }
-            } else {
-                match self.pick_branch() {
-                    None => return true, // every variable assigned → SAT
-                    Some(lit) => {
-                        self.decisions.push(self.trail.len());
-                        self.enqueue(lit, Reason::Decision);
-                    }
-                }
+                _ => {}
             }
         }
     }
@@ -389,51 +494,83 @@ impl Solver {
     fn model(&self) -> Vec<bool> {
         self.assign.iter().map(|a| a.unwrap_or(false)).collect()
     }
+
+    /// Forbid the current `model`'s projection, then reset to level 0 so the next
+    /// [`Solver::search`] finds a different model. Returns `false` if the
+    /// projection is empty (there is only one model to report).
+    fn block(&mut self, project: &[Var], model: &[bool]) -> bool {
+        if project.is_empty() {
+            return false;
+        }
+        let block: Vec<SatLit> = project
+            .iter()
+            .map(|&v| {
+                if model[v as usize] {
+                    SatLit::negative(v)
+                } else {
+                    SatLit::positive(v)
+                }
+            })
+            .collect();
+        self.backtrack(0);
+        self.add_clause(&block);
+        true
+    }
 }
+
+// --- public API ------------------------------------------------------------
 
 /// Solve a CNF. Returns a full model (`var -> bool`) or `None` if unsatisfiable.
 pub fn solve(cnf: &Cnf) -> Option<Vec<bool>> {
     let mut s = Solver::new(cnf);
-    if s.run() { Some(s.model()) } else { None }
+    if s.search() { Some(s.model()) } else { None }
 }
 
-/// Enumerate up to `limit` models, distinct over the `project` variables
-/// (all-SAT via blocking clauses). Each returned model is a full assignment.
+/// A lazy iterator over the models of a CNF, distinct on the `project` variables.
+/// Solving is **incremental**: each step adds a blocking clause and continues
+/// from the existing solver state instead of restarting from scratch.
+pub struct Models {
+    solver: Solver,
+    project: Vec<Var>,
+    done: bool,
+}
+
+impl Iterator for Models {
+    type Item = Vec<bool>;
+
+    fn next(&mut self) -> Option<Vec<bool>> {
+        if self.done {
+            return None;
+        }
+        if !self.solver.search() {
+            self.done = true;
+            return None;
+        }
+        let model = self.solver.model();
+        if !self.solver.block(&self.project, &model) {
+            self.done = true;
+        }
+        Some(model)
+    }
+}
+
+/// Lazily enumerate all models of `cnf`, distinct over `project`.
+pub fn all_models(cnf: &Cnf, project: Vec<Var>) -> Models {
+    Models {
+        solver: Solver::new(cnf),
+        project,
+        done: false,
+    }
+}
+
+/// Up to `limit` models, distinct over `project` (eagerly collected).
 pub fn models(cnf: &Cnf, project: &[Var], limit: usize) -> Vec<Vec<bool>> {
-    let mut out = Vec::new();
-    if project.is_empty() {
-        if limit > 0 && let Some(m) = solve(cnf) {
-            out.push(m);
-        }
-        return out;
-    }
-    let mut work = cnf.clone();
-    while out.len() < limit {
-        match solve(&work) {
-            None => break,
-            Some(model) => {
-                // Block this exact projection so the next solve finds a different one.
-                let block: Vec<SatLit> = project
-                    .iter()
-                    .map(|&v| {
-                        if model[v as usize] {
-                            SatLit::negative(v)
-                        } else {
-                            SatLit::positive(v)
-                        }
-                    })
-                    .collect();
-                out.push(model);
-                work.add_clause(block);
-            }
-        }
-    }
-    out
+    all_models(cnf, project.to_vec()).take(limit).collect()
 }
 
 /// Count distinct models projected onto `project`, up to `limit`.
 pub fn models_upto(cnf: &Cnf, project: &[Var], limit: usize) -> usize {
-    models(cnf, project, limit).len()
+    all_models(cnf, project.to_vec()).take(limit).count()
 }
 
 #[cfg(test)]
@@ -457,7 +594,6 @@ mod tests {
 
     #[test]
     fn all_four_combos_excluded_is_unsat() {
-        // (a∨b)(¬a∨b)(a∨¬b)(¬a∨¬b) forbids every assignment of (a,b).
         let mut c = Cnf::new(2);
         let (a, b) = (0u32, 1u32);
         c.add_clause(vec![SatLit::positive(a), SatLit::positive(b)]);
@@ -469,7 +605,6 @@ mod tests {
 
     #[test]
     fn forced_chain_has_unique_model() {
-        // (¬a∨b) ∧ a  ⇒  a=T forces b=T; exactly one model over {a,b}.
         let mut c = Cnf::new(2);
         c.add_clause(vec![SatLit::negative(0), SatLit::positive(1)]);
         c.add_clause(vec![SatLit::positive(0)]);
@@ -480,15 +615,24 @@ mod tests {
 
     #[test]
     fn or_clause_has_three_models() {
-        // (a∨b) over {a,b}: TF, FT, TT — three models.
         let mut c = Cnf::new(2);
         c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
         assert_eq!(models_upto(&c, &[0, 1], 10), 3);
     }
 
     #[test]
+    fn lazy_models_iterator_is_incremental() {
+        // (a∨b) has 3 models; the iterator yields them lazily one at a time.
+        let mut c = Cnf::new(2);
+        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+        let first_two: Vec<_> = all_models(&c, vec![0, 1]).take(2).collect();
+        assert_eq!(first_two.len(), 2);
+        assert_ne!(first_two[0], first_two[1]);
+        assert_eq!(all_models(&c, vec![0, 1]).count(), 3);
+    }
+
+    #[test]
     fn larger_random_like_sat_is_solved() {
-        // A small satisfiable instance that needs propagation + backjumping.
         let mut c = Cnf::new(5);
         let l = |v: u32, p: bool| SatLit::new(v, p);
         c.add_clause(vec![l(0, true), l(1, true), l(2, false)]);
@@ -497,12 +641,8 @@ mod tests {
         c.add_clause(vec![l(2, false), l(4, false)]);
         c.add_clause(vec![l(0, true), l(4, true)]);
         let m = solve(&c).expect("sat");
-        // verify the model satisfies every clause
         for clause in &c.clauses {
-            assert!(clause.iter().any(|&lit| {
-                let val = m[lit.var() as usize];
-                val != lit.is_negative()
-            }));
+            assert!(clause.iter().any(|&lit| m[lit.var() as usize] != lit.is_negative()));
         }
     }
 }
