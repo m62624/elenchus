@@ -19,6 +19,8 @@
 //! system is jointly unsatisfiable (a CONFLICT the forward pass may miss), ≥2
 //! means an alternative model exists (`UNDERDETERMINED`).
 #![no_std]
+// Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -38,12 +40,16 @@ pub use elenchus_compiler::{CompileError, MemoryResolver, Resolver, compile, com
 /// Three-valued truth (Kleene). UNKNOWN is a first-class value, not hidden FALSE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum V3 {
+    /// Known true.
     True,
+    /// Known false.
     False,
+    /// Not asserted and not derivable — the absence of information, not falsity.
     Unknown,
 }
 
 impl V3 {
+    /// Kleene negation: TRUE↔FALSE, and UNKNOWN stays UNKNOWN.
     fn not(self) -> V3 {
         match self {
             V3::True => V3::False,
@@ -56,17 +62,21 @@ impl V3 {
 /// Overall verdict for the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
+    /// No contradictions, and (when checked) the model is pinned down.
     Consistent,
     /// The constraints are satisfiable but do not pin a unique assignment — an
     /// alternative model exists (found by the backward pass on `BIDIRECTIONAL`).
     Underdetermined,
+    /// An axiom could not be checked because a needed atom is UNKNOWN.
     Warning,
+    /// An axiom is violated, or the axioms+facts are jointly unsatisfiable.
     Conflict,
 }
 
 /// A violated constraint (or a fact-level contradiction).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
+    /// Provenance of the violated constraint (source, line, axiom name, kind).
     pub origin: Origin,
     /// Human labels of the atoms participating in the contradiction.
     pub atoms: Vec<String>,
@@ -75,6 +85,7 @@ pub struct Conflict {
 /// A constraint that could not be checked because a needed atom is UNKNOWN.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warning {
+    /// Provenance of the constraint that could not be checked.
     pub origin: Origin,
     /// Human labels of the UNKNOWN atoms blocking the check.
     pub blocked_by: Vec<String>,
@@ -83,17 +94,24 @@ pub struct Warning {
 /// A fact produced by a `RULE` during forward chaining.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Derived {
+    /// Human label of the atom whose value was derived.
     pub atom: String,
+    /// The value the rule assigned (TRUE, or FALSE for a `THEN NOT …`).
     pub value: Value,
+    /// Provenance of the `RULE` that produced it.
     pub origin: Origin,
 }
 
 /// The result of solving, self-contained (atom ids already resolved to labels).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
+    /// The overall verdict.
     pub status: Status,
+    /// Every violated constraint / fact contradiction (sorted by source+line).
     pub conflicts: Vec<Conflict>,
+    /// Every axiom blocked by an UNKNOWN atom (sorted by source+line).
     pub warnings: Vec<Warning>,
+    /// Facts produced by forward-chaining `RULE`s.
     pub derived: Vec<Derived>,
     /// When `UNDERDETERMINED`, the label of an atom left free by the constraints
     /// (asserting it would pin the model down).
@@ -190,6 +208,7 @@ fn json_str(value: &str, out: &mut String) {
     out.push('"');
 }
 
+/// Push a JSON array of escaped strings.
 fn json_array(items: &[String], out: &mut String) {
     out.push('[');
     for (i, item) in items.iter().enumerate() {
@@ -222,6 +241,7 @@ fn json_origin(o: &Origin, out: &mut String) {
     json_origin_fields(o, out);
 }
 
+/// Render atom `a` as the human string `subject predicate [object]`.
 fn label(c: &Compiled, a: AtomId) -> String {
     let k = &c.atoms[a as usize];
     match &k.object {
@@ -230,6 +250,7 @@ fn label(c: &Compiled, a: AtomId) -> String {
     }
 }
 
+/// The three-valued value of a literal: the atom's value, flipped if negated.
 fn lit_value(model: &[V3], l: &Lit) -> V3 {
     let v = model[l.atom as usize];
     if l.negated { v.not() } else { v }
@@ -258,6 +279,8 @@ enum ClauseEval {
     Blocked(Vec<AtomId>),
 }
 
+/// Classify one `Impossible` clause under the model: all-true is a violation,
+/// any-false satisfies it, otherwise it is blocked on the remaining UNKNOWNs.
 fn eval_clause(model: &[V3], clause: &Clause) -> ClauseEval {
     let mut any_false = false;
     let mut all_true = true;
@@ -533,6 +556,7 @@ fn build_cnf(c: &Compiled) -> (sat::Cnf, Vec<sat::Var>) {
     (cnf, project)
 }
 
+/// Sort key giving conflicts/warnings a stable, source-then-line order.
 fn key(o: &Origin) -> (String, u32) {
     (o.source.clone(), o.line)
 }
@@ -560,6 +584,7 @@ impl fmt::Display for Status {
     }
 }
 
+/// Format provenance as `name (KIND)  [source:line]` for the human report.
 fn axiom_tag(o: &Origin) -> String {
     let name = o.axiom.as_deref().unwrap_or("-");
     alloc::format!("{} ({})  [{}:{}]", name, o.kind, o.source, o.line)

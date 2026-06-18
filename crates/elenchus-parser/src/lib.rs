@@ -10,6 +10,8 @@
 //! - keywords are ALWAYS CAPS, identifiers are content (case-sensitive, verbatim);
 //! - block boundaries (AXIOM/RULE bodies) are found by keywords, never by indent.
 #![no_std]
+// Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -47,24 +49,40 @@ pub struct Located<'a, T> {
 /// `Creature.A has flying` and `Creature.A has swimming` are DIFFERENT atoms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom<'a> {
+    /// The entity the claim is about, e.g. `Creature.A` or `Motor`.
     pub subject: &'a str,
+    /// The relation or property asserted, e.g. `has` or `over_100`.
     pub predicate: &'a str,
+    /// Optional value the predicate relates the subject to, e.g. `flying`.
+    /// `None` for two-word atoms such as `Motor over_100`. The object is part of
+    /// identity: `has flying` and `has swimming` are different atoms.
     pub object: Option<&'a str>,
 }
 
 /// A literal is an atom, optionally negated (`NOT ...`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Literal<'a> {
+    /// `true` when written with a leading `NOT` (asserts the atom is FALSE).
     pub negated: bool,
+    /// The underlying atom being asserted true or false.
     pub atom: Atom<'a>,
 }
 
 /// List constraint operators (body of a list-style `AXIOM`).
+///
+/// These are surface sugar; the compiler desugars each to `Impossible` clauses
+/// (see `elenchus-compiler`). The meanings below are *what the author asserts*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListOp {
+    /// `EXCLUSIVE` — at most one of the listed atoms may be TRUE (mutual
+    /// exclusion). For n > 2 this is pairwise, not "not all at once".
     Exclusive,
+    /// `FORBIDS` — at most one may be TRUE; a synonym of [`ListOp::Exclusive`]
+    /// (same pairwise expansion), kept as a separate word for readability.
     Forbids,
+    /// `ONEOF` — exactly one is TRUE: at-most-one (pairwise) plus at-least-one.
     OneOf,
+    /// `ATLEAST` — at least one of the listed atoms is TRUE.
     AtLeast,
 }
 
@@ -73,12 +91,16 @@ pub enum ListOp {
 pub enum Body<'a> {
     /// `EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST` over >= 2 atoms.
     List {
+        /// Which list constraint this is.
         op: ListOp,
+        /// The atoms it ranges over (the parser guarantees at least two).
         atoms: Vec<Located<'a, Atom<'a>>>,
     },
     /// `WHEN ... [AND ...] THEN ... [AND ...]` — antecedent + consequent literals.
     Impl {
+        /// `WHEN`/`AND` conditions; all must hold (logical AND).
         antecedent: Vec<Located<'a, Literal<'a>>>,
+        /// `THEN`/`AND` results that follow when the antecedent holds.
         consequent: Vec<Located<'a, Literal<'a>>>,
     },
 }
@@ -94,17 +116,23 @@ pub enum Statement<'a> {
     Negation(Located<'a, Atom<'a>>),
     /// `AXIOM <name>: ...` — a checked first principle.
     Axiom {
+        /// The axiom's label (a per-source name, not a global identifier).
         name: Located<'a, &'a str>,
+        /// The constraint itself: a list body or a `WHEN … THEN` implication.
         body: Body<'a>,
     },
     /// `RULE <name>: ...` — a fact-producing inference rule.
     Rule {
+        /// The rule's label.
         name: Located<'a, &'a str>,
+        /// Always an implication body (the grammar forbids a list body here).
         body: Body<'a>,
     },
     /// `CHECK [subject] [BIDIRECTIONAL]` — a query.
     Check {
+        /// Restrict the report to this subject; `None` checks everything.
         subject: Option<Located<'a, &'a str>>,
+        /// `true` enables the backward (all-SAT) pass for UNDERDETERMINED.
         bidirectional: bool,
     },
 }
@@ -112,6 +140,8 @@ pub enum Statement<'a> {
 /// A parsed program: a flat sequence of statements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program<'a> {
+    /// Top-level statements in source order. The list is flat: AXIOM/RULE bodies
+    /// live inside their [`Statement`], not as separate entries.
     pub statements: Vec<Statement<'a>>,
 }
 
@@ -195,6 +225,7 @@ impl<'a> nom::error::ParseError<Span<'a>> for Problem<'a> {
     }
 }
 
+/// nom result specialized to our [`Problem`] error and located `Span` input.
 type PResult<'a, T> = IResult<Span<'a>, T, Problem<'a>>;
 
 /// Turn a recoverable `Error` into a committed `Failure` at `at` with `msg`.
@@ -209,6 +240,7 @@ fn promote<'a, T>(r: PResult<'a, T>, at: Span<'a>, msg: &str) -> PResult<'a, T> 
     }
 }
 
+/// A plain recoverable `Error` at `input` (lets an enclosing `alt` backtrack).
 fn perr<'a, T>(input: Span<'a>) -> PResult<'a, T> {
     Err(nom::Err::Error(Problem {
         input,
@@ -216,6 +248,8 @@ fn perr<'a, T>(input: Span<'a>) -> PResult<'a, T> {
     }))
 }
 
+/// Characters allowed *after* the first in an identifier. `.` is allowed so
+/// dotted subjects like `Creature.A` are a single token.
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '.'
 }
@@ -268,6 +302,7 @@ fn skip_noise<'a>(input: Span<'a>) -> PResult<'a, ()> {
 
 // --- Atoms & literals ------------------------------------------------------
 
+/// `<subject> <predicate> [<object>]` — two or three space-separated identifiers.
 fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     let start = input;
     let (input, subject) = identifier(input)?;
@@ -287,6 +322,7 @@ fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     ))
 }
 
+/// An optionally `NOT`-prefixed [`atom`] — a literal inside a `WHEN`/`THEN` body.
 fn literal<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     let start = input;
     let (input, neg) = opt(terminated(tag("NOT"), space1)).parse(input)?;
@@ -313,6 +349,7 @@ fn atom_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
 
 // --- Bodies ----------------------------------------------------------------
 
+/// One of the list-constraint keywords (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`).
 fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
     alt((
         value(ListOp::Exclusive, tag("EXCLUSIVE")),
@@ -323,6 +360,14 @@ fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
     .parse(input)
 }
 
+/// A list-constraint body: a list operator on its own line, then one atom per
+/// line (at least two).
+///
+/// Commit strategy: the leading `list_op` failing stays a recoverable `Error`
+/// so the `AXIOM` `alt` can fall through and try [`impl_body`] instead. *Once*
+/// the operator matched we are committed, so every subsequent failure is
+/// [`promote`]d to a `Failure` with a specific message — no backtracking to a
+/// generic "expected a statement".
 fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // list_op failing stays Error so the AXIOM alt can try impl_body.
@@ -352,6 +397,8 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     Ok((input, Body::List { op, atoms }))
 }
 
+/// A continuation `AND <literal>` line inside a `WHEN`/`THEN` block. Returns a
+/// recoverable `Error` when the line is not an `AND` so `many0` stops cleanly.
 fn and_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     let (input, _) = space0(input)?;
     // Not an AND line → Error so many0 stops cleanly.
@@ -366,6 +413,12 @@ fn and_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     Ok((input, lit))
 }
 
+/// An implication body: `WHEN <lit> [AND <lit>]* THEN <lit> [AND <lit>]*`.
+///
+/// Like [`list_body`], a missing leading `WHEN` stays a recoverable `Error` (so
+/// the `AXIOM` `alt` can try a list body); after `WHEN` matches we are committed
+/// and use [`promote`] for precise errors. Antecedent and consequent each start
+/// with one mandatory literal followed by zero or more `AND` lines.
 fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // No WHEN → Error so the AXIOM alt can fall through to a list body.
@@ -411,6 +464,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
 
 // --- Statements ------------------------------------------------------------
 
+/// `IMPORT "<path>"` — a quoted path on one line.
 fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("IMPORT"), space1).parse(input)?;
     let start = input;
@@ -429,6 +483,7 @@ fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     ))
 }
 
+/// `FACT <atom>` — a TRUE assertion.
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("FACT"), space1).parse(input)?;
     let at = input;
@@ -441,6 +496,8 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Fact(a)))
 }
 
+/// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
+/// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("NOT"), space1).parse(input)?;
     let at = input;
@@ -453,6 +510,7 @@ fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Negation(a)))
 }
 
+/// `CHECK [<subject>] [BIDIRECTIONAL]` — both modifiers optional.
 fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = tag("CHECK").parse(input)?;
     let (input, subject) = opt(preceded(space1, identifier)).parse(input)?;
@@ -467,6 +525,7 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     ))
 }
 
+/// `AXIOM <name>: <body>` where the body is a list or an implication.
 fn stmt_axiom<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("AXIOM"), space1).parse(input)?;
     // Committed to an axiom now.
@@ -492,6 +551,7 @@ fn stmt_axiom<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Axiom { name, body }))
 }
 
+/// `RULE <name>: <implication>` — like an axiom but the body must be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("RULE"), space1).parse(input)?;
     let at = input;
@@ -512,6 +572,9 @@ fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Rule { name, body }))
 }
 
+/// One top-level statement. Order matters: each branch commits on its keyword,
+/// and `stmt_negation` comes last so a leading `NOT` is only read as a top-level
+/// negation when nothing else matched.
 fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     alt((
         stmt_import,
@@ -524,6 +587,9 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     .parse(input)
 }
 
+/// The whole program: leading noise, then statements each followed by noise
+/// (blank/comment lines). Stops at the first byte that is not a valid statement;
+/// [`parse`] then checks the tail is empty and otherwise reports an error there.
 fn program<'a>(input: Span<'a>) -> PResult<'a, Vec<Statement<'a>>> {
     let (input, _) = skip_noise(input)?;
     many0(terminated(statement, skip_noise)).parse(input)

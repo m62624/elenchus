@@ -18,6 +18,8 @@
 //! `IMPORT` resolution (a source-agnostic `Resolver`, flat-merge into the shared
 //! atom universe) lands next; for now imports are recorded as pending.
 #![no_std]
+// Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -58,12 +60,16 @@ pub type AtomId = u32;
 /// it survives across merged sources. Ordering is lexicographic → canonical.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AtomKey {
+    /// The entity the claim is about (owned copy of the parser's `subject`).
     pub subject: String,
+    /// The relation or property asserted.
     pub predicate: String,
+    /// Optional object; part of identity, so `has flying` ≠ `has swimming`.
     pub object: Option<String>,
 }
 
 impl AtomKey {
+    /// Owned copy of a borrowed parser [`Atom`].
     fn from_atom(a: &Atom) -> Self {
         AtomKey {
             subject: a.subject.to_string(),
@@ -77,23 +83,31 @@ impl AtomKey {
 /// negated. `negated = true` means the literal is `NOT atom`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lit {
+    /// Interned id of the atom (also its SAT variable number).
     pub atom: AtomId,
+    /// `true` means this literal is `NOT atom` inside the clause.
     pub negated: bool,
 }
 
 /// A confident truth value. UNKNOWN is the *absence* of a fact, never stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Value {
+    /// The atom is asserted TRUE (from `FACT`).
     True,
+    /// The atom is asserted FALSE (from `NOT`).
     False,
 }
 
 /// Where a piece of IR came from — for readable conflict/warning pools.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
+    /// The source label this came from (file name or `"<root>"`/`"<text>"`).
     pub source: String,
+    /// 1-based line number of the originating statement.
     pub line: u32,
+    /// The axiom/rule name, if it came from a named construct.
     pub axiom: Option<String>,
+    /// Surface kind for the report, e.g. `"FACT"`, `"EXCLUSIVE"`, `"AXIOM"`.
     pub kind: &'static str,
 }
 
@@ -101,15 +115,20 @@ pub struct Origin {
 /// are preserved (both kept) — the solver reports that as a CONFLICT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fact {
+    /// The atom this fact pins down.
     pub atom: AtomId,
+    /// The asserted truth value.
     pub value: Value,
+    /// Where it came from (for the report).
     pub origin: Origin,
 }
 
 /// An `Impossible` clause: the listed literals cannot all hold simultaneously.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause {
+    /// The literals that cannot all hold at once (an `Impossible([...])`).
     pub lits: Vec<Lit>,
+    /// Where it came from (for the report).
     pub origin: Origin,
 }
 
@@ -117,15 +136,20 @@ pub struct Clause {
 /// the consequent literals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
+    /// Literals that must all hold for the rule to fire.
     pub antecedent: Vec<Lit>,
+    /// Literals derived (asserted) when the antecedent holds.
     pub consequent: Vec<Lit>,
+    /// Where it came from (for the report).
     pub origin: Origin,
 }
 
 /// A `CHECK` query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
+    /// Restrict the report to this subject; `None` means check everything.
     pub subject: Option<String>,
+    /// `true` runs the backward (all-SAT) pass to detect UNDERDETERMINED.
     pub bidirectional: bool,
 }
 
@@ -134,45 +158,71 @@ pub struct Check {
 pub struct Compiled {
     /// Indexed by [`AtomId`]; canonically sorted.
     pub atoms: Vec<AtomKey>,
+    /// Confident assertions from `FACT`/`NOT`.
     pub facts: Vec<Fact>,
+    /// `Impossible` clauses (desugared axioms + the built-in non-contradiction).
     pub clauses: Vec<Clause>,
+    /// Forward-chaining rules from `RULE`.
     pub rules: Vec<Rule>,
+    /// `CHECK` queries.
     pub checks: Vec<Check>,
-    /// Imports seen but not yet resolved (resolution lands next).
+    /// Imports seen but not yet resolved (only populated by [`compile_source`];
+    /// [`compile`] resolves them, leaving this empty).
     pub pending_imports: Vec<String>,
 }
 
+/// Anything that can go wrong while compiling (and resolving imports).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CompileError {
+    /// A source failed to parse; carries the file label and the parser message.
     #[error("parse error in {file}: {message}")]
-    Parse { file: String, message: String },
+    Parse {
+        /// The source label that failed to parse.
+        file: String,
+        /// The parser's error message.
+        message: String,
+    },
+    /// A name was reused with a different body *within the same source*.
     #[error("'{name}' redefined with a different body")]
-    AxiomRedefinition { name: String },
+    AxiomRedefinition {
+        /// The clashing axiom/rule name.
+        name: String,
+    },
+    /// An `IMPORT` target could not be loaded by the [`Resolver`].
     #[error("import not found: {0}")]
     ImportNotFound(String),
+    /// Imports form a cycle (a source transitively imports itself).
     #[error("circular import: {0}")]
     CircularImport(String),
 }
 
 // --- raw (key-based) intermediate, before interning ------------------------
+// While accumulating we key everything by `AtomKey` (the owned triple) rather
+// than by `AtomId`, because ids only become stable once *all* sources are merged
+// and the atom set is sorted in `finalize`. These mirror the public IR types but
+// hold keys instead of ids.
 
+/// A literal keyed by atom identity (pre-interning counterpart of [`Lit`]).
 #[derive(Clone)]
 struct RawLit {
     key: AtomKey,
     negated: bool,
 }
 
+/// A fact keyed by atom identity (pre-interning counterpart of [`Fact`]).
 struct RawFact {
     key: AtomKey,
     value: Value,
     origin: Origin,
 }
 
+/// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
 struct RawClause {
     lits: Vec<RawLit>,
     origin: Origin,
 }
 
+/// A rule keyed by atom identity (pre-interning counterpart of [`Rule`]).
 struct RawRule {
     antecedent: Vec<RawLit>,
     consequent: Vec<RawLit>,
@@ -202,6 +252,7 @@ pub struct Compiler {
 }
 
 impl Compiler {
+    /// A fresh, empty compiler.
     pub fn new() -> Self {
         Self::default()
     }
@@ -257,6 +308,9 @@ impl Compiler {
         Ok(())
     }
 
+    /// Route one statement to the right accumulator (facts, checks, named
+    /// constructs); `IMPORT` is only recorded as pending here (see [`compile`]
+    /// / [`load_recursive`] for actual resolution).
     fn add_statement(&mut self, source: &str, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
             Statement::Import(path) => {
@@ -283,12 +337,16 @@ impl Compiler {
         Ok(())
     }
 
+    /// Record an atom identity in the shared universe (deduped by the `BTreeSet`).
     fn intern(&mut self, key: &AtomKey) {
         if !self.keys.contains(key) {
             self.keys.insert(key.clone());
         }
     }
 
+    /// Accumulate a `FACT`/`NOT`; exact duplicates (same key+value+kind) are
+    /// dropped as idempotent, while a `FACT` and a `NOT` on the same atom are
+    /// both kept so the solver can report the CONFLICT.
     fn add_fact(
         &mut self,
         source: &str,
@@ -415,6 +473,9 @@ impl Compiler {
         Ok(())
     }
 
+    /// Emit "at most one TRUE" as one `Impossible([a_i, a_j])` per unordered
+    /// pair. Pairwise (not a single big clause) because `Impossible([a,b,c])`
+    /// only forbids *all three* together — it would still allow two.
     fn emit_pairwise(&mut self, keys: &[AtomKey], origin: &Origin) {
         for i in 0..keys.len() {
             for j in (i + 1)..keys.len() {
@@ -433,6 +494,8 @@ impl Compiler {
         }
     }
 
+    /// Emit "at least one TRUE" as a single `Impossible([NOT a_1, …, NOT a_n])`
+    /// — it is impossible for all of them to be false at once.
     fn emit_at_least_one(&mut self, keys: &[AtomKey], origin: &Origin) {
         let lits = keys
             .iter()
@@ -444,6 +507,8 @@ impl Compiler {
         self.push_clause(lits, origin.clone());
     }
 
+    /// Append a clause unless an identical one (by canonical [`clause_sig`]) is
+    /// already present — `P ∧ P ≡ P`, so dedup keeps the IR minimal.
     fn push_clause(&mut self, lits: Vec<RawLit>, origin: Origin) {
         let sig = clause_sig(&lits);
         if self.clause_sigs.insert(sig) {
@@ -452,6 +517,7 @@ impl Compiler {
         // else: identical clause already present — idempotent.
     }
 
+    /// Build an [`Origin`] for provenance from the current source/line/name.
     fn origin(&self, source: &str, line: u32, axiom: Option<&str>, kind: &'static str) -> Origin {
         Origin {
             source: source.to_string(),
@@ -543,10 +609,12 @@ pub struct MemoryResolver {
 }
 
 impl MemoryResolver {
+    /// An empty resolver with no sources.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Register `content` under `path`; returns `&mut self` for chaining.
     pub fn add(&mut self, path: &str, content: &str) -> &mut Self {
         self.sources.insert(path.to_string(), content.to_string());
         self
@@ -615,6 +683,7 @@ pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, Compil
 
 // --- helpers ---------------------------------------------------------------
 
+/// Lower parsed, located literals to key-based [`RawLit`]s (drops spans).
 fn raw_lits(lits: &[elenchus_parser::Located<Literal>]) -> Vec<RawLit> {
     lits.iter()
         .map(|l| RawLit {
@@ -624,6 +693,7 @@ fn raw_lits(lits: &[elenchus_parser::Located<Literal>]) -> Vec<RawLit> {
         .collect()
 }
 
+/// The surface keyword for a list op, used as [`Origin::kind`] in the report.
 fn list_kind(op: ListOp) -> &'static str {
     match op {
         ListOp::Exclusive => "EXCLUSIVE",
@@ -633,6 +703,8 @@ fn list_kind(op: ListOp) -> &'static str {
     }
 }
 
+/// Stable `subject|predicate|object` string for an atom key (the unit from which
+/// clause/fact/body signatures are built).
 fn key_sig(k: &AtomKey) -> String {
     alloc::format!(
         "{}|{}|{}",
@@ -680,6 +752,8 @@ fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
     s
 }
 
+/// Sorted `key|negated` signature of a literal list (order-independent), used
+/// inside [`canonical_body`] so reordering a body does not look like a redefinition.
 fn lit_sigs(lits: &[elenchus_parser::Located<Literal>]) -> String {
     let mut parts: Vec<String> = lits
         .iter()

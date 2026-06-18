@@ -1,9 +1,9 @@
 //! A compact, single-threaded CDCL SAT solver in `no_std`, replicating the core
 //! algorithm of varisat (jix/varisat) in a readable, lazy style.
 //!
-//! The solver is a small **state machine**: [`Solver::step`] performs exactly one
-//! transition and returns a [`Step`] saying which way the search went
-//! (propagated / hit a conflict / made a decision / SAT / UNSAT). [`Solver::search`]
+//! The solver is a small **state machine**: `Solver::step` performs exactly one
+//! transition and returns a `Step` saying which way the search went
+//! (propagated / hit a conflict / made a decision / SAT / UNSAT). `Solver::search`
 //! drives steps to a terminal state. Model enumeration is a lazy [`Models`]
 //! iterator that solves **incrementally** — each `next()` adds a blocking clause
 //! and continues from the existing state rather than re-solving from scratch.
@@ -30,24 +30,31 @@ pub type Var = u32;
 pub struct SatLit(u32);
 
 impl SatLit {
+    /// A literal for `var`, positive (true) or negative (`NOT var`).
     pub fn new(var: Var, positive: bool) -> Self {
         SatLit((var << 1) | (!positive as u32))
     }
+    /// The positive literal `var`.
     pub fn positive(var: Var) -> Self {
         Self::new(var, true)
     }
+    /// The negative literal `NOT var`.
     pub fn negative(var: Var) -> Self {
         Self::new(var, false)
     }
+    /// The underlying variable.
     pub fn var(self) -> Var {
         self.0 >> 1
     }
+    /// Whether this is the negative polarity.
     pub fn is_negative(self) -> bool {
         self.0 & 1 == 1
     }
+    /// The same variable with the opposite sign.
     pub fn negate(self) -> SatLit {
         SatLit(self.0 ^ 1)
     }
+    /// The packed code, used directly as an index into the watch lists.
     fn code(self) -> usize {
         self.0 as usize
     }
@@ -56,17 +63,21 @@ impl SatLit {
 /// A CNF formula over `num_vars` variables.
 #[derive(Clone, Debug, Default)]
 pub struct Cnf {
+    /// Number of variables; every [`Var`] used must be `< num_vars`.
     pub num_vars: usize,
+    /// The clauses, each a disjunction of literals (the formula is their AND).
     pub clauses: Vec<Vec<SatLit>>,
 }
 
 impl Cnf {
+    /// An empty formula over `num_vars` variables.
     pub fn new(num_vars: usize) -> Self {
         Cnf {
             num_vars,
             clauses: Vec::new(),
         }
     }
+    /// Append one clause (a disjunction of literals).
     pub fn add_clause(&mut self, lits: Vec<SatLit>) {
         self.clauses.push(lits);
     }
@@ -103,6 +114,9 @@ enum Step {
     Unsat,
 }
 
+/// The full CDCL search state: the assignment trail with decision levels, the
+/// clause database with two-watched-literal indices, VSIDS activities with phase
+/// saving, and a reusable `seen` scratch buffer for conflict analysis.
 struct Solver {
     num_vars: usize,
     clauses: Vec<Vec<SatLit>>, // originals + learned + blocking
@@ -121,6 +135,7 @@ struct Solver {
 }
 
 impl Solver {
+    /// Build a solver and load every clause of `cnf` under the empty assignment.
     fn new(cnf: &Cnf) -> Self {
         let n = cnf.num_vars;
         let mut s = Solver {
@@ -147,18 +162,24 @@ impl Solver {
 
     // -- assignment queries --
 
+    /// Is `l` currently assigned true? (Unassigned counts as neither true nor false.)
     fn lit_is_true(&self, l: SatLit) -> bool {
         self.assign[l.var() as usize] == Some(!l.is_negative())
     }
+    /// Is `l` currently assigned false?
     fn lit_is_false(&self, l: SatLit) -> bool {
         self.assign[l.var() as usize] == Some(l.is_negative())
     }
+    /// The current decision level (= number of open decisions).
     fn current_level(&self) -> u32 {
         self.decisions.len() as u32
     }
 
     // -- clause loading --
 
+    /// Register clause `cref` to be watched by literals `a` and `b`. A clause
+    /// watching a literal is stored under that literal's *negation's* code, so
+    /// it is revisited exactly when the watched literal becomes false.
     fn watch(&mut self, cref: usize, a: SatLit, b: SatLit) {
         self.watches[a.negate().code()].push(Watch { cref, blocking: b });
         self.watches[b.negate().code()].push(Watch { cref, blocking: a });
@@ -225,6 +246,8 @@ impl Solver {
         }
     }
 
+    /// Assign `l` true at the current level with the given `reason`, and push it
+    /// onto the trail for propagation.
     fn enqueue(&mut self, l: SatLit, reason: Reason) {
         let v = l.var() as usize;
         self.assign[v] = Some(!l.is_negative());
@@ -324,6 +347,8 @@ impl Solver {
 
     // -- conflict analysis (1-UIP) --
 
+    /// VSIDS: raise variable `v`'s activity, rescaling all activities if it would
+    /// overflow `f64`'s comfortable range.
     fn bump(&mut self, v: usize) {
         self.activity[v] += self.var_inc;
         if self.activity[v] > 1e100 {
@@ -410,6 +435,8 @@ impl Solver {
         max_l
     }
 
+    /// Undo assignments above `level`, saving each unset variable's phase for
+    /// later reuse, and rewind the propagation queue to that level.
     fn backtrack(&mut self, level: u32) {
         if self.current_level() <= level {
             return;
@@ -440,6 +467,8 @@ impl Solver {
 
     // -- decisions --
 
+    /// Choose the next decision: the unassigned variable with the highest VSIDS
+    /// activity, using its saved phase. `None` means all variables are assigned.
     fn pick_branch(&self) -> Option<SatLit> {
         let mut best: Option<usize> = None;
         let mut best_act = -1.0;
@@ -494,6 +523,8 @@ impl Solver {
         }
     }
 
+    /// Snapshot the assignment as `var -> bool` (any still-unassigned variable,
+    /// possible when it is unconstrained, defaults to false).
     fn model(&self) -> Vec<bool> {
         self.assign.iter().map(|a| a.unwrap_or(false)).collect()
     }
