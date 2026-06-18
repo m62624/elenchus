@@ -1,0 +1,9 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT x a\\nNOT x b\\nRULE r:\\n    WHEN x a\\n    THEN x b\\nCHECK x\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  r (RULE)  [v.vrf:3]
+      x b (derived value contradicts a known fact)
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

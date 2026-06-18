@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT y c\\nNOT y c\\nFACT x a\\nFACT x b\\nAXIOM e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  - (FACT)  [v.vrf:1]
+      y c (asserted both TRUE and FALSE)
+  CONFLICT  e (EXCLUSIVE)  [v.vrf:5]
+      x a
+      x b
+SUMMARY: 2 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

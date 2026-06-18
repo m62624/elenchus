@@ -1,0 +1,8 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT x a\\nRULE r:\\n    WHEN x a\\n    THEN x b\\nCHECK x\\n\")"
+---
+RESULT: CONSISTENT
+  DERIVED   x b = TRUE   from r (RULE)  [v.vrf:2]
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 0

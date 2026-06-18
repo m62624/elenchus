@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT s ready\\nAXIOM need_two:\\n    WHEN s ready\\n    THEN s checked\\n    AND s signed\\nRULE mark:\\n    WHEN s ready\\n    THEN s seen\\nCHECK s\\n\")"
+---
+RESULT: WARNING
+  WARNING   need_two (AXIOM)  [v.vrf:2]
+      blocked by: s checked
+  WARNING   need_two (AXIOM)  [v.vrf:2]
+      blocked by: s signed
+  DERIVED   s seen = TRUE   from mark (RULE)  [v.vrf:6]
+SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
+EXIT_CODE: 1

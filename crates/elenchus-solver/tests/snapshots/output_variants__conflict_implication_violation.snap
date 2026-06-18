@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT x a\\nNOT x b\\nAXIOM w:\\n    WHEN x a\\n    THEN x b\\nCHECK x\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  w (AXIOM)  [v.vrf:3]
+      x a
+      x b
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

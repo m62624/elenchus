@@ -1,0 +1,9 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT x a\\nNOT x a\\nCHECK x\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  - (FACT)  [v.vrf:1]
+      x a (asserted both TRUE and FALSE)
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2
