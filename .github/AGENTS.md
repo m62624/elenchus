@@ -13,6 +13,9 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   base run it (an integration branch collecting many PRs is supported).
 - Binary releases ship only the two binaries — the `elenchus` CLI and the
   `elenchus-mcp` server. The three libraries set `dist = false`.
+- Installers are `shell` + `powershell` only (no Homebrew). `cargo binstall`
+  works on top of the cargo-dist `dist-manifest.json` with no extra config, for
+  both `elenchus-cli` and `elenchus-mcp`.
 - The cargo-dist workflow is customized (`workflow_call`), so `dist generate`
   is **not** run to keep it in sync; `allow-dirty = ["ci"]` is set so `dist plan`
   does not fail on it. Do not blindly run `dist init`/`dist generate` — it would
@@ -27,8 +30,9 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
 ### Domain Details
 - `workflows/ci.yml` → `push`/`pull_request` (path-filtered, any branch),
   `workflow_call` (with a `ref` input, used by `release.yml`'s `tests` job), and
-  `workflow_dispatch`. Jobs: `test` (matrix Linux/Windows/macOS: fmt + clippy +
-  test), `no_std` (build the libs for `wasm32v1-none`), `dist-plan` (`dist plan`).
+  `workflow_dispatch`. Jobs run **in parallel** (no cross-job `needs`): `check`
+  (matrix Linux/Windows/macOS, fail-fast off: fmt + clippy + test on each OS),
+  `no_std` (build the libs for `wasm32v1-none`), `dist-plan` (`dist plan`).
 - `workflows/release.yml` (orchestrator) → triggered by pushing a `pin/v*` tag.
   **Flow:** `prepare` (parse the version, create `rc/vX.Y.Z`, `cargo set-version
   --workspace`, commit, push the RC, delete the pin tag) → `tests` (calls `ci.yml`
@@ -37,9 +41,11 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   repository's **default branch** — not hardcoded).
 - `workflows/bin-release.yml` → the cargo-dist-generated workflow, kept intact
   except its trigger was changed to `on: workflow_call` (inputs: `tag`) and every
-  checkout uses `ref: ${{ inputs.tag }}`. Builds binaries + shell/powershell/
-  homebrew installers for the 6 configured targets and publishes the GitHub
-  Release. Regenerate the body (not the trigger) with `dist generate` only if the
+  checkout uses `ref: ${{ inputs.tag }}`. Builds binaries + shell/powershell
+  installers for the 6 configured targets and publishes the GitHub Release. The
+  generated `publish-homebrew-formula` job was removed by hand (Homebrew is no
+  longer an installer); if you ever rerun `dist generate`, drop it again.
+  Regenerate the body (not the trigger) with `dist generate` only if the
   cargo-dist version in `Cargo.toml` changes.
 - `workflows/labeler.yml` → on PR open/edit/sync, labels by Conventional-Commits
   prefix; the labels feed the changelog categories in the root `release.yml`.
@@ -47,8 +53,8 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   config (changelog categories by label).
 
 ### External Setup Required
-- Homebrew publishing needs a tap repo `m62624/homebrew-elenchus` and a
-  `HOMEBREW_TAP_TOKEN` secret with write access to it. Until that exists, drop
-  `"homebrew"` from `installers` (and `publish-jobs`) in `Cargo.toml`, or expect
-  the `publish-homebrew-formula` job to fail (binaries + shell/powershell still release).
+- None for the binary release path (shell/powershell installers + `cargo
+  binstall` need no secrets). `cargo binstall` resolving by crate name expects
+  the crates to be published to crates.io; for an unpublished/private repo, use
+  `cargo binstall --git <repo-url> elenchus-cli` (likewise `elenchus-mcp`).
 <!-- elenchus:contracts:end -->

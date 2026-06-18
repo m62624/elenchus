@@ -28,11 +28,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # --- fast checks on Linux, all independent so each failure is visible -------
+  # --- linter + tests, fanned out across all three OSes in parallel ----------
+  # One matrix entry per OS, no cross-job `needs`, so Linux/Windows/macOS each
+  # run fmt + clippy + test independently and any single failure is visible at
+  # a glance (fail-fast off keeps the others going).
 
-  lint:
-    name: fmt + clippy
-    runs-on: ubuntu-latest
+  check:
+    name: lint + test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows, os: windows-latest }
+          - { name: macOS, os: macos-latest }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,18 +55,10 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-  test:
-    name: test (ubuntu)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Tests
         run: cargo test --workspace
+
+  # --- portability checks, in parallel with the lint+test matrix above -------
 
   no_std:
     name: no_std build (wasm32v1-none)
@@ -87,26 +89,3 @@ jobs:
         run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh"
       - name: Validate the release plan
         run: dist plan
-
-  # --- only after the fast Linux checks pass: validate on Windows & macOS -----
-
-  cross-os:
-    name: clippy + test (${{ matrix.os }})
-    needs: [lint, test]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Tests
-        run: cargo test --workspace

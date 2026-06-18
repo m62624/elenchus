@@ -57,18 +57,43 @@ or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
 
 ## Install
 
-Prebuilt binaries (Linux/Windows/macOS, x64 & arm64) are published on tagged
-releases via cargo-dist, with a shell/PowerShell installer per binary
-(`elenchus-cli-installer.sh` for the CLI, `elenchus-mcp-installer.sh` for the
-server) — grab them from the
-[Releases page](https://github.com/m62624/elenchus/releases). For example:
+Two binaries ship as prebuilt downloads on every tagged release (built by
+cargo-dist for **Linux, Windows and macOS, x64 & arm64**): the `elenchus` CLI
+(crate `elenchus-cli`) and the `elenchus-mcp` server (crate `elenchus-mcp`).
+Pick whichever method you like — all of them pull the *same* prebuilt artifacts.
+
+### 1. `cargo binstall` (recommended)
+
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the
+prebuilt binary instead of compiling. It reads the release's cargo-dist
+manifest, so it just works on every OS/arch above — no extra config:
 
 ```console
-# Linux / macOS — install the `elenchus` CLI
-$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.sh | sh
+$ cargo binstall elenchus-cli     # the `elenchus` CLI
+$ cargo binstall elenchus-mcp     # the `elenchus-mcp` server
 ```
 
-Or from source:
+### 2. Installer scripts (no Rust toolchain needed)
+
+Each binary has its own script on the
+[Releases page](https://github.com/m62624/elenchus/releases); `latest` always
+points at the newest tag.
+
+```console
+# Linux / macOS  (POSIX sh)
+$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.sh | sh
+$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.sh | sh
+```
+
+```powershell
+# Windows  (PowerShell)
+> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.ps1 | iex"
+> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
+```
+
+### 3. From source
+
+Needs a Rust toolchain; compiles locally and works on any platform Rust targets:
 
 ```console
 $ cargo install --path crates/elenchus-cli     # the `elenchus` CLI

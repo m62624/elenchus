@@ -48,9 +48,11 @@ serde_json = "1"
 [workspace.metadata.dist]
 cargo-dist-version = "0.31.0"
 ci = ["github"]
-installers = ["shell", "powershell", "homebrew"]
-tap = "m62624/homebrew-elenchus"
-publish-jobs = ["homebrew"]
+# Shipped as prebuilt-binary installers only: a POSIX `sh` script (Linux/macOS)
+# and a PowerShell script (Windows). No Homebrew tap. `cargo binstall` layers on
+# top for free — it reads the release's cargo-dist `dist-manifest.json`, so no
+# extra Cargo.toml config is needed (see the README install section).
+installers = ["shell", "powershell"]
 # The release workflow is customized (workflow_call, driven by the pin/v*
 # orchestrator), so don't fail `dist plan` for the CI file being "out of date".
 allow-dirty = ["ci"]
