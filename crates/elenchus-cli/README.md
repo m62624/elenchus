@@ -19,6 +19,11 @@ $ cat program.vrf | elenchus            # stdin
 $ elenchus program.vrf --format json    # machine-readable output
 ```
 
+One input, three ways: a positional `<file>`, inline `--text`, or stdin (no arg,
+or `-`). `--text` and a file are mutually exclusive. **`IMPORT` resolves only for
+the file form** — `--text` and stdin are treated as a single source, so a program
+using `IMPORT` must be passed as a file.
+
 Exit code doubles as a CI gate:
 
 | Code | Meaning |
@@ -47,4 +52,4 @@ JSON (`--format json`) — one line, for tooling and agents:
 
 ## License
 
-MIT — see the [workspace LICENSE](../../LICENSE).
+MIT — see [LICENSE](LICENSE).

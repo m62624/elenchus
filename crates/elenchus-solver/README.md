@@ -55,4 +55,4 @@ SUMMARY: 0 conflicts, 1 warnings, 0 derived
 
 ## License
 
-MIT — see the [workspace LICENSE](../../LICENSE).
+MIT — see [LICENSE](LICENSE).

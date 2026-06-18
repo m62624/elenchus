@@ -55,4 +55,4 @@ Syntax Error at line 3, col 1: expected THEN to complete the WHEN ... THEN impli
 
 ## License
 
-MIT — see the [workspace LICENSE](../../LICENSE).
+MIT — see [LICENSE](LICENSE).

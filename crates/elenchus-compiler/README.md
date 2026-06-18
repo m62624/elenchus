@@ -48,4 +48,4 @@ assert!(ir.pending_imports.is_empty());
 
 ## License
 
-MIT — see the [workspace LICENSE](../../LICENSE).
+MIT — see [LICENSE](LICENSE).

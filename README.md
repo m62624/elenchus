@@ -179,9 +179,11 @@ prune that line from your shell profile if nothing else uses it.
 
 ## Use it
 
-- **CLI** — `elenchus <file.vrf>` / `--text "<program>"` / stdin; `--format json`
-  for tooling; exit code is the verdict (CI gate). See
-  [`crates/elenchus-cli`](crates/elenchus-cli).
+- **CLI** — one input three ways: a positional `elenchus <file.vrf>`, inline
+  `--text "<program>"`, or stdin (no arg, or `-`); `--text` and a file are mutually
+  exclusive. `--format json` for tooling; exit code is the verdict (CI gate).
+  Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
+  source. See [`crates/elenchus-cli`](crates/elenchus-cli).
 - **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool,
   `elenchus_check`, for AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
 - **Skill** — [`skill/SKILL.md`](skill/SKILL.md): when to reach for elenchus, the

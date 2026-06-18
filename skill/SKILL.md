@@ -277,12 +277,17 @@ CHECK x" --format json                  # inline; --format json for tooling
 $ cat program.vrf | elenchus            # stdin
 ```
 
-Exit code is the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED,
-2 = CONFLICT) — a ready CI gate.
+It takes one input three ways — a positional `<file>`, inline `--text "..."`, or
+stdin (no arg, or `-`). `--text` and a file are mutually exclusive (don't pass
+both). **`IMPORT` only resolves in the file form** (relative to the file);
+`--text` and stdin are treated as a single source, so a program that uses
+`IMPORT` must be run as a file. Exit code is the verdict (0 = CONSISTENT,
+1 = WARNING/UNDERDETERMINED, 2 = CONFLICT) — a ready CI gate.
 
 **MCP + this skill — when the host exposes MCP tools but no shell.** The
 `elenchus-mcp` server provides one tool, `elenchus_check`; call it with
-`{ "program": "<.vrf text>", "format": "json" }`.
+`{ "program": "<.vrf text>", "format": "json" }`. It's one source too — no
+`IMPORT` resolution; inline the axioms instead.
 
 Either way the rule is the same: read `status`; if it isn't `CONSISTENT`, change
 the program (add facts, fix or rethink an axiom) and run again — **loop until it

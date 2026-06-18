@@ -41,4 +41,4 @@ Example session (each line is one JSON-RPC message):
 
 ## License
 
-MIT — see the [workspace LICENSE](../../LICENSE).
+MIT — see [LICENSE](LICENSE).
