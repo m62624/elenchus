@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "elenchus-compiler",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-compiler"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "elenchus-parser",
  "insta",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-mcp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "elenchus-solver",
  "serde_json",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-parser"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "insta",
  "nom",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-solver"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "elenchus-compiler",
  "insta",
