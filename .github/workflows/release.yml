@@ -50,7 +50,10 @@ jobs:
           cargo install cargo-edit --locked
           cargo set-version --workspace "$VERSION"
           git add -A
-          git commit -m "build: update version to v$VERSION"
+          # On the very first release the workspace is already at $VERSION, so
+          # set-version is a no-op and there is nothing to commit — that's fine.
+          git commit -m "build: update version to v$VERSION" \
+            || echo "version already v$VERSION — no bump commit needed"
           git push --force origin "$RC"
           # Drop the trigger tag so it doesn't linger.
           git push origin ":refs/tags/${GITHUB_REF_NAME}" || true
