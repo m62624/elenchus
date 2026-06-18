@@ -108,6 +108,38 @@ $ cargo install --path crates/elenchus-cli
 $ cargo install --path crates/elenchus-mcp
 ```
 
+### Uninstall
+
+**Installed with `cargo binstall` / `cargo install`** (either resolves to cargo's
+own install tracking, so plain `cargo uninstall` works):
+
+```console
+$ cargo uninstall elenchus-cli      # removes the `elenchus` binary
+$ cargo uninstall elenchus-mcp
+```
+
+**Installed with the scripts above:** cargo-dist does not ship an uninstaller, so
+remove the binaries and their install receipts by hand. By default the binaries
+land in `~/.cargo/bin` (note: `cargo uninstall` won't touch these — cargo didn't
+track them), and a receipt is written per app.
+
+```console
+# Linux / macOS
+$ rm -f  ~/.cargo/bin/elenchus ~/.cargo/bin/elenchus-mcp
+$ rm -rf ~/.config/elenchus-cli ~/.config/elenchus-mcp     # install receipts
+```
+
+```powershell
+# Windows (PowerShell)
+> Remove-Item "$env:USERPROFILE\.cargo\bin\elenchus.exe","$env:USERPROFILE\.cargo\bin\elenchus-mcp.exe" -ErrorAction SilentlyContinue
+> Remove-Item "$env:LOCALAPPDATA\elenchus-cli","$env:LOCALAPPDATA\elenchus-mcp" -Recurse -ErrorAction SilentlyContinue
+```
+
+If you pointed the installer somewhere else (`ELENCHUS_CLI_INSTALL_DIR` /
+`ELENCHUS_MCP_INSTALL_DIR`, or `CARGO_DIST_FORCE_INSTALL_DIR`), delete from that
+directory instead. The installer may also have added the bin dir to your `PATH` —
+prune that line from your shell profile if nothing else uses it.
+
 ## Use it
 
 - **CLI** — `elenchus <file.vrf>` / `--text "<program>"` / stdin; `--format json`
