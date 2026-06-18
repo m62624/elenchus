@@ -289,7 +289,13 @@ impl Compiler {
         }
     }
 
-    fn add_fact(&mut self, source: &str, a: &elenchus_parser::Located<Atom>, value: Value, kind: &'static str) {
+    fn add_fact(
+        &mut self,
+        source: &str,
+        a: &elenchus_parser::Located<Atom>,
+        value: Value,
+        kind: &'static str,
+    ) {
         let key = AtomKey::from_atom(&a.data);
         self.intern(&key);
         let sig = alloc::format!(
@@ -361,7 +367,8 @@ impl Compiler {
 
         match body {
             Body::List { op, atoms } => {
-                let keys: Vec<AtomKey> = atoms.iter().map(|a| AtomKey::from_atom(&a.data)).collect();
+                let keys: Vec<AtomKey> =
+                    atoms.iter().map(|a| AtomKey::from_atom(&a.data)).collect();
                 for k in &keys {
                     self.intern(k);
                 }
@@ -723,8 +730,14 @@ mod tests {
         assert_eq!(cl.lits.len(), 2);
         let a = id(&c, &key("x", "a", None));
         let b = id(&c, &key("x", "b", None));
-        assert!(cl.lits.contains(&Lit { atom: a, negated: false }));
-        assert!(cl.lits.contains(&Lit { atom: b, negated: true }));
+        assert!(cl.lits.contains(&Lit {
+            atom: a,
+            negated: false
+        }));
+        assert!(cl.lits.contains(&Lit {
+            atom: b,
+            negated: true
+        }));
     }
 
     #[test]
@@ -733,7 +746,10 @@ mod tests {
         let src = "AXIOM r:\n    WHEN x a\n    THEN NOT x b\n";
         let c = compile_source("<t>", src).unwrap();
         let b = id(&c, &key("x", "b", None));
-        assert!(c.clauses[0].lits.contains(&Lit { atom: b, negated: false }));
+        assert!(c.clauses[0].lits.contains(&Lit {
+            atom: b,
+            negated: false
+        }));
     }
 
     #[test]
@@ -785,7 +801,12 @@ mod tests {
     fn redefinition_with_different_body_errors() {
         let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
         let err = compile_source("<t>", src).unwrap_err();
-        assert_eq!(err, CompileError::AxiomRedefinition { name: "e".to_string() });
+        assert_eq!(
+            err,
+            CompileError::AxiomRedefinition {
+                name: "e".to_string()
+            }
+        );
     }
 
     #[test]
@@ -836,7 +857,10 @@ mod tests {
     fn diamond_import_is_deduped() {
         // main → a, b ; a → base ; b → base. base merged once.
         let mut r = MemoryResolver::new();
-        r.add("base.vrf", "AXIOM b:\n    EXCLUSIVE\n        x a\n        x b\n");
+        r.add(
+            "base.vrf",
+            "AXIOM b:\n    EXCLUSIVE\n        x a\n        x b\n",
+        );
         r.add("a.vrf", "IMPORT \"base.vrf\"\n");
         r.add("c.vrf", "IMPORT \"base.vrf\"\n");
         r.add("main.vrf", "IMPORT \"a.vrf\"\nIMPORT \"c.vrf\"\n");
@@ -867,7 +891,10 @@ mod tests {
         // (different domains). Names are per-source labels — both axioms apply,
         // and the report qualifies them by source. NOT a redefinition error.
         let mut r = MemoryResolver::new();
-        r.add("physics.vrf", "AXIOM safety:\n    EXCLUSIVE\n        x a\n        x b\n");
+        r.add(
+            "physics.vrf",
+            "AXIOM safety:\n    EXCLUSIVE\n        x a\n        x b\n",
+        );
         r.add(
             "main.vrf",
             "IMPORT \"physics.vrf\"\nAXIOM safety:\n    EXCLUSIVE\n        x a\n        x c\n",
@@ -884,22 +911,38 @@ mod tests {
         // both. Both `x` coexist (per-source labels). Meanwhile the atom they
         // share (S has a) unifies into ONE id — names are scoped, atoms are not.
         let mut r = MemoryResolver::new();
-        r.add("A.vrf", "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has b\n");
-        r.add("B.vrf", "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has c\n");
+        r.add(
+            "A.vrf",
+            "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has b\n",
+        );
+        r.add(
+            "B.vrf",
+            "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has c\n",
+        );
         r.add("C.vrf", "IMPORT \"A.vrf\"\nIMPORT \"B.vrf\"\n");
         let c = compile("C.vrf", &r).unwrap();
 
         // both `x` axioms contributed a clause, kept apart by source
         assert_eq!(c.clauses.len(), 2);
-        assert!(c.clauses.iter().any(|cl| cl.origin.source == "A.vrf"
-            && cl.origin.axiom.as_deref() == Some("x")));
-        assert!(c.clauses.iter().any(|cl| cl.origin.source == "B.vrf"
-            && cl.origin.axiom.as_deref() == Some("x")));
+        assert!(
+            c.clauses
+                .iter()
+                .any(|cl| cl.origin.source == "A.vrf" && cl.origin.axiom.as_deref() == Some("x"))
+        );
+        assert!(
+            c.clauses
+                .iter()
+                .any(|cl| cl.origin.source == "B.vrf" && cl.origin.axiom.as_deref() == Some("x"))
+        );
 
         // the shared atom `S has a` is a single interned id used by both clauses
         let s_a = id(&c, &key("S", "has", Some("a")));
         assert!(
-            c.clauses.iter().filter(|cl| cl.lits.iter().any(|l| l.atom == s_a)).count() == 2,
+            c.clauses
+                .iter()
+                .filter(|cl| cl.lits.iter().any(|l| l.atom == s_a))
+                .count()
+                == 2,
             "both clauses must reference the same unified `S has a` atom"
         );
     }
@@ -909,13 +952,21 @@ mod tests {
         // But reusing a name with a different body *inside one source* is a mistake.
         let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
         let err = compile_source("main.vrf", src).unwrap_err();
-        assert_eq!(err, CompileError::AxiomRedefinition { name: "e".to_string() });
+        assert_eq!(
+            err,
+            CompileError::AxiomRedefinition {
+                name: "e".to_string()
+            }
+        );
     }
 
     #[test]
     fn import_demo_examples_resolve() {
         let mut r = MemoryResolver::new();
-        r.add("physics.vrf", include_str!("../../../docs/examples/physics.vrf"));
+        r.add(
+            "physics.vrf",
+            include_str!("../../../docs/examples/physics.vrf"),
+        );
         r.add(
             "import-demo.vrf",
             include_str!("../../../docs/examples/import-demo.vrf"),
@@ -927,7 +978,11 @@ mod tests {
         // over_200 / over_100 unify between the facts and the imported axiom.
         let over_100 = id(&c, &key("Motor", "over_100", None));
         assert!(c.facts.iter().any(|f| f.atom == over_100));
-        assert!(c.clauses.iter().any(|cl| cl.lits.iter().any(|l| l.atom == over_100)));
+        assert!(
+            c.clauses
+                .iter()
+                .any(|cl| cl.lits.iter().any(|l| l.atom == over_100))
+        );
     }
 
     #[test]
@@ -947,7 +1002,11 @@ mod tests {
         let src = "AXIOM f:\n    FORBIDS\n        x a\n        x b\n        x c\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 3); // C(3,2), like EXCLUSIVE
-        assert!(c.clauses.iter().all(|cl| cl.lits.len() == 2 && cl.lits.iter().all(|l| !l.negated)));
+        assert!(
+            c.clauses
+                .iter()
+                .all(|cl| cl.lits.len() == 2 && cl.lits.iter().all(|l| !l.negated))
+        );
     }
 
     #[test]
@@ -964,7 +1023,10 @@ mod tests {
         let src = "AXIOM a:\n    WHEN NOT x a\n    THEN x b\n";
         let c = compile_source("<t>", src).unwrap();
         let xa = id(&c, &key("x", "a", None));
-        assert!(c.clauses[0].lits.contains(&Lit { atom: xa, negated: true }));
+        assert!(c.clauses[0].lits.contains(&Lit {
+            atom: xa,
+            negated: true
+        }));
     }
 
     #[test]
@@ -977,7 +1039,10 @@ mod tests {
     #[test]
     fn compilation_is_deterministic() {
         let src = "AXIOM e:\n    EXCLUSIVE\n        z z\n        a a\n        m m\nFACT q q\n";
-        assert_eq!(compile_source("<t>", src).unwrap(), compile_source("<t>", src).unwrap());
+        assert_eq!(
+            compile_source("<t>", src).unwrap(),
+            compile_source("<t>", src).unwrap()
+        );
     }
 
     #[test]

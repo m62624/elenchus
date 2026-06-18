@@ -127,15 +127,29 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         .iter()
         .enumerate()
         .filter_map(|(i, &c)| match c {
-            1 => Some(Fact { atom: i as AtomId, value: Value::True, origin: origin() }),
-            2 => Some(Fact { atom: i as AtomId, value: Value::False, origin: origin() }),
+            1 => Some(Fact {
+                atom: i as AtomId,
+                value: Value::True,
+                origin: origin(),
+            }),
+            2 => Some(Fact {
+                atom: i as AtomId,
+                value: Value::False,
+                origin: origin(),
+            }),
             _ => None,
         })
         .collect();
     let clauses: Vec<Clause> = raw
         .iter()
         .map(|c| Clause {
-            lits: c.iter().map(|&(v, neg)| Lit { atom: v, negated: neg }).collect(),
+            lits: c
+                .iter()
+                .map(|&(v, neg)| Lit {
+                    atom: v,
+                    negated: neg,
+                })
+                .collect(),
             origin: origin(),
         })
         .collect();
@@ -158,7 +172,13 @@ fn alloc_p(i: usize) -> String {
 fn encode(compiled: &Compiled) -> Cnf {
     let mut cnf = Cnf::new(compiled.atoms.len());
     for clause in &compiled.clauses {
-        cnf.add_clause(clause.lits.iter().map(|l| SatLit::new(l.atom, l.negated)).collect());
+        cnf.add_clause(
+            clause
+                .lits
+                .iter()
+                .map(|l| SatLit::new(l.atom, l.negated))
+                .collect(),
+        );
     }
     for f in &compiled.facts {
         cnf.add_clause(vec![match f.value {

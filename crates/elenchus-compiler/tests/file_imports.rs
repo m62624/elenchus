@@ -34,13 +34,17 @@ fn fact_unifies_with_imported_axiom_atom() {
     let has_fuel = c
         .atoms
         .iter()
-        .position(|a| a.subject == "Car" && a.predicate == "has" && a.object.as_deref() == Some("fuel"))
+        .position(|a| {
+            a.subject == "Car" && a.predicate == "has" && a.object.as_deref() == Some("fuel")
+        })
         .expect("Car has fuel atom") as u32;
 
     assert!(c.facts.iter().any(|f| f.atom == has_fuel));
     assert!(
-        c.clauses.iter().any(|cl| cl.origin.axiom.as_deref() == Some("engine_needs_fuel")
-            && cl.lits.iter().any(|l| l.atom == has_fuel)),
+        c.clauses
+            .iter()
+            .any(|cl| cl.origin.axiom.as_deref() == Some("engine_needs_fuel")
+                && cl.lits.iter().any(|l| l.atom == has_fuel)),
         "the imported axiom must reference the same atom as the local fact"
     );
 }

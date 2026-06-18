@@ -136,10 +136,11 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
         (
             Statement::Axiom {
                 name,
-                body: Body::Impl {
-                    antecedent,
-                    consequent,
-                },
+                body:
+                    Body::Impl {
+                        antecedent,
+                        consequent,
+                    },
             },
             Stmt::Impl {
                 rule: false,
@@ -151,10 +152,11 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
         | (
             Statement::Rule {
                 name,
-                body: Body::Impl {
-                    antecedent,
-                    consequent,
-                },
+                body:
+                    Body::Impl {
+                        antecedent,
+                        consequent,
+                    },
             },
             Stmt::Impl {
                 rule: true,

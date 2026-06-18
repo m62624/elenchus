@@ -106,10 +106,10 @@ enum Step {
 struct Solver {
     num_vars: usize,
     clauses: Vec<Vec<SatLit>>, // originals + learned + blocking
-    watches: Vec<Vec<Watch>>,  // indexed by literal code; a clause watching `w` lives in watches[!w]
+    watches: Vec<Vec<Watch>>, // indexed by literal code; a clause watching `w` lives in watches[!w]
     assign: Vec<Option<bool>>, // per var
-    level: Vec<u32>,           // per var (valid when assigned)
-    reason: Vec<Reason>,       // per var (valid when assigned)
+    level: Vec<u32>,          // per var (valid when assigned)
+    reason: Vec<Reason>,      // per var (valid when assigned)
     trail: Vec<SatLit>,
     decisions: Vec<usize>, // trail index where each decision level starts
     qhead: usize,
@@ -271,7 +271,10 @@ impl Solver {
                 self.clauses[cref].swap(0, 1);
             }
             let other = self.clauses[cref][0];
-            let kept = Watch { cref, blocking: other };
+            let kept = Watch {
+                cref,
+                blocking: other,
+            };
 
             if other != w.blocking && self.lit_is_true(other) {
                 ws[write] = kept;
@@ -642,7 +645,11 @@ mod tests {
         c.add_clause(vec![l(0, true), l(4, true)]);
         let m = solve(&c).expect("sat");
         for clause in &c.clauses {
-            assert!(clause.iter().any(|&lit| m[lit.var() as usize] != lit.is_negative()));
+            assert!(
+                clause
+                    .iter()
+                    .any(|&lit| m[lit.var() as usize] != lit.is_negative())
+            );
         }
     }
 }

@@ -18,7 +18,10 @@ fn text_consistent_exits_0() {
 
 #[test]
 fn text_warning_exits_1() {
-    let out = elenchus(&["--text", "FACT x a\nAXIOM w:\n WHEN x a\n THEN x b\nCHECK x\n"]);
+    let out = elenchus(&[
+        "--text",
+        "FACT x a\nAXIOM w:\n WHEN x a\n THEN x b\nCHECK x\n",
+    ]);
     assert_eq!(out.status.code(), Some(1));
 }
 

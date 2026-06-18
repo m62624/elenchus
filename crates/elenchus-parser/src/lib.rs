@@ -155,7 +155,11 @@ impl<'a> fmt::Display for ParseError<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let line = self.span.location_line() as usize;
         let column = self.span.get_column();
-        let full_line = self.source.lines().nth(line.saturating_sub(1)).unwrap_or("");
+        let full_line = self
+            .source
+            .lines()
+            .nth(line.saturating_sub(1))
+            .unwrap_or("");
         let indent = " ".repeat(if column > 0 { column - 1 } else { 0 });
 
         write!(
@@ -218,7 +222,11 @@ fn is_ident_char(c: char) -> bool {
 
 /// A bare identifier (does not reject reserved words).
 fn raw_identifier<'a>(input: Span<'a>) -> PResult<'a, Span<'a>> {
-    recognize((satisfy(|c| c.is_ascii_alphabetic()), take_while(is_ident_char))).parse(input)
+    recognize((
+        satisfy(|c| c.is_ascii_alphabetic()),
+        take_while(is_ident_char),
+    ))
+    .parse(input)
 }
 
 /// An identifier that is not a reserved keyword.
@@ -320,12 +328,23 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     // list_op failing stays Error so the AXIOM alt can try impl_body.
     let (input, op) = list_op(input)?;
     // Past here we are committed to a list body.
-    let (input, _) = promote(eol(input), input, "expected a newline after the list operator")?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "expected a newline after the list operator",
+    )?;
     let at = input;
-    let (input, first) = promote(atom_line(input), at, "a list axiom needs at least two atoms")?;
+    let (input, first) = promote(
+        atom_line(input),
+        at,
+        "a list axiom needs at least two atoms",
+    )?;
     let at = input;
-    let (input, second) =
-        promote(atom_line(input), at, "a list axiom needs at least two atoms")?;
+    let (input, second) = promote(
+        atom_line(input),
+        at,
+        "a list axiom needs at least two atoms",
+    )?;
     let (input, rest) = many0(atom_line).parse(input)?;
 
     let mut atoms = vec![first, second];
@@ -338,7 +357,11 @@ fn and_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     // Not an AND line → Error so many0 stops cleanly.
     let (input, _) = (tag("AND"), space1).parse(input)?;
     let at = input;
-    let (input, lit) = promote(literal(input), at, "AND expects a literal: [NOT] <Subject> <predicate> [<object>]")?;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "AND expects a literal: [NOT] <Subject> <predicate> [<object>]",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the AND literal")?;
     Ok((input, lit))
 }
@@ -349,7 +372,11 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = (tag("WHEN"), space1).parse(input)?;
     // Committed to an implication body now.
     let at = input;
-    let (input, when) = promote(literal(input), at, "WHEN expects a literal: [NOT] <Subject> <predicate> [<object>]")?;
+    let (input, when) = promote(
+        literal(input),
+        at,
+        "WHEN expects a literal: [NOT] <Subject> <predicate> [<object>]",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the WHEN literal")?;
     let (input, ante_rest) = many0(and_line).parse(input)?;
 
@@ -405,7 +432,11 @@ fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("FACT"), space1).parse(input)?;
     let at = input;
-    let (input, a) = promote(atom(input), at, "FACT expects an atom: <Subject> <predicate> [<object>]")?;
+    let (input, a) = promote(
+        atom(input),
+        at,
+        "FACT expects an atom: <Subject> <predicate> [<object>]",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the FACT atom")?;
     Ok((input, Statement::Fact(a)))
 }
@@ -413,7 +444,11 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("NOT"), space1).parse(input)?;
     let at = input;
-    let (input, a) = promote(atom(input), at, "NOT expects an atom: <Subject> <predicate> [<object>]")?;
+    let (input, a) = promote(
+        atom(input),
+        at,
+        "NOT expects an atom: <Subject> <predicate> [<object>]",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the NOT atom")?;
     Ok((input, Statement::Negation(a)))
 }
@@ -436,9 +471,17 @@ fn stmt_axiom<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("AXIOM"), space1).parse(input)?;
     // Committed to an axiom now.
     let at = input;
-    let (input, name) = promote(identifier(input), at, "expected an axiom name (a lowercase identifier)")?;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "expected an axiom name (a lowercase identifier)",
+    )?;
     let (input, _) = space0(input)?;
-    let (input, _) = promote(char(':').parse(input), input, "expected ':' after the axiom name")?;
+    let (input, _) = promote(
+        char(':').parse(input),
+        input,
+        "expected ':' after the axiom name",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after 'AXIOM <name>:'")?;
     let at = input;
     let (input, body) = promote(
@@ -452,9 +495,17 @@ fn stmt_axiom<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("RULE"), space1).parse(input)?;
     let at = input;
-    let (input, name) = promote(identifier(input), at, "expected a rule name (a lowercase identifier)")?;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "expected a rule name (a lowercase identifier)",
+    )?;
     let (input, _) = space0(input)?;
-    let (input, _) = promote(char(':').parse(input), input, "expected ':' after the rule name")?;
+    let (input, _) = promote(
+        char(':').parse(input),
+        input,
+        "expected ':' after the rule name",
+    )?;
     let (input, _) = promote(eol(input), input, "unexpected text after 'RULE <name>:'")?;
     let at = input;
     let (input, body) = promote(impl_body(input), at, "a rule body must be WHEN ... THEN")?;
@@ -490,7 +541,9 @@ pub fn parse(src: &str) -> Result<Program<'_>, ParseError<'_>> {
                 return Err(ParseError {
                     source: src,
                     span: rest,
-                    message: String::from("expected a statement (IMPORT/FACT/NOT/AXIOM/RULE/CHECK)"),
+                    message: String::from(
+                        "expected a statement (IMPORT/FACT/NOT/AXIOM/RULE/CHECK)",
+                    ),
                 });
             }
             Ok(Program { statements })
@@ -623,10 +676,11 @@ mod tests {
         let p = prog(src);
         match &p.statements[0] {
             Statement::Axiom {
-                body: Body::Impl {
-                    antecedent,
-                    consequent,
-                },
+                body:
+                    Body::Impl {
+                        antecedent,
+                        consequent,
+                    },
                 ..
             } => {
                 assert_eq!(antecedent.len(), 1);
@@ -645,10 +699,11 @@ mod tests {
         let p = prog(src);
         match &p.statements[0] {
             Statement::Axiom {
-                body: Body::Impl {
-                    antecedent,
-                    consequent,
-                },
+                body:
+                    Body::Impl {
+                        antecedent,
+                        consequent,
+                    },
                 ..
             } => {
                 assert_eq!(antecedent.len(), 2);
@@ -760,7 +815,10 @@ mod tests {
         assert!(matches!(
             p.statements[0],
             Statement::Axiom {
-                body: Body::List { op: ListOp::Exclusive, .. },
+                body: Body::List {
+                    op: ListOp::Exclusive,
+                    ..
+                },
                 ..
             }
         ));
@@ -776,7 +834,10 @@ mod tests {
         ] {
             let src = alloc::format!("AXIOM a:\n    {kw}\n        x a\n        x b\n");
             match &prog(&src).statements[0] {
-                Statement::Axiom { body: Body::List { op, .. }, .. } => assert_eq!(*op, want),
+                Statement::Axiom {
+                    body: Body::List { op, .. },
+                    ..
+                } => assert_eq!(*op, want),
                 other => panic!("{kw}: unexpected {other:?}"),
             }
         }
@@ -785,7 +846,10 @@ mod tests {
     #[test]
     fn check_bidirectional_without_subject() {
         match &prog("CHECK BIDIRECTIONAL\n").statements[0] {
-            Statement::Check { subject, bidirectional } => {
+            Statement::Check {
+                subject,
+                bidirectional,
+            } => {
                 assert!(subject.is_none());
                 assert!(bidirectional);
             }
@@ -814,7 +878,10 @@ mod tests {
     fn negated_consequent_then_not() {
         let src = "AXIOM a:\n    WHEN x on\n    THEN NOT x off\n";
         match &prog(src).statements[0] {
-            Statement::Axiom { body: Body::Impl { consequent, .. }, .. } => {
+            Statement::Axiom {
+                body: Body::Impl { consequent, .. },
+                ..
+            } => {
                 assert!(consequent[0].data.negated);
                 assert_eq!(consequent[0].data.atom.predicate, "off");
             }

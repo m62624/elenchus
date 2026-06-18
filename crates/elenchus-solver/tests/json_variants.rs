@@ -28,7 +28,10 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "conflict_implication_violation",
             "FACT x a\nNOT x b\nAXIOM w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
         ),
-        ("conflict_fact_contradiction", "FACT x a\nNOT x a\nCHECK x\n"),
+        (
+            "conflict_fact_contradiction",
+            "FACT x a\nNOT x a\nCHECK x\n",
+        ),
         (
             "conflict_derived_contradiction",
             "FACT x a\nNOT x b\nRULE r:\n    WHEN x a\n    THEN x b\nCHECK x\n",
@@ -55,15 +58,27 @@ fn json_is_valid_and_stable_for_every_variant() {
         let json = report.to_json();
 
         // (a) it is valid JSON ...
-        let value: serde_json::Value =
-            serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON for {name}: {e}\n{json}"));
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("invalid JSON for {name}: {e}\n{json}"));
         // ... with the documented shape.
-        assert!(value.get("status").and_then(|v| v.as_str()).is_some(), "{name}: status");
-        assert!(value.get("exit_code").and_then(|v| v.as_i64()).is_some(), "{name}: exit_code");
+        assert!(
+            value.get("status").and_then(|v| v.as_str()).is_some(),
+            "{name}: status"
+        );
+        assert!(
+            value.get("exit_code").and_then(|v| v.as_i64()).is_some(),
+            "{name}: exit_code"
+        );
         for key in ["conflicts", "warnings", "derived"] {
-            assert!(value.get(key).and_then(|v| v.as_array()).is_some(), "{name}: {key} array");
+            assert!(
+                value.get(key).and_then(|v| v.as_array()).is_some(),
+                "{name}: {key} array"
+            );
         }
-        assert!(value.get("underdetermined").is_some(), "{name}: underdetermined key");
+        assert!(
+            value.get("underdetermined").is_some(),
+            "{name}: underdetermined key"
+        );
 
         // (b) it is stable.
         insta::assert_snapshot!(name, json);

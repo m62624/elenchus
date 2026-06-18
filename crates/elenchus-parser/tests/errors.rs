@@ -70,7 +70,5 @@ fn trailing_garbage_after_valid_program() {
 
 #[test]
 fn and_literal_missing() {
-    insta::assert_snapshot!(err(
-        "AXIOM g:\n    WHEN x a\n    AND\n    THEN x b\n"
-    ));
+    insta::assert_snapshot!(err("AXIOM g:\n    WHEN x a\n    AND\n    THEN x b\n"));
 }

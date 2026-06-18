@@ -359,7 +359,11 @@ impl<'a> Eval<'a> {
                             changed = true;
                             self.derived.push(Derived {
                                 atom: self.label(cl.atom),
-                                value: if cl.negated { Value::False } else { Value::True },
+                                value: if cl.negated {
+                                    Value::False
+                                } else {
+                                    Value::True
+                                },
                                 origin: r.origin.clone(),
                             });
                         }
@@ -424,7 +428,9 @@ impl<'a> Eval<'a> {
                         axiom: None,
                         kind: "UNSAT",
                     },
-                    atoms: vec![String::from("the axioms and facts are jointly unsatisfiable")],
+                    atoms: vec![String::from(
+                        "the axioms and facts are jointly unsatisfiable",
+                    )],
                 });
                 None
             }
@@ -640,7 +646,11 @@ mod tests {
     #[test]
     fn implication_missing_consequent_is_warning() {
         // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
-        let r = verify_source("<t>", "FACT A has flying\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = verify_source(
+            "<t>",
+            "FACT A has flying\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n",
+        )
+        .unwrap();
         assert_eq!(r.status, Status::Warning);
         assert_eq!(r.warnings.len(), 1);
         assert_eq!(r.warnings[0].blocked_by, vec![String::from("A has wing")]);
@@ -661,7 +671,11 @@ mod tests {
 
     #[test]
     fn rule_derives_fact() {
-        let r = verify_source("<t>", "FACT A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n").unwrap();
+        let r = verify_source(
+            "<t>",
+            "FACT A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n",
+        )
+        .unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert_eq!(r.derived.len(), 1);
         assert_eq!(r.derived[0].atom, "A needs oxygen");
