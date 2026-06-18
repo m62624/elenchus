@@ -189,4 +189,11 @@ proptest! {
         let compiled = build_compiled(n, &facts, &raw);
         prop_assert_eq!(solve(&compiled), solve(&compiled));
     }
+
+    /// Report::to_json always emits valid JSON, whatever the program.
+    #[test]
+    fn to_json_is_always_valid((n, facts, raw) in engine_instance()) {
+        let json = solve(&build_compiled(n, &facts, &raw)).to_json();
+        prop_assert!(serde_json::from_str::<serde_json::Value>(&json).is_ok(), "{}", json);
+    }
 }

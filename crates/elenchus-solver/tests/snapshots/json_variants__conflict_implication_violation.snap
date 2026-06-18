@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"axiom":"w","kind":"AXIOM","source":"v.vrf","line":3,"atoms":["x a","x b"]}],"warnings":[],"derived":[],"underdetermined":null}

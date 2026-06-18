@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"axiom":"need_two","kind":"AXIOM","source":"v.vrf","line":2,"blocked_by":["s checked"]},{"axiom":"need_two","kind":"AXIOM","source":"v.vrf","line":2,"blocked_by":["s signed"]}],"derived":[{"axiom":"mark","kind":"RULE","source":"v.vrf","line":6,"atom":"s seen","value":true}],"underdetermined":null}

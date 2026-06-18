@@ -228,6 +228,7 @@ dependencies = [
  "elenchus-compiler",
  "insta",
  "proptest",
+ "serde_json",
 ]
 
 [[package]]
