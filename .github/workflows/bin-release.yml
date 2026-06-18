@@ -142,6 +142,19 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      # cargo-dist builds the .msi with WiX v3 (candle/light). GitHub's Windows
+      # runner images no longer ship it, so fetch the v3 binaries and put them on
+      # PATH. (WiX v4+ won't work — cargo-dist needs v3's candle.exe.)
+      - name: Install WiX v3 (Windows, for the .msi installer)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          $dest = "$env:RUNNER_TEMP\wix3"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\wix3.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\wix3.zip" -DestinationPath $dest -Force
+          if (-not (Test-Path "$dest\candle.exe")) { throw "candle.exe missing after WiX install" }
+          Add-Content -Path $env:GITHUB_PATH -Value $dest
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot

@@ -25,8 +25,10 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   `crates/<bin>/wix/main.wxs`. The GUIDs are stable identities and must match the
   `.wxs` — never regenerate/change them. These were produced once via `dist init`
   in a throwaway clone (NOT in-tree, which would clobber `release.yml`). MSI
-  builds inside `dist build`; no extra CI step (WiX v3 is pre-installed on the
-  GitHub Windows runners), so `bin-release.yml` is unchanged.
+  builds inside `dist build` via WiX v3 (`candle`/`light`). GitHub's Windows
+  runner images no longer ship WiX v3, so `bin-release.yml` has a manual
+  "Install WiX v3" step (downloads the v3.14.1 binaries to PATH, Windows only)
+  before `dist build`. WiX v4+ will NOT work — cargo-dist needs v3.
 - The cargo-dist workflow is customized (`workflow_call`), so `dist generate`
   is **not** run to keep it in sync; `allow-dirty = ["ci"]` is set so `dist plan`
   does not fail on it. Do not blindly run `dist init`/`dist generate` — it would
@@ -66,8 +68,8 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   config (changelog categories by label).
 
 ### External Setup Required
-- The shell/powershell/msi installers need no secrets (WiX v3 is pre-installed on
-  the GitHub Windows runners).
+- The shell/powershell/msi installers need no secrets. The `.msi` build needs WiX
+  v3, which `bin-release.yml` installs itself (GitHub runners no longer ship it).
 - **Homebrew** (`publish-homebrew-formula`) needs: a tap repo named
   `m62624/homebrew-elenchus` (must be created), and a `HOMEBREW_TAP_TOKEN` repo
   secret — a GitHub token with contents:write on that tap repo. Without it the
