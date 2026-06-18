@@ -54,6 +54,24 @@ until it is **CONSISTENT**.
 So: **WARNING / UNDERDETERMINED / CONFLICT are never "done"** — they are the
 engine telling you exactly what is missing or wrong. Re-run after each change.
 
+**Reach CONSISTENT by stating more truth, not by gaming the check.** CONSISTENT
+only certifies "no contradiction *among what you wrote*" — it cannot vouch for
+constraints you never stated. So the goal of the loop is a **faithful, complete
+model**, not just a green result:
+
+- When you hit WARNING/UNDERDETERMINED, add the **real** missing `FACT`/`NOT` — not
+  an invented one. If you don't actually know it, that uncertainty is the finding.
+- When you hit CONFLICT, fix the thing that is actually wrong. **Never delete a
+  valid axiom or assert something false just to make it pass** — that throws away
+  the very check you wanted.
+- Before each run, ask: *have I encoded every constraint that matters here?* Add
+  every genuine first principle as an `AXIOM` (mutual exclusions, required-together
+  gates, orderings, "exactly one of"). A missing axiom = false confidence: the
+  engine will happily say CONSISTENT about an under-specified problem.
+
+Done = CONSISTENT **with every real axiom present and every known fact stated** —
+no remaining "but…". Keep iterating (add data, add axioms) until you reach that.
+
 ## DSL cheat-sheet
 
 Keywords are ALWAYS CAPS, names are lowercase, indentation is cosmetic, `//` is a
