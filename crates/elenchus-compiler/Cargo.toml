@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Compiles parsed elenchus DSL into a canonical Impossible/CNF clause IR: import resolution, desugaring, atom interning, content-addressed dedup."
 readme = "README.md"
 keywords = ["logic", "reasoning", "sat", "verification", "no-std"]
 categories = ["compilers", "no-std", "mathematics"]
+
+# A library, not a shipped binary — excluded from cargo-dist releases.
+[package.metadata.dist]
+dist = false
 
 [dependencies]
 elenchus-parser = { workspace = true }

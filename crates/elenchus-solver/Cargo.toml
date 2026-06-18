@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Forward-pass reasoning interpreter for elenchus: 3-valued Kleene evaluation of the Impossible/CNF clause IR into CONFLICT / WARNING / CONSISTENT results."
 readme = "README.md"
 keywords = ["logic", "reasoning", "verification", "kleene", "no-std"]
 categories = ["mathematics", "no-std", "development-tools"]
+
+# A library, not a shipped binary — excluded from cargo-dist releases.
+[package.metadata.dist]
+dist = false
 
 [dependencies]
 elenchus-compiler = { workspace = true }

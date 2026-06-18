@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "English-like DSL parser for the elenchus reasoning engine (facts, axioms, rules, checks)."
 readme = "README.md"
 keywords = ["dsl", "parser", "logic", "reasoning", "no-std"]
 categories = ["parser-implementations", "no-std"]
+
+# A library, not a shipped binary — excluded from cargo-dist releases.
+[package.metadata.dist]
+dist = false
 
 [dependencies]
 nom = { workspace = true }

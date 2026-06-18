@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  # Not tied to a specific branch: pushes to any branch and PRs against any base
+  # branch run CI (so an integration branch collecting many PRs is covered too).
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to checkout"
+        required: false
+        type: string
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: fmt + clippy + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+
+  no_std:
+    name: no_std build (wasm32v1-none)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Rust toolchain (bare-metal target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build libraries for a real no_std target
+        run: >-
+          cargo build
+          -p elenchus-parser -p elenchus-compiler -p elenchus-solver
+          --no-default-features --target wasm32v1-none
+
+  dist-plan:
+    name: cargo-dist plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install dist
+        shell: bash
+        run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh"
+      - name: Validate the release plan
+        run: dist plan

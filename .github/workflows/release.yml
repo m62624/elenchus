@@ -1,0 +1,116 @@
+name: Release
+
+# Orchestrator (mirrors the pi-planner mechanism, Rust-native). Push a tag like
+# `pin/v0.1.0`:  prepare (bump the workspace version, make an RC branch) → tests
+# (run CI on the RC) → tag (create the real `vX.Y.Z`) → dist (cargo-dist builds
+# the binaries + installers for all targets and publishes the GitHub Release) →
+# sync (open a PR bringing the version bump back to main).
+on:
+  push:
+    tags:
+      - "pin/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      tag: ${{ steps.info.outputs.tag }}
+      rc_branch: ${{ steps.info.outputs.rc_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract release info
+        id: info
+        run: |
+          RAW="${GITHUB_REF_NAME#pin/}"   # pin/vX.Y.Z -> vX.Y.Z
+          VERSION="${RAW#v}"              # vX.Y.Z     -> X.Y.Z
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::invalid version parsed from tag: '$VERSION'"; exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "rc_branch=rc/v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Bump workspace version and push RC branch
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          RC="${{ steps.info.outputs.rc_branch }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$RC"
+          cargo install cargo-edit --locked
+          cargo set-version --workspace "$VERSION"
+          git add -A
+          git commit -m "build: update version to v$VERSION"
+          git push --force origin "$RC"
+          # Drop the trigger tag so it doesn't linger.
+          git push origin ":refs/tags/${GITHUB_REF_NAME}" || true
+
+  tests:
+    name: CI on RC
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.rc_branch }}
+
+  tag:
+    name: Create release tag
+    needs: [prepare, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_branch }}
+          fetch-depth: 0
+      - name: Tag the RC commit as vX.Y.Z
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$TAG" -m "Release $TAG"
+          git push --force origin "$TAG"
+
+  dist:
+    name: Build & publish binaries
+    needs: [prepare, tag]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/bin-release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit
+
+  sync:
+    name: Sync PR to main
+    needs: [prepare, dist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_branch }}
+          fetch-depth: 0
+      - name: Open sync PR (RC -> default branch)
+        run: |
+          RC="${{ needs.prepare.outputs.rc_branch }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BASE="${{ github.event.repository.default_branch }}"
+          existing="$(gh pr list --head "$RC" --base "$BASE" --state open --json number --jq 'length')"
+          if [ "$existing" = "0" ]; then
+            gh pr create --head "$RC" --base "$BASE" \
+              --title "release: sync elenchus v$VERSION to $BASE" \
+              --body "Created by the release workflow after the v$VERSION binaries were built." || true
+          fi
