@@ -58,10 +58,11 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
 - `workflows/bin-release.yml` → the cargo-dist-generated workflow, kept intact
   except its trigger was changed to `on: workflow_call` (inputs: `tag`) and every
   checkout uses `ref: ${{ inputs.tag }}`. Builds binaries + shell/powershell/msi
-  installers for the 6 configured targets, pushes the Homebrew formula
-  (`publish-homebrew-formula` → the tap, needs `HOMEBREW_TAP_TOKEN`), and
-  publishes the GitHub Release. Regenerate the body (not the trigger) with `dist
-  generate` only if the cargo-dist version in `Cargo.toml` changes.
+  installers for the 6 configured targets, pushes the Homebrew formula after the
+  global artifacts are built (`publish-homebrew-formula` → the tap, needs
+  `HOMEBREW_TAP_TOKEN`), and only then publishes the GitHub Release. Regenerate
+  the body (not the trigger) with `dist generate` only if the cargo-dist version
+  in `Cargo.toml` changes.
 - `workflows/labeler.yml` → on PR open/edit/sync, labels by Conventional-Commits
   prefix; the labels feed the changelog categories in the root `release.yml`.
 - `release.yml` (repo root, not a workflow) → GitHub auto-generated-release-notes
