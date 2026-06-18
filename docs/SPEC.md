@@ -4,6 +4,9 @@
 > A Rust engine does all the logic for it and catches contradictions mathematically.
 > The model cannot lie at the inference level — only at the axiom level.
 > And a mistake in an axiom we catch early and mechanically.
+>
+> In one line: a small, simplified SAT utility for small models — it does the
+> boolean bookkeeping they are bad at, and nothing more.
 
 This document is the specification. It is written so that a person who has never
 heard of SAT solvers or three-valued logic can follow it. First — why this is
@@ -20,8 +23,8 @@ contradiction surfaces. That is literally what this engine does to a set of fact
 
 ## The small-model problem
 
-A local 35B-parameter model (Qwen3 MoE, 8 GB VRAM) classifies and generates code
-well. But it has three weaknesses compared to 400B+ models:
+A small local model classifies and generates code well. But compared to the big
+frontier models it has three weaknesses:
 
 1. **Context depth.** It forgets a constraint mentioned at step 2 by the time it reaches step 7.
 2. **Calibration.** It does not feel when it is unsure, and confidently hallucinates.
@@ -88,10 +91,12 @@ ambitious path.
 | **minisat, z3** | 2000s | Industrial SAT / SMT solvers the industry runs on |
 
 And there is a path we **deliberately do not take**: the proof assistants **Lean**
-and **Coq**. They can prove all of mathematics rigorously. But they pay for it
-with monstrously complex languages. That is why Lean did not become the base for
-all LLMs — the model cannot write it. Our lesson is direct: **stop in time**. Take
-exactly as much logic as is needed to check reasoning, and not a gram more.
+and **Coq**. They are genuinely powerful — they can prove all of mathematics
+rigorously, and people build serious work on them. The catch is their language:
+it is rich and demanding, hard to write well even for experts and out of reach
+for a small local model. So this is not a knock on Lean — it is just the wrong
+tool for *this* job. Our rule: take exactly as much logic as is needed to check
+reasoning, and no more.
 
 ---
 
@@ -843,8 +848,8 @@ optional step via the npm wrapper.
 # Part VI. What is NOT included and why
 
 Here is everything we deliberately left out, and what complexity it removed for the
-model. Each point is a place where we consciously stopped, so as not to repeat
-Lean's fate.
+model. Each point is a place where we consciously stopped: the goal is a language
+a small model can actually write, not the most expressive logic possible.
 
 | What we excluded | Why | What it would mean for the model |
 |---|---|---|
