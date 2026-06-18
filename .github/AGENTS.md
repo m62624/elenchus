@@ -10,7 +10,9 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   and `cargo test --workspace` on Linux/Windows/macOS; plus a `no_std` build of the
   three library crates for the bare `wasm32v1-none` target, plus `dist plan`.
 - CI is **not tied to a base branch**: pushes to any branch and PRs against any
-  base run it (an integration branch collecting many PRs is supported).
+  base run it (an integration branch collecting many PRs is supported), except
+  release-candidate branches `rc/v*` because `release.yml` invokes the same CI
+  explicitly via `workflow_call`.
 - Binary releases ship only the two binaries — the `elenchus` CLI and the
   `elenchus-mcp` server. The three libraries set `dist = false`.
 - Installers are `shell` + `powershell` + `msi` + `homebrew`. `cargo binstall`
@@ -50,7 +52,7 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   **Flow:** `prepare` (parse the version, create `rc/vX.Y.Z`, `cargo set-version
   --workspace`, commit, push the RC, delete the pin tag) → `tests` (calls `ci.yml`
   against the RC) → `tag` (create the real `vX.Y.Z`) → `dist` (calls
-  `bin-release.yml` — binaries + GitHub Release) → `publish-crates` (`cargo
+  `bin-release.yml` — binaries + draft GitHub Release) → `publish-crates` (`cargo
   publish --workspace --locked` from the tag — publishes all 5 crates to
   crates.io in dependency order, including the two binary crates, only after the
   binary release succeeds) → `sync` (needs both; opens a PR from the RC to the

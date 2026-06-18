@@ -295,7 +295,7 @@ jobs:
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          gh release create "${{ needs.plan.outputs.tag }}" --draft --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   publish-homebrew-formula:
     needs:
@@ -332,6 +332,15 @@ jobs:
             filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
             name=$(echo "$filename" | sed "s/\.rb$//")
             version=$(echo "$release" | jq .app_version --raw-output)
+
+            case "$name" in
+              elenchus-cli)
+                sed -i 's/^  desc .*/  desc "CLI for checking elenchus .vrf programs."/g' "Formula/${filename}"
+                ;;
+              elenchus-mcp)
+                sed -i 's/^  desc .*/  desc "MCP stdio server exposing elenchus checks to AI agents."/g' "Formula/${filename}"
+                ;;
+            esac
 
             export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
             brew update
