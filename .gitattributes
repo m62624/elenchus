@@ -1,0 +1,7 @@
+# Keep line endings stable across platforms. The `.vrf` examples are embedded
+# verbatim via include_str! and compared in tests, so they must be LF everywhere
+# (a Windows CRLF checkout would otherwise change their bytes). Rust sources too,
+# to keep rustfmt and diffs consistent.
+*.vrf  text eol=lf
+*.rs   text eol=lf
+*.md   text eol=lf

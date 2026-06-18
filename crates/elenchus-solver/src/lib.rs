@@ -775,8 +775,11 @@ mod tests {
     fn roles_puzzle_underdetermined_without_a_clue() {
         // Drop the `NOT bob is qa` clue and the solution is no longer unique
         // (bob/carol can swap dev/qa) — the SAT pass reports UNDERDETERMINED.
-        let src =
-            include_str!("../../../docs/examples/roles-puzzle.vrf").replace("NOT  bob is qa\n", "");
+        // Normalize CRLF first: on a Windows checkout include_str! embeds the file
+        // with \r\n, so a literal "...\n" match would otherwise miss the line.
+        let src = include_str!("../../../docs/examples/roles-puzzle.vrf")
+            .replace("\r\n", "\n")
+            .replace("NOT  bob is qa\n", "");
         let r = verify_source("roles-puzzle.vrf", &src).unwrap();
         assert_eq!(r.status, Status::Underdetermined);
     }
