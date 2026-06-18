@@ -67,6 +67,44 @@ comment. An atom is `Subject predicate [object]`.
 Numbers? Turn a condition into a named boolean atom (`speed >= 100` → `over_100`)
 and reason about the branch, not the arithmetic.
 
+## Deeper mechanics (condensed from the spec)
+
+**One primitive.** Every constraint compiles to `Impossible([…])` — "these
+literals can't all be TRUE at once". `EXCLUSIVE`/`ONEOF`/`ATLEAST`/`FORBIDS` and
+`WHEN…THEN` are sugar over it. You never write `Impossible`; this is just why the
+engine stays small and total.
+
+**Atom identity is verbatim — the #1 gotcha.** Atoms are compared
+character-for-character, case-sensitively, by the triple `(subject, predicate,
+object)`. `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`. A typo or alternate spelling
+silently creates a *new* UNKNOWN atom — so an axiom about `Engine has fuel` will
+not see your `Engine has_fuel`. Keep names identical across facts, axioms, and
+imports, or you'll get phantom WARNINGs.
+
+**WHEN…THEN: why WARNING vs CONFLICT.** For `WHEN A AND B THEN C`:
+
+- any antecedent FALSE → the rule doesn't fire → CONSISTENT (not a warning);
+- all antecedents TRUE and C FALSE → **CONFLICT**;
+- all TRUE with C UNKNOWN, or an antecedent UNKNOWN → **WARNING** (state more);
+- a `RULE` instead *derives* C = TRUE when the antecedent holds.
+
+List axioms (`EXCLUSIVE`/…) with UNKNOWN atoms stay CONSISTENT — no data, no
+conflict yet.
+
+**Forward vs backward.** The forward pass checks the facts you gave and runs
+`RULE`s. `CHECK X BIDIRECTIONAL` adds a backward pass (a small SAT search): it
+reports **UNDERDETERMINED** when more than one model fits, and catches a
+**CONFLICT** where the axioms are jointly unsatisfiable even though no single one
+is visibly violated. Use `BIDIRECTIONAL` when you care "is the answer *unique*?".
+
+**IMPORT.** `IMPORT "lib.vrf"` flat-merges another source; atoms **unify across
+files** (a library axiom constrains your local fact). Axiom *names* are per-source
+labels — two files may reuse a name; identical duplicates are idempotent.
+
+**Not supported (on purpose).** No arithmetic (turn a number into a boolean atom),
+no quantifiers (∀/∃), no probabilities. Pure boolean structure — exactly the class
+of mistakes a model makes across a long chain.
+
 ## Patterns (recipes)
 
 - **Exactly one of N** → `ONEOF`. (Each person one role; a request is exactly one of pending/done/failed.)
@@ -164,9 +202,13 @@ No single clause is violated (everything is UNKNOWN), but the axioms can't all
 hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT`:
 "the axioms and facts are jointly unsatisfiable." Rethink the principles.
 
-## How to invoke
+## How to use it (CLI or MCP — same engine)
 
-**CLI** (`elenchus`):
+This skill is the instructions; the engine is reachable two interchangeable ways.
+Use whichever your environment provides — both are cross-platform:
+
+**CLI + this skill — preferred when you have a shell** (the playwright-cli + skill
+shape). Run the `elenchus` binary via Bash. One portable binary, zero host config.
 
 ```console
 $ elenchus program.vrf                  # check a file (IMPORTs resolve next to it)
@@ -175,8 +217,13 @@ CHECK x" --format json                  # inline; --format json for tooling
 $ cat program.vrf | elenchus            # stdin
 ```
 
-Exit code is the verdict (0 / 1 / 2) — use it directly as a gate.
+Exit code is the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED,
+2 = CONFLICT) — a ready CI gate.
 
-**MCP tool** (`elenchus-mcp` server): call `elenchus_check` with
-`{ "program": "<.vrf text>", "format": "json" }`. Read the `status`; if it isn't
-`CONSISTENT`, change the program and call again — loop until it is.
+**MCP + this skill — when the host exposes MCP tools but no shell.** The
+`elenchus-mcp` server provides one tool, `elenchus_check`; call it with
+`{ "program": "<.vrf text>", "format": "json" }`.
+
+Either way the rule is the same: read `status`; if it isn't `CONSISTENT`, change
+the program (add facts, fix or rethink an axiom) and run again — **loop until it
+is CONSISTENT**.
