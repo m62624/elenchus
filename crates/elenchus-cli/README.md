@@ -15,12 +15,13 @@ crates (`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
 $ elenchus path/to/program.vrf          # check a file (IMPORTs resolve relative to it)
 $ elenchus --text "FACT x a
 CHECK x"                                  # inline program
-$ cat program.vrf | elenchus            # stdin
+$ cat program.vrf | elenchus -          # stdin
 $ elenchus program.vrf --format json    # machine-readable output
 ```
 
-One input, three ways: a positional `<file>`, inline `--text`, or stdin (no arg,
-or `-`). `--text` and a file are mutually exclusive. **`IMPORT` resolves only for
+One input, three ways: a positional `<file>`, inline `--text`, or explicit stdin
+with `-`. Running `elenchus` with no input prints help instead of waiting on
+stdin. `--text` and a file are mutually exclusive. **`IMPORT` resolves only for
 the file form** — `--text` and stdin are treated as a single source, so a program
 using `IMPORT` must be passed as a file.
 

@@ -1,12 +1,47 @@
 //! Black-box tests of the `elenchus` binary (exit codes, formats, errors).
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn elenchus(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_elenchus"))
         .args(args)
         .output()
         .expect("run elenchus")
+}
+
+fn elenchus_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_elenchus"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn elenchus");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin pipe")
+        .write_all(stdin.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("wait elenchus")
+}
+
+#[test]
+fn no_args_prints_help_instead_of_waiting_for_stdin() {
+    let out = elenchus(&[]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stderr.contains("no input provided"));
+    assert!(stdout.contains("Usage: elenchus"));
+}
+
+#[test]
+fn dash_reads_stdin() {
+    let out = elenchus_with_stdin(&["-"], "FACT x a\nCHECK x\n");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CONSISTENT"));
 }
 
 #[test]

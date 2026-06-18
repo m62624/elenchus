@@ -203,8 +203,9 @@ prune that line from your shell profile if nothing else uses it.
 ## Use it
 
 - **CLI** — one input three ways: a positional `elenchus <file.vrf>`, inline
-  `--text "<program>"`, or stdin (no arg, or `-`); `--text` and a file are mutually
-  exclusive. `--format json` for tooling; exit code is the verdict (CI gate).
+  `--text "<program>"`, or explicit stdin with `-`; `--text` and a file are
+  mutually exclusive. Running `elenchus` with no input prints help instead of
+  waiting on stdin. `--format json` for tooling; exit code is the verdict (CI gate).
   Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
   source. See [`crates/elenchus-cli`](crates/elenchus-cli).
 - **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool,

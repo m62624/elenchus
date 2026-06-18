@@ -6,7 +6,7 @@
 use std::io::Read;
 use std::process::ExitCode;
 
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use elenchus_compiler::FileResolver;
 use elenchus_solver::{Report, verify, verify_source};
 
@@ -15,12 +15,13 @@ use elenchus_solver::{Report, verify, verify_source};
     name = "elenchus",
     version,
     about = "Check an elenchus .vrf program for logical consistency.",
-    long_about = "Reads a .vrf program (a file, inline --text, or stdin), runs the \
-reasoning engine, and prints the verdict. With a file, IMPORTs are resolved \
-relative to it. Exit code: 0 consistent, 1 underdetermined/warnings, 2 conflicts."
+    long_about = "Reads a .vrf program (a file, inline --text, or explicit stdin \
+with '-'), runs the reasoning engine, and prints the verdict. With a file, \
+IMPORTs are resolved relative to it. Exit code: 0 consistent, 1 \
+underdetermined/warnings, 2 conflicts."
 )]
 struct Cli {
-    /// A `.vrf` file to check. Omit (or pass `-`) to read from stdin.
+    /// A `.vrf` file to check, or `-` to read from stdin.
     file: Option<String>,
 
     /// Inline program text instead of a file or stdin.
@@ -42,6 +43,14 @@ enum Format {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.text.is_none() && cli.file.is_none() {
+        eprintln!("elenchus: no input provided; pass a file, --text, or - for stdin\n");
+        let mut cmd = Cli::command();
+        let _ = cmd.print_help();
+        eprintln!();
+        return ExitCode::from(2);
+    }
+
     let report = match build_report(&cli) {
         Ok(r) => r,
         Err(e) => {
@@ -61,15 +70,19 @@ fn build_report(cli: &Cli) -> Result<Report, String> {
         return verify_source("<text>", text).map_err(|e| e.to_string());
     }
     match cli.file.as_deref() {
-        // A real file: resolve IMPORTs relative to it.
-        Some(path) if path != "-" => verify(path, &FileResolver).map_err(|e| e.to_string()),
-        // stdin (no file, or `-`): a single source; IMPORTs are not resolved.
-        _ => {
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| format!("reading stdin: {e}"))?;
-            verify_source("<stdin>", &buf).map_err(|e| e.to_string())
+        Some(path) => {
+            if path == "-" {
+                // Explicit stdin (`-`): a single source; IMPORTs are not resolved.
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| format!("reading stdin: {e}"))?;
+                verify_source("<stdin>", &buf).map_err(|e| e.to_string())
+            } else {
+                // A real file: resolve IMPORTs relative to it.
+                verify(path, &FileResolver).map_err(|e| e.to_string())
+            }
         }
+        None => Err("no input provided; pass a file, --text, or - for stdin".to_string()),
     }
 }
