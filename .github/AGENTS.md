@@ -36,8 +36,11 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
 - `workflows/release.yml` (orchestrator) → triggered by pushing a `pin/v*` tag.
   **Flow:** `prepare` (parse the version, create `rc/vX.Y.Z`, `cargo set-version
   --workspace`, commit, push the RC, delete the pin tag) → `tests` (calls `ci.yml`
-  against the RC) → `tag` (create the real `vX.Y.Z`) → `dist` (calls
-  `bin-release.yml` with that tag) → `sync` (open a PR from the RC to the
+  against the RC) → `tag` (create the real `vX.Y.Z`) → then two jobs run in
+  parallel off that tag: `dist` (calls `bin-release.yml` — binaries + GitHub
+  Release) and `publish-crates` (`cargo publish --workspace --locked` from the
+  tag — publishes all 5 crates to crates.io in dependency order, including the
+  two binary crates) → `sync` (needs both; opens a PR from the RC to the
   repository's **default branch** — not hardcoded).
 - `workflows/bin-release.yml` → the cargo-dist-generated workflow, kept intact
   except its trigger was changed to `on: workflow_call` (inputs: `tag`) and every
@@ -53,8 +56,11 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   config (changelog categories by label).
 
 ### External Setup Required
-- None for the binary release path (shell/powershell installers + `cargo
-  binstall` need no secrets). `cargo binstall` resolving by crate name expects
-  the crates to be published to crates.io; for an unpublished/private repo, use
-  `cargo binstall --git <repo-url> elenchus-cli` (likewise `elenchus-mcp`).
+- The binary path (shell/powershell installers) needs no secrets.
+- `publish-crates` needs a `CARGO_REGISTRY_TOKEN` repo secret (a crates.io API
+  token with publish scope). Without it that job fails, but the binary artifacts
+  + GitHub Release still ship. Publishing to crates.io is what lets `cargo
+  install <crate>` and the short `cargo binstall <crate>` resolve by name; for an
+  unpublished/private repo use `cargo binstall --git <repo-url> elenchus-cli`
+  (likewise `elenchus-mcp`).
 <!-- elenchus:contracts:end -->

@@ -93,11 +93,19 @@ $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/relea
 
 ### 3. From source
 
-Needs a Rust toolchain; compiles locally and works on any platform Rust targets:
+Needs a Rust toolchain; compiles locally and works on any platform Rust targets.
+Both crates are published to crates.io, so you can build straight from there:
 
 ```console
-$ cargo install --path crates/elenchus-cli     # the `elenchus` CLI
-$ cargo install --path crates/elenchus-mcp      # the `elenchus-mcp` server
+$ cargo install elenchus-cli     # the `elenchus` CLI
+$ cargo install elenchus-mcp     # the `elenchus-mcp` server
+```
+
+…or from a local checkout of this repo:
+
+```console
+$ cargo install --path crates/elenchus-cli
+$ cargo install --path crates/elenchus-mcp
 ```
 
 ## Use it
