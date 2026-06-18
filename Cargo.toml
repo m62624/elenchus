@@ -29,3 +29,6 @@ sha2 = { version = "0.10.9", default-features = false }
 
 # Snapshot testing for parser error output
 insta = "1.41"
+
+# Property-based testing
+proptest = "1"
