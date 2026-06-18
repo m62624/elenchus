@@ -1,93 +1,85 @@
 ---
 name: elenchus
 description: >-
-  Verify that a set of facts and constraints is logically consistent — catch
-  contradictions, missing data, and under-specified problems before they bite.
-  Reach for this whenever correctness depends on a web of conditions a model is
-  likely to lose track of: role/shift/seat assignments, "exactly one of these",
-  mutually-exclusive states, deploy/readiness gates, if/else branch coverage,
-  state-machine legality, invariants across many flags. You write the facts and
+  Check that a set of facts and constraints is logically consistent — catch
+  contradictions, missing data, and under-specified problems. Reach for it
+  whenever correctness depends on a web of conditions that are easy to get
+  subtly wrong: role/shift/seat assignments, "exactly one of these",
+  mutually-exclusive states, readiness/deploy gates, if/else branch coverage,
+  state-machine legality, or invariants across many flags. You write facts and
   first principles in a tiny English-like DSL; the elenchus engine does all the
-  logic and tells you CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT.
+  logic and answers CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT. Keep
+  refining and re-running until it answers CONSISTENT.
 ---
 
 # elenchus — a logical-consistency checker
 
-A small model is good at stating facts but bad at holding a 7-step logical chain
-without quietly contradicting itself. **elenchus** moves the logic out of the
-model: you write only **facts** and **first principles (axioms)** in a tiny DSL,
-and a Rust engine does the inference and catches contradictions mathematically.
-You can only err at the axiom level — and that error is caught early.
+A model is good at stating facts but bad at holding a long logical chain without
+quietly contradicting itself. elenchus moves the logic out of the model: you
+state only **facts** and **first principles (axioms)**; a Rust engine does the
+inference and finds contradictions mathematically. You can only be wrong at the
+axiom level — and that is caught immediately.
 
-## When to use it
+Three truth values (this is the whole epistemic trick): an atom is **TRUE** (you
+wrote `FACT`), **FALSE** (you wrote `NOT`), or **UNKNOWN** (you didn't mention
+it). UNKNOWN is *not* false — the engine never guesses.
 
-Use it whenever a result is "correct" only if many conditions hold together and
-it's easy to miss one:
+## The loop — this is the point
 
-- assignments / permutations — *each person gets exactly one role*, *each seat one person*;
-- mutually-exclusive states — *a request is `pending`, `done`, or `failed`, never two*;
-- readiness / deploy gates — *deploy only if built ∧ tested ∧ reviewed ∧ not deprecated*;
-- code branch coverage — *every branch of an `if/else` chain is handled and reachable*;
-- state machines — *which transitions are legal from here*;
-- invariants over many boolean flags where a contradiction would be silent.
+Running once is not the job. The verdict tells you what to do next; you iterate
+until it is **CONSISTENT**.
 
-If the question is numeric (`x > 100`), turn the condition into a named boolean
-atom (`over_100`) — elenchus reasons about the **branch**, not the arithmetic.
-
-## The DSL in one minute
-
-Keywords are ALWAYS CAPS; names are lowercase; indentation is cosmetic.
-
-```vrf
-FACT  Subject predicate [object]      // an assertion that is TRUE
-NOT   Subject predicate [object]      // an assertion that is FALSE
-// anything not stated is UNKNOWN (not false!)
-
-AXIOM name:                           // a first principle — CHECKED
-    EXCLUSIVE                         // at most one is TRUE   (also FORBIDS, ONEOF, ATLEAST)
-        Subject predicate
-        Subject predicate
-AXIOM name:
-    WHEN  Subject predicate           // implication: if all the WHENs/ANDs hold...
-    AND   Subject predicate
-    THEN  Subject predicate           // ...then this must hold (violation → CONFLICT)
-
-RULE name:                            // like an AXIOM body, but DERIVES a new fact
-    WHEN  Subject predicate
-    THEN  Subject predicate
-
-IMPORT "library.vrf"                  // reuse a vetted axiom library (atoms unify across files)
-
-CHECK Subject [BIDIRECTIONAL]         // run the check (BIDIRECTIONAL also looks for alternatives)
+```
+   write facts + axioms ─▶ run ─▶ CONSISTENT?  ── yes ─▶ done (exit 0)
+            ▲                         │ no
+            │                         ▼
+            └──── add facts / fix or rethink an axiom ◀── read the verdict
 ```
 
-## The four results (and what to do)
+| Verdict | exit | It means | Your next move |
+|--------|:----:|----------|----------------|
+| **CONSISTENT** | 0 | no contradiction, answer is pinned down | done |
+| **WARNING** | 1 | an axiom can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` |
+| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
+| **CONFLICT** | 2 | an axiom is violated, or the axioms are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
 
-| Result | exit | Meaning | What to do |
-|--------|------|---------|------------|
-| **CONSISTENT** | 0 | no contradictions, pinned down | done |
-| **WARNING** | 1 | an axiom couldn't be checked — a needed atom is UNKNOWN | add the missing `FACT`/`NOT` |
-| **UNDERDETERMINED** | 1 | satisfiable, but more than one model fits | add a fact (the report names one) to pin it |
-| **CONFLICT** | 2 | an axiom is violated, or the facts+axioms are jointly unsatisfiable | fix a fact, or rethink the axiom |
+So: **WARNING / UNDERDETERMINED / CONFLICT are never "done"** — they are the
+engine telling you exactly what is missing or wrong. Re-run after each change.
 
-**This is the core workflow — do not stop at the first run.** WARNING,
-UNDERDETERMINED and CONFLICT are *not* "done". They are the engine telling you
-what is still missing or wrong:
+## DSL cheat-sheet
 
-1. Run the check.
-2. If **CONFLICT** — a first principle is broken. Either a fact is wrong, or two
-   axioms can't both hold. Fix it.
-3. If **WARNING** — you haven't stated enough. Add the `FACT`/`NOT` the report
-   lists under `blocked by:`.
-4. If **UNDERDETERMINED** — the constraints don't determine a unique answer. Add
-   the fact the report suggests (`pin it down: add FACT … or NOT …`).
-5. Re-run. Iterate until **CONSISTENT (exit 0)**.
+Keywords are ALWAYS CAPS, names are lowercase, indentation is cosmetic, `//` is a
+comment. An atom is `Subject predicate [object]`.
 
-## Worked examples
+| Form | Meaning |
+|------|---------|
+| `FACT s p [o]` | assert it TRUE |
+| `NOT s p [o]` | assert it FALSE |
+| `AXIOM n:` → `EXCLUSIVE` *(≥2 atoms)* | **at most one** is TRUE |
+| `AXIOM n:` → `FORBIDS` | at most one is TRUE (for two: "not both") |
+| `AXIOM n:` → `ONEOF` | **exactly one** is TRUE |
+| `AXIOM n:` → `ATLEAST` | **at least one** is TRUE |
+| `AXIOM n:` → `WHEN a` `AND b` `THEN c` | if `a ∧ b` hold then `c` must hold (else CONFLICT) |
+| `RULE n:` → `WHEN … THEN c` | same shape, but **derives** `c` as a new fact |
+| `IMPORT "lib.vrf"` | merge a reusable axiom library (atoms unify across files) |
+| `CHECK [s] [BIDIRECTIONAL]` | run it; `BIDIRECTIONAL` also searches for alternative models (UNDERDETERMINED) |
 
-### Real life — exactly-one role assignment
+Numbers? Turn a condition into a named boolean atom (`speed >= 100` → `over_100`)
+and reason about the branch, not the arithmetic.
 
-Alice/Bob/Carol each take exactly one of lead/dev/qa; each role goes to one person.
+## Patterns (recipes)
+
+- **Exactly one of N** → `ONEOF`. (Each person one role; a request is exactly one of pending/done/failed.)
+- **Mutually exclusive** → `EXCLUSIVE` / `FORBIDS`. (Can't be both `fast_path` and `slow_path`.)
+- **Required together / gate** → `WHEN … THEN …`. (Deploy only when built ∧ tested ∧ reviewed.)
+- **At least one** → `ATLEAST`. (At least one reviewer; at least one branch taken.)
+- **Ordering / implication between thresholds** → `WHEN over_200 THEN over_100`.
+- **Derive consequences** → `RULE`. (If `flying`, derive `needs oxygen`.)
+- **Shared first principles** → `IMPORT` a vetted library; you write only the `FACT`s.
+
+## Worked examples (note the loop)
+
+### 1. Exactly-one assignment (deduced by the engine)
 
 ```vrf
 AXIOM alice_role:
@@ -95,47 +87,43 @@ AXIOM alice_role:
         alice is lead
         alice is dev
         alice is qa
-// ... bob_role, carol_role, and lead_one/dev_one/qa_one the same way ...
-
+// ...bob_role, carol_role, and lead_one / dev_one / qa_one the same way...
 FACT alice is lead
 NOT  bob is qa
 CHECK alice BIDIRECTIONAL
 ```
 
-→ `CONSISTENT` — the engine deduced bob=dev, carol=qa by case analysis. Drop the
-`NOT bob is qa` clue and it becomes `UNDERDETERMINED` (bob/carol could swap):
-add a fact to pin it. Make two people `lead` and it's `CONFLICT`.
+`CONSISTENT` — from the clues the engine deduced bob=dev, carol=qa by case
+analysis. Remove `NOT bob is qa` → `UNDERDETERMINED` (bob/carol could swap); add a
+clue to pin it. Assert two leads → `CONFLICT`.
 
-### Code — deploy gate and branch coverage
+### 2. A deploy gate — iterate from WARNING to CONSISTENT
 
 ```vrf
 FACT svc built
 FACT svc unit_tested
 NOT  svc deprecated
-
 AXIOM ready_needs_all:
     WHEN svc built
     AND  svc integration_tested
     AND  svc security_scanned
     THEN svc release_ready
-
 AXIOM can_deploy:
     WHEN svc release_ready
     AND  NOT svc deprecated
     THEN svc can_deploy
-
 CHECK svc
 ```
 
-→ `WARNING` (blocked by `svc integration_tested`, `svc security_scanned`): you
-asserted the build/test but not the rest of the gate. Add those facts (or `NOT`
-them) and re-run. If you assert `svc release_ready` but `NOT svc can_deploy`,
-the `can_deploy` axiom fires → `CONFLICT`.
+Run → `WARNING` (`blocked by: svc integration_tested, svc security_scanned`).
+You haven't stated enough. Add `FACT svc integration_tested`, `FACT svc
+security_scanned`, `FACT svc release_ready`, `FACT svc can_deploy` → re-run →
+`CONSISTENT`. But if you assert `FACT svc release_ready` with `NOT svc
+can_deploy`, the `can_deploy` axiom fires → `CONFLICT` (fix the fact).
 
-### Code — mutually-exclusive branches
+### 3. Branch coverage — find a bug with no numbers
 
 ```vrf
-// if speed >= 100 { fast } else { slow }   →   model the branch as an atom
 FACT Motor over_100
 RULE pick_fast:
     WHEN Motor over_100
@@ -150,22 +138,45 @@ AXIOM one_path:
 CHECK Motor
 ```
 
-If both paths can end up taken, `one_path` reports `CONFLICT` — you found a branch
-bug without a single number.
+`CONSISTENT` (derives `uses fast_path`). If your logic could ever take both
+paths, `one_path` reports `CONFLICT` — a branch bug caught structurally.
+
+### 4. Jointly-unsatisfiable axioms — only the backward pass finds it
+
+```vrf
+AXIOM a_to_b:
+    WHEN x a
+    THEN x b
+AXIOM a_to_not_b:
+    WHEN x a
+    THEN NOT x b
+AXIOM need_a_or_c:
+    ATLEAST
+        x a
+        x c
+AXIOM c_to_a:
+    WHEN x c
+    THEN x a
+CHECK x BIDIRECTIONAL
+```
+
+No single clause is violated (everything is UNKNOWN), but the axioms can't all
+hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT`:
+"the axioms and facts are jointly unsatisfiable." Rethink the principles.
 
 ## How to invoke
 
 **CLI** (`elenchus`):
 
 ```console
-$ elenchus program.vrf                 # check a file (IMPORTs resolve relative to it)
+$ elenchus program.vrf                  # check a file (IMPORTs resolve next to it)
 $ elenchus --text "FACT x a
-CHECK x" --format json                 # inline; --format json for tooling
-$ cat program.vrf | elenchus           # stdin
+CHECK x" --format json                  # inline; --format json for tooling
+$ cat program.vrf | elenchus            # stdin
 ```
 
-Exit code is the verdict (0 / 1 / 2) — usable directly as a CI gate.
+Exit code is the verdict (0 / 1 / 2) — use it directly as a gate.
 
-**MCP tool** (`elenchus-mcp` server): call the `elenchus_check` tool with
-`{ "program": "<.vrf text>", "format": "json" }`. The result text is the report;
-keep refining the program and calling again until `status` is `CONSISTENT`.
+**MCP tool** (`elenchus-mcp` server): call `elenchus_check` with
+`{ "program": "<.vrf text>", "format": "json" }`. Read the `status`; if it isn't
+`CONSISTENT`, change the program and call again — loop until it is.

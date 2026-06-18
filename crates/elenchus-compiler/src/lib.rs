@@ -589,7 +589,10 @@ impl Resolver for FileResolver {
                 c => out.push(c),
             }
         }
-        out.to_string_lossy().into_owned()
+        // Normalize to forward slashes so resolved paths (and therefore the
+        // provenance recorded in the IR) are identical on Windows and Unix.
+        // Windows `std::fs` accepts `/` just fine.
+        out.to_string_lossy().replace('\\', "/")
     }
 }
 
