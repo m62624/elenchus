@@ -758,4 +758,26 @@ mod tests {
         assert_eq!(r.derived.len(), 1);
         assert_eq!(r.derived[0].atom, "Creature.A needs oxygen");
     }
+
+    #[test]
+    fn roles_puzzle_is_uniquely_solved() {
+        // 3 people × 3 roles, ONEOF per person and per role, two clues. The
+        // backward (SAT) pass must find the assignment satisfiable AND unique —
+        // i.e. CONSISTENT, not UNDERDETERMINED.
+        let src = include_str!("../../../docs/examples/roles-puzzle.vrf");
+        let r = verify_source("roles-puzzle.vrf", src).unwrap();
+        assert_eq!(r.status, Status::Consistent);
+        assert!(r.conflicts.is_empty());
+        assert!(r.underdetermined.is_none());
+    }
+
+    #[test]
+    fn roles_puzzle_underdetermined_without_a_clue() {
+        // Drop the `NOT bob is qa` clue and the solution is no longer unique
+        // (bob/carol can swap dev/qa) — the SAT pass reports UNDERDETERMINED.
+        let src = include_str!("../../../docs/examples/roles-puzzle.vrf")
+            .replace("NOT  bob is qa\n", "");
+        let r = verify_source("roles-puzzle.vrf", &src).unwrap();
+        assert_eq!(r.status, Status::Underdetermined);
+    }
 }

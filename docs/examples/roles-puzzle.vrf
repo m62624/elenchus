@@ -1,0 +1,56 @@
+// A harder example: a constraint puzzle the engine SOLVES by deduction.
+//
+// This is what "simplified SAT" buys you. SAT = boolean SATisfiability: given a
+// set of TRUE/FALSE constraints, find an assignment that satisfies them all (or
+// prove none exists). The backward pass (CHECK ... BIDIRECTIONAL) runs the SAT
+// core to (a) confirm the constraints are satisfiable and (b) check whether the
+// answer is UNIQUE — if a second assignment also fits, that's UNDERDETERMINED.
+//
+// Puzzle: assign three people to three distinct roles.
+//   - each PERSON has exactly one role        (ONEOF over their three role atoms)
+//   - each ROLE goes to exactly one person     (ONEOF over the three people)
+//   - clues:  alice is the lead;  bob is not qa
+// You don't tell it the answer — from the clues alone the engine deduces
+// bob = dev and carol = qa, and proves that solution is the ONLY one.
+//
+// Expected result:  CONSISTENT  (satisfiable AND unique — no UNDERDETERMINED)
+
+// --- each person holds exactly one role ---
+AXIOM alice_one_role:
+    ONEOF
+        alice is lead
+        alice is dev
+        alice is qa
+AXIOM bob_one_role:
+    ONEOF
+        bob is lead
+        bob is dev
+        bob is qa
+AXIOM carol_one_role:
+    ONEOF
+        carol is lead
+        carol is dev
+        carol is qa
+
+// --- each role is held by exactly one person ---
+AXIOM lead_one_person:
+    ONEOF
+        alice is lead
+        bob is lead
+        carol is lead
+AXIOM dev_one_person:
+    ONEOF
+        alice is dev
+        bob is dev
+        carol is dev
+AXIOM qa_one_person:
+    ONEOF
+        alice is qa
+        bob is qa
+        carol is qa
+
+// --- the clues ---
+FACT alice is lead
+NOT  bob is qa
+
+CHECK BIDIRECTIONAL

@@ -20,9 +20,17 @@ state only **facts** and **first principles (axioms)**; a Rust engine does the
 inference and finds contradictions mathematically. You can only be wrong at the
 axiom level — and that is caught immediately.
 
-Three truth values (this is the whole epistemic trick): an atom is **TRUE** (you
-wrote `FACT`), **FALSE** (you wrote `NOT`), or **UNKNOWN** (you didn't mention
-it). UNKNOWN is *not* false — the engine never guesses.
+**What this actually is: a simplified SAT checker.** SAT = boolean
+*satisfiability*: given a pile of TRUE/FALSE constraints, find an assignment of
+values that satisfies all of them at once, or prove that none exists. That's the
+whole engine. elenchus adds one thing — a third truth value, **UNKNOWN** — and
+reports the outcome as CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT instead
+of a raw sat/unsat. It does **not** do arithmetic or proofs about numbers (that's
+SMT, a bigger tool) — only boolean structure.
+
+Three truth values: an atom is **TRUE** (you wrote `FACT`), **FALSE** (you wrote
+`NOT`), or **UNKNOWN** (you didn't mention it). UNKNOWN is *not* false — the engine
+never guesses.
 
 ## The loop — this is the point
 
@@ -202,13 +210,65 @@ No single clause is violated (everything is UNKNOWN), but the axioms can't all
 hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT`:
 "the axioms and facts are jointly unsatisfiable." Rethink the principles.
 
+### 5. A puzzle solved by deduction (the SAT pass at work)
+
+You give constraints, not the answer; the backward (SAT) pass deduces it and
+proves it's the only one. (Full file: `docs/examples/roles-puzzle.vrf`.)
+
+```vrf
+// 3 people × 3 roles. Each person ONEOF its 3 roles; each role ONEOF the 3 people.
+AXIOM alice_one_role:
+    ONEOF
+        alice is lead
+        alice is dev
+        alice is qa
+// ...bob_one_role, carol_one_role, and lead_one_person/dev_one_person/qa_one_person
+//    the same shape (each ONEOF over its three atoms)...
+FACT alice is lead       // clue 1
+NOT  bob is qa           // clue 2
+CHECK BIDIRECTIONAL
+```
+
+`CONSISTENT` — from just two clues the engine deduces bob=dev, carol=qa and proves
+that assignment is **unique**. Drop `NOT bob is qa` → `UNDERDETERMINED` (bob/carol
+can swap). Add `FACT bob is lead` (two leads) → `CONFLICT`. This is the payoff of
+"simplified SAT": you state the rules, the engine does the case analysis you'd
+otherwise get wrong by hand.
+
 ## How to use it (CLI or MCP — same engine)
 
-This skill is the instructions; the engine is reachable two interchangeable ways.
-Use whichever your environment provides — both are cross-platform:
+The engine is reachable two interchangeable ways. **First decide which one you
+have here, then smoke-test it — don't trust an engine you haven't confirmed runs
+on this machine.**
 
-**CLI + this skill — preferred when you have a shell** (the playwright-cli + skill
-shape). Run the `elenchus` binary via Bash. One portable binary, zero host config.
+**Step 0 — detect what's installed.**
+
+- If you can run shell commands → use the **CLI**. Confirm it's there:
+  `elenchus --version` prints a version line if installed; "command not found"
+  means it isn't.
+- If you have no shell but your available tools include an `elenchus_check` tool →
+  use **MCP**.
+- If neither: it isn't installed here. Install it (see the project README —
+  `cargo binstall elenchus-cli`, Homebrew, the Windows `.msi`, or the curl/irm
+  script), then re-check. Don't fabricate verdicts; if you can't run it, say so.
+
+**Step 0.5 — smoke-test it.** Run one tiny program whose answer you already know,
+and confirm the verdict before relying on the engine for real work:
+
+```console
+$ elenchus --text "FACT x a
+NOT x a
+CHECK x"
+RESULT: CONFLICT          # TRUE and FALSE on the same atom MUST be a CONFLICT
+EXIT_CODE: 2              # 2 = CONFLICT
+```
+
+`CONFLICT` / exit 2 means the engine is healthy. (Via MCP: call `elenchus_check`
+with that same `program` and check `status` == `"CONFLICT"`.) If it answers
+anything else, the install is broken — fix that before trusting any result.
+
+**CLI + this skill — preferred when you have a shell.** Run the `elenchus` binary
+via Bash. One portable binary, zero host config.
 
 ```console
 $ elenchus program.vrf                  # check a file (IMPORTs resolve next to it)
