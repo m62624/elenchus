@@ -185,7 +185,24 @@ prune that line from your shell profile if nothing else uses it.
 - **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool,
   `elenchus_check`, for AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
 - **Skill** — [`skill/SKILL.md`](skill/SKILL.md): when to reach for elenchus, the
-  DSL, worked examples, and the iterate-to-CONSISTENT workflow.
+  DSL, worked examples, a self-check, and the iterate-to-CONSISTENT workflow.
+
+### Using the skill
+
+The skill is a single self-contained file, [`skill/SKILL.md`](skill/SKILL.md).
+**Copy it verbatim (one-to-one) into wherever your agent loads skills from** — the
+location depends on the host, and most LLM harnesses already know how to pick a
+skill file up:
+
+- **Claude Code** — put it at `~/.claude/skills/elenchus/SKILL.md` (user-wide) or
+  `.claude/skills/elenchus/SKILL.md` (per-project); it loads on the next session.
+- **Other harnesses** — drop the file in whatever directory that host scans for
+  skills/tools; the YAML frontmatter (`name`, `description`) is what they import.
+
+Don't edit the contents when copying — the frontmatter and the worked examples are
+load-bearing. After copying, **verify it imported**: ask the agent to run the
+skill's own Step 0 smoke-test (`FACT x a` / `NOT x a` / `CHECK x` → `CONFLICT`); if
+the skill is loaded and elenchus is installed, it will know to do exactly that.
 
 ## Workspace
 
