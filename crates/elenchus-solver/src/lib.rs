@@ -783,4 +783,19 @@ mod tests {
         let r = verify_source("roles-puzzle.vrf", &src).unwrap();
         assert_eq!(r.status, Status::Underdetermined);
     }
+
+    #[test]
+    fn socrates_chain_is_a_conflict() {
+        // human → animal → living → mortal (3 derivations), then mortal EXCLUSIVE
+        // immortal with `immortal` asserted → CONFLICT on the exclusivity axiom.
+        let src = include_str!("../../../docs/examples/socrates.vrf");
+        let r = verify_source("socrates.vrf", src).unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.conflicts.len(), 1);
+        assert_eq!(
+            r.conflicts[0].origin.axiom.as_deref(),
+            Some("mortal_xor_immortal")
+        );
+        assert_eq!(r.derived.len(), 3); // animal, living, mortal
+    }
 }

@@ -1,0 +1,34 @@
+// Cross-examining a bold claim — the Socratic elenchus, as first principles.
+//
+// Claim under test: "Socrates is immortal." It sounds isolated, but it collides
+// with a chain of ordinary principles three steps away. A model reading top to
+// bottom can miss that the chain ever reaches "mortal"; the engine doesn't.
+//
+//   socrates is human  ─▶ animal ─▶ living ─▶ mortal      (derived, 3 steps)
+//   and  mortal  EXCLUSIVE  immortal                      (can't be both)
+//
+// Expected result: CONFLICT — the derived `mortal` and the asserted `immortal`
+// violate the exclusivity axiom.
+
+FACT socrates is human
+FACT socrates is immortal        // the claim being cross-examined
+
+// First principles (each obvious on its own; the trap is their chain)
+RULE humans_are_animals:
+    WHEN socrates is human
+    THEN socrates is animal
+
+RULE animals_are_living:
+    WHEN socrates is animal
+    THEN socrates is living
+
+RULE living_things_are_mortal:
+    WHEN socrates is living
+    THEN socrates is mortal
+
+AXIOM mortal_xor_immortal:
+    EXCLUSIVE
+        socrates is mortal
+        socrates is immortal
+
+CHECK socrates

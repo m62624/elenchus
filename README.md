@@ -36,22 +36,45 @@ axioms → re-run until `CONSISTENT`.
 
 ## Example
 
+A claim that looks isolated, but collides with a chain of ordinary first
+principles three steps away — the kind of thing a model loses track of reading
+top to bottom. ([`docs/examples/socrates.vrf`](docs/examples/socrates.vrf).)
+
 ```vrf
-IMPORT "physics.vrf"          // a vetted axiom library
+FACT socrates is human
+FACT socrates is immortal        // the claim being cross-examined
 
-FACT Motor over_200
-NOT  Motor over_100           // contradicts the imported speed_order axiom
+RULE humans_are_animals:
+    WHEN socrates is human
+    THEN socrates is animal
+RULE animals_are_living:
+    WHEN socrates is animal
+    THEN socrates is living
+RULE living_things_are_mortal:
+    WHEN socrates is living
+    THEN socrates is mortal
 
-CHECK Motor
+AXIOM mortal_xor_immortal:        // can't be both
+    EXCLUSIVE
+        socrates is mortal
+        socrates is immortal
+
+CHECK socrates
 ```
 
+The engine derives `mortal` through the chain, then catches that it can't coexist
+with the asserted `immortal`:
+
 ```console
-$ elenchus motor.vrf
+$ elenchus socrates.vrf
 RESULT: CONFLICT
-  CONFLICT  speed_order (AXIOM)  [physics.vrf:9]
-      Motor over_200
-      Motor over_100
-SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
+      socrates is mortal
+      socrates is immortal
+  DERIVED   socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:17]
+  DERIVED   socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:21]
+  DERIVED   socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:25]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 3 derived
 EXIT_CODE: 2
 ```
 
