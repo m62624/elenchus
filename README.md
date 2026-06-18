@@ -1,5 +1,11 @@
 # elenchus
 
+> ⚠️ **Experimental.** elenchus is a reasoning-verification engine for AI coding
+> models — used in equal measure by small local models and cloud models like
+> Claude Code, both to drive it (write the DSL, read the verdict) and to build
+> it. It is maintained with AI assistance and may contain non-professional design
+> choices, rough edges, broken behavior, or mistakes. Use it at your own risk.
+
 A formal reasoning-verification engine. You write **facts** and **first
 principles** (axioms) in a tiny English-like DSL; a Rust engine does all the
 logical inference and catches contradictions mathematically. The model can only

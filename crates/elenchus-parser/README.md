@@ -1,6 +1,12 @@
 # elenchus-parser
 
-Parser for the English-like [elenchus](https://github.com/) reasoning DSL.
+> ⚠️ **Experimental.** elenchus is a reasoning-verification engine for AI coding
+> models — used in equal measure by small local models and cloud models like
+> Claude Code, both to drive it (write the DSL, read the verdict) and to build
+> it. It is maintained with AI assistance and may contain non-professional design
+> choices, rough edges, broken behavior, or mistakes. Use it at your own risk.
+
+Parser for the English-like [elenchus](https://github.com/m62624/elenchus) reasoning DSL.
 
 `no_std` (needs `alloc`), built on `nom` + `nom_locate`. Zero-copy over `&str`,
 line/column tracking, and human-friendly errors with a `^--- here` caret.

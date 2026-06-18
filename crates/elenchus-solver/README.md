@@ -1,6 +1,12 @@
 # elenchus-solver
 
-The reasoning interpreter for [elenchus](https://github.com/) — the forward pass.
+> ⚠️ **Experimental.** elenchus is a reasoning-verification engine for AI coding
+> models — used in equal measure by small local models and cloud models like
+> Claude Code, both to drive it (write the DSL, read the verdict) and to build
+> it. It is maintained with AI assistance and may contain non-professional design
+> choices, rough edges, broken behavior, or mistakes. Use it at your own risk.
+
+The reasoning interpreter for [elenchus](https://github.com/m62624/elenchus) — the forward pass.
 
 `no_std` (needs `alloc`). Consumes the [`elenchus-compiler`] `Compiled` IR and
 evaluates it under three-valued Kleene logic (TRUE / FALSE / UNKNOWN, where

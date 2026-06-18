@@ -1,5 +1,11 @@
 # elenchus-cli
 
+> ⚠️ **Experimental.** elenchus is a reasoning-verification engine for AI coding
+> models — used in equal measure by small local models and cloud models like
+> Claude Code, both to drive it (write the DSL, read the verdict) and to build
+> it. It is maintained with AI assistance and may contain non-professional design
+> choices, rough edges, broken behavior, or mistakes. Use it at your own risk.
+
 The `elenchus` command-line interface — check a `.vrf` program (file, inline
 text, or stdin) and print the verdict. A thin `std` wrapper over the engine
 crates (`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
