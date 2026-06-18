@@ -91,7 +91,7 @@ jobs:
   # --- only after the fast Linux checks pass: validate on Windows & macOS -----
 
   cross-os:
-    name: test (${{ matrix.os }})
+    name: clippy + test (${{ matrix.os }})
     needs: [lint, test]
     runs-on: ${{ matrix.os }}
     strategy:
@@ -103,6 +103,10 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
