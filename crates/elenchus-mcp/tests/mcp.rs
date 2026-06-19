@@ -61,6 +61,39 @@ fn initialize_list_and_call() {
 }
 
 #[test]
+fn about_tool_is_listed_and_points_at_the_skill() {
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_about","arguments":{}}}"#,
+    ]);
+    // The third advertised tool is the about/skill pointer.
+    assert_eq!(resps[0]["result"]["tools"][2]["name"], "elenchus_about");
+    let text = resps[1]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(resps[1]["result"]["isError"], false);
+    assert!(
+        text.contains("skill"),
+        "about should mention the skill: {text}"
+    );
+    assert!(
+        text.contains("github.com/m62624/elenchus"),
+        "about should link the project: {text}"
+    );
+}
+
+#[test]
+fn program_whitespace_is_cosmetic() {
+    // Indented (readable) vs flat (no-indent) — identical to the engine.
+    let pretty = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT svc built\nPREMISE gate:\n    WHEN svc built\n    THEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
+    let flat = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT svc built\nPREMISE gate:\nWHEN svc built\nTHEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
+    let a = roundtrip(&[pretty]);
+    let b = roundtrip(&[flat]);
+    let ta = a[0]["result"]["content"][0]["text"].as_str().unwrap();
+    let tb = b[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(ta.contains("CONSISTENT"), "got: {ta}");
+    assert_eq!(ta, tb, "indentation must not change the report");
+}
+
+#[test]
 fn conflict_program_is_reported() {
     let resps = roundtrip(&[
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nNOT x a\nCHECK x\n"}}}"#,

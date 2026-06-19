@@ -75,6 +75,47 @@ fn json_format_is_emitted() {
 }
 
 #[test]
+fn whitespace_is_cosmetic_indented_equals_flat() {
+    // A multi-line program written the readable way: indented WHEN/THEN block.
+    let pretty = "FACT svc built\n\
+                  PREMISE gate:\n    \
+                      WHEN svc built\n    \
+                      THEN svc ready\n\
+                  FACT svc ready\n\
+                  CHECK svc\n";
+    // The exact same program with no indentation. The parser is line-oriented
+    // (newlines required) but ignores leading/extra spaces, so this must be
+    // byte-for-byte identical output.
+    let flat = "FACT svc built\n\
+                PREMISE gate:\n\
+                WHEN svc built\n\
+                THEN svc ready\n\
+                FACT svc ready\n\
+                CHECK svc\n";
+    let a = elenchus(&["--text", pretty]);
+    let b = elenchus(&["--text", flat]);
+    assert_eq!(
+        a.status.code(),
+        Some(0),
+        "indented form should be CONSISTENT"
+    );
+    assert_eq!(a.status.code(), b.status.code());
+    assert_eq!(a.stdout, b.stdout, "indentation must not change the report");
+}
+
+#[test]
+fn help_points_agents_at_the_skill() {
+    let out = elenchus(&["--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("skill"), "help should mention the skill: {s}");
+    assert!(
+        s.contains("github.com/m62624/elenchus"),
+        "help should link the project"
+    );
+}
+
+#[test]
 fn parse_error_exits_2_with_message() {
     let out = elenchus(&["--text", "FACT lonely\n"]);
     assert_eq!(out.status.code(), Some(2));

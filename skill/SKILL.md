@@ -370,9 +370,28 @@ both). **`IMPORT` only resolves in the file form** (relative to the file);
 1 = WARNING/UNDERDETERMINED, 2 = CONFLICT) — a ready CI gate.
 
 **MCP + this skill — when the host exposes MCP tools but no shell.** The
-`elenchus-mcp` server provides one tool, `elenchus_check`; call it with
-`{ "program": "<.vrf text>", "format": "json" }`. It's one source too — no
-`IMPORT` resolution; inline the premises instead.
+`elenchus-mcp` server exposes three tools: `elenchus_check` (run a program),
+`elenchus_version` (engine version, for Step 0.6), and `elenchus_about` (a pointer
+back to this skill, for agents that arrived without it). Call `elenchus_check` with
+`{ "program": "<.vrf text>", "format": "json" }`. It's one source — no `IMPORT`
+resolution; inline the premises instead.
+
+`program` is just the ordinary multi-line program text; inside a JSON string the
+newlines are written `\n`. Write it readably — indentation is cosmetic, so these
+two are the **same program**:
+
+```json
+{ "program": "FACT svc built\nPREMISE gate:\n    WHEN svc built\n    THEN svc ready\nFACT svc ready\nCHECK svc\n", "format": "json" }
+```
+
+```vrf
+FACT svc built
+PREMISE gate:
+    WHEN svc built
+    THEN svc ready
+FACT svc ready
+CHECK svc
+```
 
 Either way the rule is the same: read `status`; if it isn't `CONSISTENT`, change
 the program (add facts, fix or rethink a premise) and run again — **loop until it

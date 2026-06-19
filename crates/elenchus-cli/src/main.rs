@@ -18,7 +18,18 @@ use elenchus_solver::{Report, verify, verify_source};
     long_about = "Reads a .vrf program (a file, inline --text, or explicit stdin \
 with '-'), runs the engine, and prints the verdict. With a file, \
 IMPORTs are resolved relative to it. Exit code: 0 consistent, 1 \
-underdetermined/warnings, 2 conflicts."
+underdetermined/warnings, 2 conflicts.\n\n\
+A program is line-oriented: one statement per line (newline-separated). \
+Indentation and extra spaces are cosmetic, so the readable indented form and a \
+flat no-indent form parse identically.",
+    // Shown at the bottom of --help and of the bare-invocation usage. Aimed at an
+    // AI agent that reached this binary without the companion skill — a fallback
+    // hint, harness-agnostic, no product names.
+    after_help = "FOR AI AGENTS: you'll get markedly better results with the matching \
+`elenchus` skill loaded (it carries the workflow, the verdict loop, and examples this \
+binary expects). Check that you have it and that its version matches `elenchus \
+--version`; if it's missing, tell the user it's worth installing — how depends on your \
+CLI/harness. Project + skill: https://github.com/m62624/elenchus"
 )]
 struct Cli {
     /// A `.vrf` file to check, or `-` to read from stdin.
