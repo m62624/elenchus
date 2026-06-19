@@ -746,7 +746,10 @@ mod tests {
 
     #[test]
     fn parses_fact_and_negation() {
-        let p = prog("FACT Creature.A has flying\nNOT Creature.A has cold_blood\n");
+        let p = prog(r#"
+        FACT Creature.A has flying
+        NOT Creature.A has cold_blood
+        "#);
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
             Statement::Fact(a) => {
@@ -1000,8 +1003,18 @@ mod tests {
 
     #[test]
     fn indentation_is_cosmetic() {
-        let flat = "PREMISE x:\nEXCLUSIVE\na b\na c\n";
-        let indented = "PREMISE x:\n        EXCLUSIVE\n  a b\n            a c\n";
+        let flat = r#"
+        PREMISE x:
+        EXCLUSIVE
+        a b
+        a c
+        "#;
+        let indented = r#"
+        PREMISE x:
+                EXCLUSIVE
+          a b
+                    a c
+        "#;
         // Spans differ by offset (cosmetic); the parsed structure must be identical.
         assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
     }
@@ -1010,8 +1023,16 @@ mod tests {
     fn top_level_statements_may_be_indented() {
         // Leading indentation on the FACT/PREMISE/CHECK lines themselves is also
         // cosmetic (so a whole program can be pasted indented inside a here-doc).
-        let flat = "FACT x a\nNOT x b\nCHECK x\n";
-        let indented = "    FACT x a\n        NOT x b\n    CHECK x\n";
+        let flat = r#"
+        FACT x a
+        NOT x b
+        CHECK x
+        "#;
+        let indented = r#"
+            FACT x a
+                NOT x b
+            CHECK x
+        "#;
         assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
         assert_eq!(prog(indented).statements.len(), 3);
     }
@@ -1034,7 +1055,10 @@ mod tests {
     #[test]
     fn unicode_identifiers_any_script() {
         // Cyrillic subject/predicate/object, mixed with `_` and digits (not first).
-        let p = prog("FACT кот пушистый2\nNOT собака has крылья\n");
+        let p = prog(r#"
+        FACT кот пушистый2
+        NOT собака has крылья
+        "#);
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "кот");
@@ -1099,7 +1123,10 @@ mod tests {
 
     #[test]
     fn pretty_error_points_at_offending_line() {
-        let src = "FACT a b\n!garbage here\nFACT c d\n";
+        let src = r#"FACT a b
+!garbage here
+FACT c d
+"#;
         let err = parse(src).expect_err("should fail");
         let shown = format!("{}", err);
         assert!(shown.contains("Syntax Error"));
@@ -1110,13 +1137,21 @@ mod tests {
 
     #[test]
     fn crlf_line_endings() {
-        let p = prog("FACT a b\r\nCHECK a\r\n");
+        let p = prog(r#"
+        FACT a b
+        CHECK a
+        "#);
         assert_eq!(p.statements.len(), 2);
     }
 
     #[test]
     fn tabs_as_indentation() {
-        let p = prog("PREMISE e:\n\tEXCLUSIVE\n\t\tx a\n\t\tx b\n");
+        let p = prog(r#"
+        PREMISE e:
+	EXCLUSIVE
+		x a
+		x b
+        "#);
         assert!(matches!(
             p.statements[0],
             Statement::Premise {
@@ -1200,7 +1235,11 @@ mod tests {
 
     #[test]
     fn multiple_imports_then_facts() {
-        let p = prog("IMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nFACT x y\n");
+        let p = prog(r#"
+        IMPORT "a.vrf"
+        IMPORT "b.vrf"
+        FACT x y
+        "#);
         assert!(matches!(p.statements[0], Statement::Import(_)));
         assert!(matches!(p.statements[1], Statement::Import(_)));
         assert!(matches!(p.statements[2], Statement::Fact(_)));

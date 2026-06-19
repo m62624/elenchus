@@ -845,7 +845,13 @@ mod tests {
 
     #[test]
     fn exclusive_unfolds_pairwise() {
-        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n        x c\n";
+        let src = r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+                x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         // C(3,2) = 3 clauses, each of 2 positive literals.
         assert_eq!(c.clauses.len(), 3);
@@ -858,7 +864,11 @@ mod tests {
     #[test]
     fn implication_negates_consequent() {
         // WHEN x a THEN x b  ==  Impossible([x a, NOT x b])
-        let src = "PREMISE r:\n    WHEN x a\n    THEN x b\n";
+        let src = r#"
+        PREMISE r:
+            WHEN x a
+            THEN x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         let cl = &c.clauses[0];
@@ -878,7 +888,11 @@ mod tests {
     #[test]
     fn negated_consequent_flips_to_positive() {
         // THEN NOT x b  →  NOT(NOT x b) = x b positive inside Impossible
-        let src = "PREMISE r:\n    WHEN x a\n    THEN NOT x b\n";
+        let src = r#"
+        PREMISE r:
+            WHEN x a
+            THEN NOT x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         let b = id(&c, &key("x", "b", None));
         assert!(c.clauses[0].lits.contains(&Lit {
@@ -890,7 +904,12 @@ mod tests {
     #[test]
     fn consequent_or_is_one_clause_with_all_negated() {
         // WHEN x p THEN x a OR x b  ==  Impossible([x p, NOT x a, NOT x b])
-        let src = "PREMISE r:\n    WHEN x p\n    THEN x a\n    OR x b\n";
+        let src = r#"
+        PREMISE r:
+            WHEN x p
+            THEN x a
+            OR x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         let cl = &c.clauses[0];
@@ -916,7 +935,12 @@ mod tests {
     fn antecedent_or_is_one_clause_per_disjunct() {
         // WHEN x a OR x b THEN x c
         //   == Impossible([x a, NOT x c]) ∧ Impossible([x b, NOT x c])
-        let src = "PREMISE r:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let src = r#"
+        PREMISE r:
+            WHEN x a
+            OR x b
+            THEN x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 2);
         let a = id(&c, &key("x", "a", None));
@@ -944,7 +968,13 @@ mod tests {
     #[test]
     fn antecedent_or_with_consequent_or_distributes() {
         // (a ∨ b) → (c ∨ d): Impossible([a,¬c,¬d]) ∧ Impossible([b,¬c,¬d])
-        let src = "PREMISE r:\n    WHEN x a\n    OR x b\n    THEN x c\n    OR x d\n";
+        let src = r#"
+        PREMISE r:
+            WHEN x a
+            OR x b
+            THEN x c
+            OR x d
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 2);
         for cl in &c.clauses {
@@ -955,7 +985,12 @@ mod tests {
     #[test]
     fn rule_with_or_antecedent_splits_into_two_rules() {
         // (a ∨ b) → c derives c whenever either fires: two single-antecedent rules.
-        let src = "RULE r:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let src = r#"
+        RULE r:
+            WHEN x a
+            OR x b
+            THEN x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.rules.len(), 2);
         assert!(
@@ -968,7 +1003,12 @@ mod tests {
     #[test]
     fn rule_with_or_consequent_is_rejected() {
         // A rule cannot derive a disjunction — must be a PREMISE.
-        let src = "RULE r:\n    WHEN x a\n    THEN x b\n    OR x c\n";
+        let src = r#"
+        RULE r:
+            WHEN x a
+            THEN x b
+            OR x c
+        "#;
         let err = compile_source("<t>", src).unwrap_err();
         assert!(matches!(
             err,
@@ -978,7 +1018,12 @@ mod tests {
 
     #[test]
     fn oneof_is_pairwise_plus_at_least_one() {
-        let src = "PREMISE o:\n    ONEOF\n        x a\n        x b\n";
+        let src = r#"
+        PREMISE o:
+            ONEOF
+                x a
+                x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         // pairwise C(2,2)=1 + 1 at-least-one = 2 clauses
         assert_eq!(c.clauses.len(), 2);
@@ -988,7 +1033,13 @@ mod tests {
 
     #[test]
     fn atleast_is_one_negated_clause() {
-        let src = "PREMISE a:\n    ATLEAST\n        x a\n        x b\n        x c\n";
+        let src = r#"
+        PREMISE a:
+            ATLEAST
+                x a
+                x b
+                x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         assert_eq!(c.clauses[0].lits.len(), 3);
@@ -997,7 +1048,11 @@ mod tests {
 
     #[test]
     fn rules_are_separate_from_clauses() {
-        let src = "RULE needs:\n    WHEN x a\n    THEN x b\n";
+        let src = r#"
+        RULE needs:
+            WHEN x a
+            THEN x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 0);
         assert_eq!(c.rules.len(), 1);
@@ -1007,7 +1062,11 @@ mod tests {
 
     #[test]
     fn atoms_are_canonically_sorted() {
-        let src = "FACT z z\nFACT a a\nFACT m m\n";
+        let src = r#"
+        FACT z z
+        FACT a a
+        FACT m m
+        "#;
         let c = compile_source("<t>", src).unwrap();
         let mut sorted = c.atoms.clone();
         sorted.sort();
@@ -1016,14 +1075,32 @@ mod tests {
 
     #[test]
     fn duplicate_premise_is_idempotent() {
-        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n";
+        let src = r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }
 
     #[test]
     fn redefinition_with_different_body_errors() {
-        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x c\n";
+        let src = r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x c
+        "#;
         let err = compile_source("<t>", src).unwrap_err();
         assert_eq!(
             err,
@@ -1059,11 +1136,19 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "lib.vrf",
-            "PREMISE needs_fuel:\n    WHEN Engine.X has engine\n    THEN Engine.X has fuel\n",
+            r#"
+        PREMISE needs_fuel:
+            WHEN Engine.X has engine
+            THEN Engine.X has fuel
+        "#,
         );
         r.add(
             "main.vrf",
-            "IMPORT \"lib.vrf\"\nFACT Engine.X has engine\nFACT Engine.X has fuel\n",
+            r#"
+        IMPORT "lib.vrf"
+        FACT Engine.X has engine
+        FACT Engine.X has fuel
+        "#,
         );
         let c = compile("main.vrf", &r).unwrap();
         assert!(c.pending_imports.is_empty());
@@ -1083,7 +1168,12 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "base.vrf",
-            "PREMISE b:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r#"
+        PREMISE b:
+            EXCLUSIVE
+                x a
+                x b
+        "#,
         );
         r.add("a.vrf", "IMPORT \"base.vrf\"\n");
         r.add("c.vrf", "IMPORT \"base.vrf\"\n");
@@ -1117,11 +1207,22 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "physics.vrf",
-            "PREMISE safety:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r#"
+        PREMISE safety:
+            EXCLUSIVE
+                x a
+                x b
+        "#,
         );
         r.add(
             "main.vrf",
-            "IMPORT \"physics.vrf\"\nPREMISE safety:\n    EXCLUSIVE\n        x a\n        x c\n",
+            r#"
+        IMPORT "physics.vrf"
+        PREMISE safety:
+            EXCLUSIVE
+                x a
+                x c
+        "#,
         );
         let c = compile("main.vrf", &r).unwrap();
         assert_eq!(c.clauses.len(), 2); // a-b from physics, a-c from main
@@ -1137,11 +1238,21 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "A.vrf",
-            "PREMISE x:\n    EXCLUSIVE\n        S has a\n        S has b\n",
+            r#"
+        PREMISE x:
+            EXCLUSIVE
+                S has a
+                S has b
+        "#,
         );
         r.add(
             "B.vrf",
-            "PREMISE x:\n    EXCLUSIVE\n        S has a\n        S has c\n",
+            r#"
+        PREMISE x:
+            EXCLUSIVE
+                S has a
+                S has c
+        "#,
         );
         r.add("C.vrf", "IMPORT \"A.vrf\"\nIMPORT \"B.vrf\"\n");
         let c = compile("C.vrf", &r).unwrap();
@@ -1174,7 +1285,16 @@ mod tests {
     #[test]
     fn redefinition_within_one_source_still_errors() {
         // But reusing a name with a different body *inside one source* is a mistake.
-        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x c\n";
+        let src = r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x c
+        "#;
         let err = compile_source("main.vrf", src).unwrap_err();
         assert_eq!(
             err,
@@ -1223,7 +1343,13 @@ mod tests {
 
     #[test]
     fn forbids_unfolds_pairwise() {
-        let src = "PREMISE f:\n    FORBIDS\n        x a\n        x b\n        x c\n";
+        let src = r#"
+        PREMISE f:
+            FORBIDS
+                x a
+                x b
+                x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 3); // C(3,2), like EXCLUSIVE
         assert!(
@@ -1235,7 +1361,12 @@ mod tests {
 
     #[test]
     fn rule_with_multiple_consequents() {
-        let src = "RULE r:\n    WHEN x a\n    THEN x b\n    AND  x c\n";
+        let src = r#"
+        RULE r:
+            WHEN x a
+            THEN x b
+            AND  x c
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.rules.len(), 1);
         assert_eq!(c.rules[0].consequent.len(), 2);
@@ -1244,7 +1375,11 @@ mod tests {
     #[test]
     fn negated_antecedent_literal_keeps_polarity() {
         // WHEN NOT x a THEN x b  ==  Impossible([NOT x a, NOT x b])
-        let src = "PREMISE a:\n    WHEN NOT x a\n    THEN x b\n";
+        let src = r#"
+        PREMISE a:
+            WHEN NOT x a
+            THEN x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         let xa = id(&c, &key("x", "a", None));
         assert!(c.clauses[0].lits.contains(&Lit {
@@ -1255,14 +1390,25 @@ mod tests {
 
     #[test]
     fn rule_keeps_consequent_negation() {
-        let src = "RULE r:\n    WHEN x a\n    THEN NOT x b\n";
+        let src = r#"
+        RULE r:
+            WHEN x a
+            THEN NOT x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert!(c.rules[0].consequent[0].negated);
     }
 
     #[test]
     fn compilation_is_deterministic() {
-        let src = "PREMISE e:\n    EXCLUSIVE\n        z z\n        a a\n        m m\nFACT q q\n";
+        let src = r#"
+        PREMISE e:
+            EXCLUSIVE
+                z z
+                a a
+                m m
+        FACT q q
+        "#;
         assert_eq!(
             compile_source("<t>", src).unwrap(),
             compile_source("<t>", src).unwrap()
@@ -1278,7 +1424,16 @@ mod tests {
     #[test]
     fn same_clause_from_two_named_premises_is_deduped() {
         // Different names, identical logical content → one clause, no redefinition.
-        let src = "PREMISE e1:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e2:\n    EXCLUSIVE\n        x a\n        x b\n";
+        let src = r#"
+        PREMISE e1:
+            EXCLUSIVE
+                x a
+                x b
+        PREMISE e2:
+            EXCLUSIVE
+                x a
+                x b
+        "#;
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }

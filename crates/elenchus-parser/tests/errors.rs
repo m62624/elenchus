@@ -15,21 +15,35 @@ fn err(src: &str) -> String {
 #[test]
 fn premise_implication_missing_then() {
     insta::assert_snapshot!(err(
-        "PREMISE wings_need_bone:\n    WHEN Creature.A has flying\nCHECK Creature.A\n"
+        r#"
+        PREMISE wings_need_bone:
+            WHEN Creature.A has flying
+        CHECK Creature.A
+        "#
     ));
 }
 
 #[test]
 fn list_premise_needs_two_atoms() {
     insta::assert_snapshot!(err(
-        "PREMISE modes:\n    EXCLUSIVE\n        Sys mode idle\nCHECK Sys\n"
+        r#"
+        PREMISE modes:
+            EXCLUSIVE
+                Sys mode idle
+        CHECK Sys
+        "#
     ));
 }
 
 #[test]
 fn premise_missing_colon() {
     insta::assert_snapshot!(err(
-        "PREMISE modes\n    EXCLUSIVE\n        a b\n        a c\n"
+        r#"
+        PREMISE modes
+            EXCLUSIVE
+                a b
+                a c
+        "#
     ));
 }
 
@@ -50,25 +64,47 @@ fn reserved_word_as_subject() {
 
 #[test]
 fn garbage_top_level_line() {
-    insta::assert_snapshot!(err("FACT a b\n%%% not a statement\nFACT c d\n"));
+    insta::assert_snapshot!(err(r#"
+        FACT a b
+        %%% not a statement
+        FACT c d
+        "#));
 }
 
 #[test]
 fn then_without_literal() {
-    insta::assert_snapshot!(err("RULE r:\n    WHEN x a\n    THEN\n"));
+    insta::assert_snapshot!(err(r#"
+        RULE r:
+            WHEN x a
+            THEN
+        "#));
 }
 
 #[test]
 fn rule_body_not_an_implication() {
-    insta::assert_snapshot!(err("RULE r:\n    EXCLUSIVE\n        x a\n        x b\n"));
+    insta::assert_snapshot!(err(r#"
+        RULE r:
+            EXCLUSIVE
+                x a
+                x b
+        "#));
 }
 
 #[test]
 fn trailing_garbage_after_valid_program() {
-    insta::assert_snapshot!(err("FACT a b\nCHECK a\n??? leftover\n"));
+    insta::assert_snapshot!(err(r#"
+        FACT a b
+        CHECK a
+        ??? leftover
+        "#));
 }
 
 #[test]
 fn and_literal_missing() {
-    insta::assert_snapshot!(err("PREMISE g:\n    WHEN x a\n    AND\n    THEN x b\n"));
+    insta::assert_snapshot!(err(r#"
+        PREMISE g:
+            WHEN x a
+            AND
+            THEN x b
+        "#));
 }

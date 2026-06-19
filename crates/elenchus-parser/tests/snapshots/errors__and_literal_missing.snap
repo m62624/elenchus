@@ -1,7 +1,7 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-expression: "err(\"PREMISE g:\\n    WHEN x a\\n    AND\\n    THEN x b\\n\")"
+expression: "err(r#\"\n        PREMISE g:\n            WHEN x a\n            AND\n            THEN x b\n        \"#)"
 ---
-Syntax Error at line 3, col 5: expected THEN to complete the WHEN ... THEN implication
-  |     AND
-  |     ^--- here
+Syntax Error at line 4, col 13: expected THEN to complete the WHEN ... THEN implication
+  |             AND
+  |             ^--- here

@@ -1259,7 +1259,12 @@ mod tests {
         // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
         let r = verify_source(
             "<t>",
-            "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
+            r#"
+        FACT A has flying
+        PREMISE w:
+            WHEN A has flying
+            THEN A has wing
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Warning);
@@ -1284,7 +1289,12 @@ mod tests {
     fn rule_derives_fact() {
         let r = verify_source(
             "<t>",
-            "FACT A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n",
+            r#"
+        FACT A has flying
+        RULE o:
+            WHEN A has flying
+            THEN A needs oxygen
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
@@ -1304,7 +1314,13 @@ mod tests {
         // EXCLUSIVE(a,b) with no facts: {FF, TF, FT} all satisfy → not unique.
         let r = verify_source(
             "<t>",
-            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x BIDIRECTIONAL
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Underdetermined);
@@ -1315,7 +1331,14 @@ mod tests {
         // Same premise, but FACT x a forces b false → the only model → CONSISTENT.
         let r = verify_source(
             "<t>",
-            "FACT x a\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            r#"
+        FACT x a
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x BIDIRECTIONAL
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
@@ -1326,7 +1349,13 @@ mod tests {
         // Plain CHECK: alternatives are not searched → stays CONSISTENT, not UNDERDETERMINED.
         let r = verify_source(
             "<t>",
-            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
@@ -1391,7 +1420,15 @@ mod tests {
     fn forward_conflict_carries_a_trace_of_its_facts() {
         let r = verify_source(
             "<t>",
-            "FACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            r#"
+        FACT x a
+        FACT x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x
+        "#,
         )
         .unwrap();
         assert_eq!(r.status, Status::Conflict);
@@ -1434,7 +1471,20 @@ mod tests {
     fn jointly_unsatisfiable_reports_a_minimal_core() {
         // ONEOF(a,b); a→c; b→c; NOT c. Unsat only via case-split, so the forward
         // pass misses it and the backward pass produces the core.
-        let src = "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nCHECK x BIDIRECTIONAL\n";
+        let src = r#"
+        PREMISE one:
+            ONEOF
+                x a
+                x b
+        PREMISE ac:
+            WHEN x a
+            THEN x c
+        PREMISE bc:
+            WHEN x b
+            THEN x c
+        NOT x c
+        CHECK x BIDIRECTIONAL
+        "#;
         let r = verify_source("<t>", src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.conflicts[0].origin.kind, "UNSAT");
@@ -1448,7 +1498,25 @@ mod tests {
     fn unsat_core_excludes_irrelevant_constructs() {
         // The same unsat cluster, plus an unrelated fact + premise that must not
         // appear in the (irreducible) core.
-        let src = "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nFACT z here\nPREMISE noise:\n    EXCLUSIVE\n        z here\n        z gone\nCHECK x BIDIRECTIONAL\n";
+        let src = r#"
+        PREMISE one:
+            ONEOF
+                x a
+                x b
+        PREMISE ac:
+            WHEN x a
+            THEN x c
+        PREMISE bc:
+            WHEN x b
+            THEN x c
+        NOT x c
+        FACT z here
+        PREMISE noise:
+            EXCLUSIVE
+                z here
+                z gone
+        CHECK x BIDIRECTIONAL
+        "#;
         let r = verify_source("<t>", src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.unsat_core.len(), 4);
@@ -1474,7 +1542,11 @@ mod tests {
         // but the hint warns they were probably meant to be one atom.
         let r = verify_source(
             "<t>",
-            "FACT auth is rolled_back\nNOT auth is_rolled_back\nCHECK\n",
+            r#"
+        FACT auth is rolled_back
+        NOT auth is_rolled_back
+        CHECK
+        "#,
         )
         .unwrap();
         assert_eq!(

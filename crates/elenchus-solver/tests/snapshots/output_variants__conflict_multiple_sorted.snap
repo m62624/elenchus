@@ -1,15 +1,15 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"FACT y c\\nNOT y c\\nFACT x a\\nFACT x b\\nPREMISE e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x\\n\")"
+expression: "report(r#\"\n        FACT y c\n        NOT y c\n        FACT x a\n        FACT x b\n        PREMISE e:\n            EXCLUSIVE\n                x a\n                x b\n        CHECK x\n        \"#)"
 ---
 RESULT: CONFLICT
-  CONFLICT  - (FACT)  [v.vrf:1]
+  CONFLICT  - (FACT)  [v.vrf:2]
       y c (asserted both TRUE and FALSE)
-  CONFLICT  e (EXCLUSIVE)  [v.vrf:5]
+  CONFLICT  e (EXCLUSIVE)  [v.vrf:6]
       x a
       x b
       why:
-        x a = TRUE   [FACT v.vrf:3]
-        x b = TRUE   [FACT v.vrf:4]
+        x a = TRUE   [FACT v.vrf:4]
+        x b = TRUE   [FACT v.vrf:5]
 SUMMARY: 2 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

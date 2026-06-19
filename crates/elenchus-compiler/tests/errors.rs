@@ -4,7 +4,16 @@ use elenchus_compiler::{MemoryResolver, compile, compile_source};
 
 #[test]
 fn premise_redefinition() {
-    let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x c\n";
+    let src = r#"
+    PREMISE e:
+        EXCLUSIVE
+            x a
+            x b
+    PREMISE e:
+        EXCLUSIVE
+            x a
+            x c
+    "#;
     let e = compile_source("main.vrf", src).unwrap_err();
     insta::assert_snapshot!(format!("{e}"));
 }
