@@ -13,7 +13,7 @@ enum Stmt {
     Fact(Atom3),
     Not(Atom3),
     Import(String),
-    AxiomList {
+    PremiseList {
         name: String,
         op: &'static str,
         atoms: Vec<Atom3>,
@@ -51,8 +51,8 @@ fn render(stmts: &[Stmt]) -> String {
             Stmt::Fact(a) => s.push_str(&format!("FACT {}\n", render_atom(a))),
             Stmt::Not(a) => s.push_str(&format!("NOT {}\n", render_atom(a))),
             Stmt::Import(p) => s.push_str(&format!("IMPORT \"{p}\"\n")),
-            Stmt::AxiomList { name, op, atoms } => {
-                s.push_str(&format!("AXIOM {name}:\n    {op}\n"));
+            Stmt::PremiseList { name, op, atoms } => {
+                s.push_str(&format!("PREMISE {name}:\n    {op}\n"));
                 for a in atoms {
                     s.push_str(&format!("        {}\n", render_atom(a)));
                 }
@@ -63,7 +63,7 @@ fn render(stmts: &[Stmt]) -> String {
                 ante,
                 cons,
             } => {
-                let kw = if *rule { "RULE" } else { "AXIOM" };
+                let kw = if *rule { "RULE" } else { "PREMISE" };
                 s.push_str(&format!("{kw} {name}:\n"));
                 s.push_str(&format!("    WHEN {}\n", render_lit(&ante[0])));
                 for l in &ante[1..] {
@@ -118,11 +118,11 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
         (Statement::Negation(a), Stmt::Not(b)) => atom_eq(&a.data, b),
         (Statement::Import(a), Stmt::Import(b)) => a.data == b,
         (
-            Statement::Axiom {
+            Statement::Premise {
                 name,
                 body: Body::List { op, atoms },
             },
-            Stmt::AxiomList {
+            Stmt::PremiseList {
                 name: n,
                 op: o,
                 atoms: ats,
@@ -134,7 +134,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 && atoms.iter().zip(ats).all(|(p, s)| atom_eq(&p.data, s))
         }
         (
-            Statement::Axiom {
+            Statement::Premise {
                 name,
                 body:
                     Body::Impl {
@@ -201,7 +201,7 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             prop::sample::select(vec!["EXCLUSIVE", "FORBIDS", "ONEOF", "ATLEAST"]),
             prop::collection::vec(atom(), 2..5),
         )
-            .prop_map(|(name, op, atoms)| Stmt::AxiomList { name, op, atoms }),
+            .prop_map(|(name, op, atoms)| Stmt::PremiseList { name, op, atoms }),
         (
             any::<bool>(),
             ident(),

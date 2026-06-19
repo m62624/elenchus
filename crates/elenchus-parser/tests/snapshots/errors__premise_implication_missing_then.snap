@@ -1,6 +1,6 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-expression: "err(\"AXIOM wings_need_bone:\\n    WHEN Creature.A has flying\\nCHECK Creature.A\\n\")"
+expression: "err(\"PREMISE wings_need_bone:\\n    WHEN Creature.A has flying\\nCHECK Creature.A\\n\")"
 ---
 Syntax Error at line 3, col 1: expected THEN to complete the WHEN ... THEN implication
   | CHECK Creature.A

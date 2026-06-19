@@ -13,23 +13,23 @@ fn err(src: &str) -> String {
 }
 
 #[test]
-fn axiom_implication_missing_then() {
+fn premise_implication_missing_then() {
     insta::assert_snapshot!(err(
-        "AXIOM wings_need_bone:\n    WHEN Creature.A has flying\nCHECK Creature.A\n"
+        "PREMISE wings_need_bone:\n    WHEN Creature.A has flying\nCHECK Creature.A\n"
     ));
 }
 
 #[test]
-fn list_axiom_needs_two_atoms() {
+fn list_premise_needs_two_atoms() {
     insta::assert_snapshot!(err(
-        "AXIOM modes:\n    EXCLUSIVE\n        Sys mode idle\nCHECK Sys\n"
+        "PREMISE modes:\n    EXCLUSIVE\n        Sys mode idle\nCHECK Sys\n"
     ));
 }
 
 #[test]
-fn axiom_missing_colon() {
+fn premise_missing_colon() {
     insta::assert_snapshot!(err(
-        "AXIOM modes\n    EXCLUSIVE\n        a b\n        a c\n"
+        "PREMISE modes\n    EXCLUSIVE\n        a b\n        a c\n"
     ));
 }
 
@@ -70,5 +70,5 @@ fn trailing_garbage_after_valid_program() {
 
 #[test]
 fn and_literal_missing() {
-    insta::assert_snapshot!(err("AXIOM g:\n    WHEN x a\n    AND\n    THEN x b\n"));
+    insta::assert_snapshot!(err("PREMISE g:\n    WHEN x a\n    AND\n    THEN x b\n"));
 }

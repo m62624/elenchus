@@ -1,6 +1,6 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"AXIOM e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x BIDIRECTIONAL\\n\")"
+expression: "report(\"PREMISE e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x BIDIRECTIONAL\\n\")"
 ---
 RESULT: UNDERDETERMINED
   UNDERDETERMINED  an alternative model exists

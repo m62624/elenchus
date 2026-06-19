@@ -2,7 +2,7 @@
 
 > A small model writes facts and first principles in a simple language; a Rust
 > engine does the boolean bookkeeping and flags contradictions. The model can only
-> get an axiom wrong — never a step in a long chain — and that is caught mechanically.
+> get a premise wrong — never a step in a long chain — and that is caught mechanically.
 >
 > In one line: a small SAT checker with three-valued logic (TRUE / FALSE /
 > UNKNOWN), aimed at small local models. Nothing more.
@@ -37,7 +37,7 @@ it does not. And you cannot tell why until you check by hand.
 Instead of forcing the model to hold a long chain of reasoning, we split the labor:
 
 ```
-The LLM is responsible only for FIRST PRINCIPLES (axioms and facts).
+The LLM is responsible only for FIRST PRINCIPLES (premises and facts).
 All inference and contradiction-finding is done by the ENGINE, not the model.
 ```
 
@@ -48,20 +48,20 @@ the reasoning" — because it is not the one doing the reasoning.
 
 ## Limits — this is not magic
 
-It is worth stating the boundary up front. The model writes the axioms at the
+It is worth stating the boundary up front. The model writes the premises at the
 start. If it writes a wrong first principle, the engine will not save it —
 garbage in, garbage out. The engine is honest about the *logic of inference*, but
-it cannot verify the *truth of an axiom*.
+it cannot verify the *truth of a premise*.
 
 So where is the win? In two things:
 
 1. **Fewer places to err.** Before, the model could err on any of 7 inference
-   steps. Now — only in a few axioms. We moved the single point of failure from a
+   steps. Now — only in a few premises. We moved the single point of failure from a
    "long fragile chain" (where the model is weak) to "a few first principles"
    (where the model is strong — it does grasp the essence).
 2. **An early mechanical detector.** The model would have made the mistake either
    way. But before, it would surface late (or never). Now any contradiction
-   between axioms is caught immediately and for free — the engine simply will not
+   between premises is caught immediately and for free — the engine simply will not
    let the system converge.
 
 That is, we do not remove the error. We make it **visible early**.
@@ -130,7 +130,7 @@ CONFLICT         — a direct contradiction
 ```
 
 > **WARNING and UNDERDETERMINED are relatives, but of different scale.** WARNING
-> is local: one specific axiom could not be checked because of one UNKNOWN.
+> is local: one specific premise could not be checked because of one UNKNOWN.
 > UNDERDETERMINED is global: the whole system has more than one solution.
 > UNKNOWN facts usually produce both — but WARNING points precisely "it got stuck
 > here," while UNDERDETERMINED talks about the system as a whole.
@@ -160,7 +160,7 @@ The surface CAPS words are syntactic sugar over `Impossible`:
 ```
 EXCLUSIVE P Q        =  Impossible([P, Q])           // at most one (pairwise for n>2)
 FORBIDS   P Q        =  Impossible([P, Q])           // same as EXCLUSIVE for 2
-WHEN P THEN Q        =  Impossible([P, NOT Q])        // implication (body of AXIOM/RULE)
+WHEN P THEN Q        =  Impossible([P, NOT Q])        // implication (body of PREMISE/RULE)
 (non-contradiction)  =  Impossible([X, NOT X])        // built in automatically
 ```
 
@@ -202,7 +202,7 @@ For n elements this is C(n,2) = n(n−1)/2 clauses of 2 literals each.
 
 **Why pairwise is a win for the CONFLICT pool.** If TRUE turned out to be `A` and
 `C`, exactly one clause `Impossible([A, C])` fires → pool = `{A, C}`, precisely who
-with whom. The engine names the specific pair, not a vague "axiom violated."
+with whom. The engine names the specific pair, not a vague "premise violated."
 
 Linear encodings (`commander`/`sequential` with auxiliary variables, O(n) instead
 of O(n²)) are needed only for hundreds of elements — but they pollute the pool
@@ -220,9 +220,9 @@ ONEOF A B C   →  Impossible([A, B])
 
 ### The varisat → readable-pool bridge
 
-varisat knows only clauses, not axioms. So every generated `Impossible` remembers
-its origin: `{from AXIOM <name>, elements i, j}`. When the unsat-core points at a
-clause — we translate it back into the axiom name + the specific lines:
+varisat knows only clauses, not premises. So every generated `Impossible` remembers
+its origin: `{from PREMISE <name>, elements i, j}`. When the unsat-core points at a
+clause — we translate it back into the premise name + the specific lines:
 
 ```
 CONFLICT  fly_xor_swim (EXCLUSIVE)
@@ -233,7 +233,7 @@ CONFLICT  fly_xor_swim (EXCLUSIVE)
 
 ### How `WHEN A AND B AND C THEN D` behaves (partial antecedent)
 
-`AXIOM ax: WHEN A AND B AND C THEN D`  =  `Impossible([A, B, C, NOT D])`.
+`PREMISE ax: WHEN A AND B AND C THEN D`  =  `Impossible([A, B, C, NOT D])`.
 
 The antecedent `A AND B AND C` is computed by three-valued AND (Kleene): FALSE if
 any one is FALSE; TRUE if all three are TRUE; otherwise UNKNOWN. After that the
@@ -244,7 +244,7 @@ pair (antecedent, D) decides everything:
 | FALSE (any of A,B,C = FALSE) | any | CONSISTENT | the rule did not fire, implication vacuously satisfied — this is NOT a warning |
 | TRUE (all three TRUE) | TRUE | CONSISTENT | the implication holds |
 | TRUE | FALSE | **CONFLICT** | antecedent fired, consequent is false |
-| TRUE | UNKNOWN | **WARNING** (AXIOM) / derive D=TRUE (RULE) | consequent undetermined |
+| TRUE | UNKNOWN | **WARNING** (PREMISE) / derive D=TRUE (RULE) | consequent undetermined |
 | UNKNOWN (no FALSE, some UNKNOWN) | TRUE | CONSISTENT | implication already satisfied, antecedent irrelevant |
 | UNKNOWN | FALSE / UNKNOWN | **WARNING** | we don't know whether the rule fires |
 
@@ -269,13 +269,13 @@ WARNING  deploy_rule (WHEN/THEN)
    hint: add  FACT service reviewed   OR   NOT service reviewed
 ```
 
-### `AXIOM` (checks) vs `RULE` (derives) — two modes of one implication
+### `PREMISE` (checks) vs `RULE` (derives) — two modes of one implication
 
 The body of both is identical — `WHEN ... THEN ...` = `A => B` = `Impossible([A, NOT B])`.
 The difference is operational, set by the leading keyword:
 
 ```
-AXIOM ...  WHEN A THEN B   — CHECKS.   A=TRUE, B=FALSE → CONFLICT
+PREMISE ...  WHEN A THEN B   — CHECKS.   A=TRUE, B=FALSE → CONFLICT
 RULE  ...  WHEN A THEN B   — DERIVES.  A=TRUE → ADDS fact B
 ```
 
@@ -283,18 +283,18 @@ One **checks**, the other **produces** a new fact. This distinction is important
 
 ## DSL: keywords
 
-**v1 — a purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `AXIOM`,
+**v1 — a purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
 `RULE`, `CHECK`), plus a few words for the body of constraints and rules, plus
 `IMPORT` for reuse.
 
 | Word | Meaning | Kind |
 |---|---|---|
-| `FACT` | a TRUE assertion | axiom (unchecked) |
-| `NOT` | a FALSE assertion | axiom (unchecked) |
-| `AXIOM` | a first principle — **checked** | constraint |
+| `FACT` | a TRUE assertion | premise (unchecked) |
+| `NOT` | a FALSE assertion | premise (unchecked) |
+| `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
-| `WHEN` / `AND` / `THEN` | implication body (in `AXIOM` and `RULE`) | |
-| `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `AXIOM`) | |
+| `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
+| `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
 | `IMPORT` | pull in another source for reuse | reuse |
 | `CHECK` / `BIDIRECTIONAL` | a query | query |
 
@@ -312,25 +312,25 @@ TRUE / FALSE / UNKNOWN.
 
 Principle: **one line — one statement, no nested parentheses, no operator
 precedence.** Short forms (`FACT`/`NOT`/`CHECK`/`IMPORT`) — on one line. Compound
-forms (`AXIOM`/`RULE`) — as a vertical block with indentation, each condition on
+forms (`PREMISE`/`RULE`) — as a vertical block with indentation, each condition on
 its own line.
 
 ```
-// Reuse: pull facts/axioms/rules from another source
+// Reuse: pull facts/premises/rules from another source
 IMPORT "physics.vrf"
 
 // Facts (TRUE) and negations (FALSE) — boolean atoms, no numbers, one line
 FACT <Subject> <predicate> [<object>]
 NOT  <Subject> <predicate> [<object>]
 
-// List axiom: EXCLUSIVE / FORBIDS / ONEOF / ATLEAST
-AXIOM <name>:
+// List premise: EXCLUSIVE / FORBIDS / ONEOF / ATLEAST
+PREMISE <name>:
     EXCLUSIVE
         <Subject> <predicate> [<object>]
         <Subject> <predicate> [<object>]
 
-// Implication axiom — CHECKED (violation → CONFLICT)
-AXIOM <name>:
+// Implication premise — CHECKED (violation → CONFLICT)
+PREMISE <name>:
     WHEN <Subject> <predicate>
     AND  <Subject> <predicate>
     THEN <Subject> <predicate>
@@ -346,32 +346,32 @@ CHECK <Subject>
 CHECK <Subject> BIDIRECTIONAL    // enables the backward pass
 ```
 
-The difference between `AXIOM` and `RULE` with an identical WHEN/THEN body:
-`AXIOM` **checks** (no convergence → CONFLICT), `RULE` **produces** a new fact.
+The difference between `PREMISE` and `RULE` with an identical WHEN/THEN body:
+`PREMISE` **checks** (no convergence → CONFLICT), `RULE` **produces** a new fact.
 
 ## IMPORT — reuse over a source-agnostic engine
 
 The engine is **source-agnostic: it consumes strings.** A file is merely one way
-to reuse a body of facts and axioms. Resolution goes through a `Resolver`
+to reuse a body of facts and premises. Resolution goes through a `Resolver`
 abstraction (mirroring vsm-grammar's `SourceResolver` / `MemoryResolver` /
 `FileResolver`): `IMPORT "physics.vrf"` asks the resolver for the string named
 `physics.vrf`, however it is stored (file, in-memory map, network).
 
-This matters for a small model. The model can only err at the axiom level; a
-vetted axiom library removes even that — the model writes only `FACT` lines and
+This matters for a small model. The model can only err at the premise level; a
+vetted premise library removes even that — the model writes only `FACT` lines and
 pulls the first principles from a curated, reviewed library. It also saves
 context: the generated file is just facts.
 
 ### Semantics: flat merge into one shared atom universe
 
-`IMPORT` performs a **flat merge** of all `FACT` / `NOT` / `AXIOM` / `RULE` from
+`IMPORT` performs a **flat merge** of all `FACT` / `NOT` / `PREMISE` / `RULE` from
 the imported source into the current set. Crucially, **atoms unify across sources
-by identity** — an imported axiom about `Engine.X has fuel` constrains the fact
+by identity** — an imported premise about `Engine.X has fuel` constrains the fact
 `Engine.X has fuel` declared in the main file. There is **no alias namespacing of
 atoms** (that would break unification, which is the whole point of importing
-axioms). Atoms live in one global namespace keyed by `(subject, predicate, object?)`.
+premises). Atoms live in one global namespace keyed by `(subject, predicate, object?)`.
 
-### Duplicate axioms are idempotent — not a conflict
+### Duplicate premises are idempotent — not a conflict
 
 Importing the same library twice, or two libraries sharing a lemma, is
 automatically harmless. The engine compiles everything to a **set** of
@@ -381,21 +381,21 @@ no-op, because `P ∧ P ≡ P`. No special handling is needed at the logic level
 Two bookkeeping guards exist on top, and content-addressing (sha256, mirroring
 vsm-guard's CAS) is the natural tool for both:
 
-- **Dedup for reports.** The same axiom is not listed twice in a conflict pool;
+- **Dedup for reports.** The same premise is not listed twice in a conflict pool;
   identical normalized content → identical content hash → one first principle.
-- **Redefinition is an error only within one source.** Axiom/rule names are
-  per-source **labels**, not global identifiers — nothing references an axiom by
+- **Redefinition is an error only within one source.** Premise/rule names are
+  per-source **labels**, not global identifiers — nothing references a premise by
   name across files, so two different files (domains) may reuse a name with
   different bodies; both apply, and the report qualifies them by source
   (`physics.vrf:safety` vs `biology.vrf:safety`). Reusing a name with a different
-  body *inside the same source* is a genuine `AxiomRedefinition` error.
+  body *inside the same source* is a genuine `PremiseRedefinition` error.
 
 > This is the one place we deliberately diverge from vsm-grammar. vsm
 > hash-namespaces rules so they stay *apart* and are referenced by alias. We need
 > the opposite for **atoms** (they must unify across files — that is the value of
-> importing axiom libraries), so atoms are global. We apply the same idea vsm uses
+> importing premise libraries), so atoms are global. We apply the same idea vsm uses
 > for namespacing only to the human-facing **labels** (per-source scoping) — never
-> to atoms — and there is no `AS` alias because axioms are never referenced by name.
+> to atoms — and there is no `AS` alias because premises are never referenced by name.
 
 ### Cycle detection and dedup of sources
 
@@ -404,7 +404,7 @@ exactly like vsm's `VstCompiler`: each resolved source is hashed (sha256), a
 `visit_stack` of hashes detects circular dependencies, and an already-compiled
 hash is reused rather than re-parsed.
 
-> Note: the sha256 content-addressing is used **only** for source/axiom dedup,
+> Note: the sha256 content-addressing is used **only** for source/premise dedup,
 > integrity, and provenance — **never** for namespacing atoms. Atoms get a flat,
 > deterministic interner instead (see Two passes / implementation).
 
@@ -422,14 +422,14 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = import | fact | negation | axiom | rule | check ;
+statement   = import | fact | negation | premise | rule | check ;
 
 import      = "IMPORT" , string , NEWLINE ;
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
-axiom       = "AXIOM" , name , ":" , NEWLINE , ( list_body | impl_body ) ;
+premise       = "PREMISE" , name , ":" , NEWLINE , ( list_body | impl_body ) ;
 rule        = "RULE"  , name , ":" , NEWLINE , impl_body ;
 
 list_body   = list_op , NEWLINE , atom_line , atom_line , { atom_line } ;  (* >= 2 *)
@@ -454,13 +454,13 @@ letter      = "A".."Z" | "a".."z" ;
 digit       = "0".."9" ;
 ```
 
-How the parser finds the end of an `AXIOM`/`RULE` block: the block continues while
+How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
 identifier (list atoms), and ends at the first line with a top-level word
-(`IMPORT`/`FACT`/`NOT`/`AXIOM`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
+(`IMPORT`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
-Reserved words (always CAPS, in full): `IMPORT FACT NOT AXIOM RULE CHECK
+Reserved words (always CAPS, in full): `IMPORT FACT NOT PREMISE RULE CHECK
 BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST`. An identifier may not
 coincide with a reserved word.
 
@@ -506,7 +506,7 @@ RULE pick_slow:
     WHEN NOT Motor over_100
     THEN Motor uses slow_path
 
-AXIOM one_path:
+PREMISE one_path:
     EXCLUSIVE
         Motor uses fast_path
         Motor uses slow_path
@@ -523,10 +523,10 @@ not the arithmetic:
 ```
 
 If there are several thresholds (`>= 100`, `>= 200`) — each is its own atom, and
-their numeric order is expressed by an **axiom**, with no arithmetic at all:
+their numeric order is expressed by an **premise**, with no arithmetic at all:
 
 ```
-AXIOM speed_order:
+PREMISE speed_order:
     WHEN Motor over_200
     THEN Motor over_100
 // if speed > 200, then it is NECESSARILY > 100 — pure logic
@@ -540,7 +540,7 @@ also means >100" — all without a single number.
 ### Forward pass
 
 ```
-facts + axioms → saturate with rules → check constraints → result
+facts + premises → saturate with rules → check constraints → result
 ```
 
 Phases:
@@ -548,7 +548,7 @@ Phases:
 2. **Bind** — build `FactStore: Map<Atom, (Value, Source)>`, where
    `Atom = (subject, predicate, object?)` in full (see the atom-identity invariant)
 3. **Saturate** — apply `RULE` rules to a fixpoint; on each step check non-contradiction
-4. **Verify** — for each `AXIOM`: evaluate(constraint, fact_store)
+4. **Verify** — for each `PREMISE`: evaluate(constraint, fact_store)
 5. **Report** — collect results with provenance (where each fact came from)
 
 ### Backward pass (model finding)
@@ -557,19 +557,19 @@ Triggered by `CHECK X BIDIRECTIONAL`, or always on `CHECK X` in strict mode.
 
 ```
 take the current fact set → search for an alternative fact set
-that also satisfies all axioms → if found → UNDERDETERMINED
+that also satisfies all premises → if found → UNDERDETERMINED
 ```
 
 Example:
 ```
 FACT A has flying
-AXIOM ax:
+PREMISE ax:
     EXCLUSIVE
         A has flying
         A has swimming
 
 Forward:  CONSISTENT
-Backward: A has swimming also satisfies all axioms
+Backward: A has swimming also satisfies all premises
 → UNDERDETERMINED: an alternative model exists
   hint: add  NOT A has swimming  to pin it down unambiguously
 ```
@@ -579,7 +579,7 @@ Backward: A has swimming also satisfies all axioms
 ```
 CONSISTENT       — no contradictions, a unique model
 UNDERDETERMINED  — the logic does not break, but there is an alternative interpretation
-CONFLICT         — an axiom is violated, a contradiction was found
+CONFLICT         — a premise is violated, a contradiction was found
 WARNING          — not enough data to check (UNKNOWN in a critical place)
 ```
 
@@ -587,7 +587,7 @@ WARNING          — not enough data to check (UNKNOWN in a critical place)
 
 ```
 CHECK: <Subject>
-  [CONSISTENT|UNDERDETERMINED|CONFLICT|WARNING]  <axiom>  <details>
+  [CONSISTENT|UNDERDETERMINED|CONFLICT|WARNING]  <premise>  <details>
   ...
 SUMMARY: <n> conflicts, <m> underdetermined, <k> warnings, <j> consistent
 EXIT_CODE: 0=consistent, 1=underdetermined/warnings, 2=conflicts
@@ -631,14 +631,14 @@ and take the next combination.
 
 ```
 1. Start: only confident facts (TRUE/FALSE)
-2. For each rule/axiom compute the antecedent by three-valued AND (Kleene):
+2. For each rule/premise compute the antecedent by three-valued AND (Kleene):
       - any input FALSE   → antecedent FALSE → the rule does NOT fire,
                             implication vacuously satisfied → CONSISTENT, NO warning
       - all inputs TRUE   → antecedent TRUE  → go to THEN (step 3)
       - otherwise (some UNKNOWN, no FALSE) → antecedent UNKNOWN → branch blocked (step 4)
 3. Antecedent TRUE:
       RULE:  derive the THEN fact = TRUE (if it is already FALSE → CONFLICT)
-      AXIOM: check THEN — TRUE→CONSISTENT, FALSE→CONFLICT, UNKNOWN→WARNING
+      PREMISE: check THEN — TRUE→CONSISTENT, FALSE→CONFLICT, UNKNOWN→WARNING
 4. Blocked branch (antecedent UNKNOWN):
       - if THEN is already TRUE → implication satisfied → CONSISTENT (no warning)
       - otherwise → WARNING, blocked by the specific UNKNOWN literal; do not go deeper
@@ -653,7 +653,7 @@ WARNING.** A warning arises only when a branch is genuinely "alive" but hits an 
 
 | Pool | What it collects | Source |
 |---|---|---|
-| **CONFLICT pool** | which facts+axioms together produce a contradiction | unsat-core from SAT (or computed ourselves) |
+| **CONFLICT pool** | which facts+premises together produce a contradiction | unsat-core from SAT (or computed ourselves) |
 | **WARNING pool** | which branches are blocked and by which UNKNOWN component | our layer, during forward chaining |
 | **CONSISTENT** | can be hidden; or list all successful combinations | our layer |
 
@@ -665,10 +665,10 @@ silent or list successful combinations for clarity.
 
 ```
 WARNING pool (2 blocked branches):
-  [branch 1]  AXIOM wings_need_bone
+  [branch 1]  PREMISE wings_need_bone
               blocked by: has wing = UNKNOWN
               chain: FACT has flying → WHEN has flying THEN has wing AND has bone → STOP at has wing
-  [branch 2]  AXIOM needs_fuel
+  [branch 2]  PREMISE needs_fuel
               blocked by: has engine = UNKNOWN
               chain: RULE WHEN has engine THEN needs fuel → STOP at has engine
 
@@ -706,19 +706,19 @@ fixpoint in a finite number of steps. A cycle (`A⇒B`, `B⇒A`) is safe: both b
 TRUE and the process halts. A contradiction-cycle (`A⇒B`, `B⇒NOT A`) is caught by
 non-contradiction.
 
-### Conflict among the axioms themselves
-Axioms can be incompatible even without facts (e.g. they mutually require
-exclusive things). SAT will catch this: the CONFLICT pool then names axioms, not facts.
+### Conflict among the premises themselves
+Premises can be incompatible even without facts (e.g. they mutually require
+exclusive things). SAT will catch this: the CONFLICT pool then names premises, not facts.
 
-### Duplicate axioms across imports
+### Duplicate premises across imports
 Identical constraints (same content hash) are idempotent — merged into one clause,
-never a conflict (`P ∧ P ≡ P`). Axiom/rule names are per-source labels: the same
+never a conflict (`P ∧ P ≡ P`). Premise/rule names are per-source labels: the same
 name in two different files (domains) is fine (both apply, qualified by source);
-the same name with a different body *within one source* is an `AxiomRedefinition`
+the same name with a different body *within one source* is a `PremiseRedefinition`
 error. See the IMPORT section.
 
 ### CHECK scope
-`CHECK <Subject>` reports on axioms and rules where this subject participates.
+`CHECK <Subject>` reports on premises and rules where this subject participates.
 `CHECK` without a subject — on the whole system. A subject with no facts at all →
 almost everything is WARNING.
 
@@ -735,7 +735,7 @@ is needed so the model and diff tools see stable text. Atom interning is canonic
 
 ### Literals in WHEN / AND / THEN
 In these positions a literal is allowed — a predicate or its negation (`NOT ...`).
-`THEN NOT X` means: for an `AXIOM` — X must be FALSE; for a `RULE` — derive X=FALSE.
+`THEN NOT X` means: for a `PREMISE` — X must be FALSE; for a `RULE` — derive X=FALSE.
 
 ---
 
@@ -803,9 +803,9 @@ optional step via the npm wrapper.
 
 This is a **boolean SAT checker with three-valued logic** (TRUE / FALSE /
 UNKNOWN) on top, and nothing else. It does not do numbers/arithmetic,
-quantifiers (∀/∃), probabilities, nested axioms, or type/schema declarations.
+quantifiers (∀/∃), probabilities, nested premises, or type/schema declarations.
 Numbers become named boolean atoms (`Motor over_100`); their order is stated as an
-axiom — see "How code tasks map into boolean logic". That keeps the language
+premise — see "How code tasks map into boolean logic". That keeps the language
 small enough for a local model to write reliably.
 
 If you need more than boolean consistency, use a different tool — they already
@@ -837,17 +837,17 @@ FACT Creature.A has warm_blood
 // has swimming not mentioned → UNKNOWN
 
 // First principles
-AXIOM fly_xor_swim:
+PREMISE fly_xor_swim:
     EXCLUSIVE
         Creature.A has flying
         Creature.A has swimming
 
-AXIOM wings_need_bone:
+PREMISE wings_need_bone:
     WHEN Creature.A has flying
     THEN Creature.A has wing
     AND  Creature.A has bone
 
-AXIOM no_dual_temp:
+PREMISE no_dual_temp:
     FORBIDS
         Creature.A has warm_blood
         Creature.A has cold_blood

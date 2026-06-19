@@ -39,7 +39,7 @@ Human (default):
 
 ```text
 RESULT: WARNING
-  WARNING   wings_need_bone (AXIOM)  [creature.vrf:15]
+  WARNING   wings_need_bone (PREMISE)  [creature.vrf:15]
       blocked by: Creature.A has wing
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1

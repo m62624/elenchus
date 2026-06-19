@@ -10,7 +10,7 @@
 //!   (`EXCLUSIVE` pairwise, `WHEN…THEN` → `Impossible([A, …, NOT C])`, etc.);
 //! - **content-addressing** (sha256, mirroring vsm-guard's CAS): identical
 //!   clauses are deduped (idempotent — `P ∧ P ≡ P`), and a named construct
-//!   redefined with a different body is an `AxiomRedefinition` error.
+//!   redefined with a different body is a `PremiseRedefinition` error.
 //!
 //! The actual reasoning (3-valued forward chaining, SAT, all-SAT, the WARNING
 //! pool, the four results) belongs to the future `elenchus-solver` crate.
@@ -105,9 +105,9 @@ pub struct Origin {
     pub source: String,
     /// 1-based line number of the originating statement.
     pub line: u32,
-    /// The axiom/rule name, if it came from a named construct.
-    pub axiom: Option<String>,
-    /// Surface kind for the report, e.g. `"FACT"`, `"EXCLUSIVE"`, `"AXIOM"`.
+    /// The premise/rule name, if it came from a named construct.
+    pub premise: Option<String>,
+    /// Surface kind for the report, e.g. `"FACT"`, `"EXCLUSIVE"`, `"PREMISE"`.
     pub kind: &'static str,
 }
 
@@ -160,7 +160,7 @@ pub struct Compiled {
     pub atoms: Vec<AtomKey>,
     /// Confident assertions from `FACT`/`NOT`.
     pub facts: Vec<Fact>,
-    /// `Impossible` clauses (desugared axioms + the built-in non-contradiction).
+    /// `Impossible` clauses (desugared premises + the built-in non-contradiction).
     pub clauses: Vec<Clause>,
     /// Forward-chaining rules from `RULE`.
     pub rules: Vec<Rule>,
@@ -184,8 +184,8 @@ pub enum CompileError {
     },
     /// A name was reused with a different body *within the same source*.
     #[error("'{name}' redefined with a different body")]
-    AxiomRedefinition {
-        /// The clashing axiom/rule name.
+    PremiseRedefinition {
+        /// The clashing premise/rule name.
         name: String,
     },
     /// An `IMPORT` target could not be loaded by the [`Resolver`].
@@ -241,7 +241,7 @@ pub struct Compiler {
     checks: Vec<Check>,
     pending_imports: Vec<String>,
     /// (source, name) → content hash of its body, for redefinition detection.
-    /// Scoped per source: axiom/rule names are labels, not global identifiers,
+    /// Scoped per source: premise/rule names are labels, not global identifiers,
     /// so different files (domains) may reuse a name. A clash is only an error
     /// *within the same source*.
     defined: BTreeMap<(String, String), String>,
@@ -325,7 +325,7 @@ impl Compiler {
                 subject: subject.as_ref().map(|s| s.data.to_string()),
                 bidirectional: *bidirectional,
             }),
-            Statement::Axiom { name, body } => {
+            Statement::Premise { name, body } => {
                 let line = name.span.location_line();
                 self.add_named(source, name.data, line, body, false)?;
             }
@@ -372,13 +372,13 @@ impl Compiler {
             origin: Origin {
                 source: source.to_string(),
                 line: a.span.location_line(),
-                axiom: None,
+                premise: None,
                 kind,
             },
         });
     }
 
-    /// Handle a named construct (`AXIOM` or `RULE`). `is_rule` selects derivation
+    /// Handle a named construct (`PREMISE` or `RULE`). `is_rule` selects derivation
     /// vs checking. Returns an error on redefinition with a different body.
     fn add_named(
         &mut self,
@@ -394,7 +394,7 @@ impl Compiler {
             Some(prev) if *prev == body_hash => return Ok(()), // identical → idempotent
             Some(_) => {
                 // Same name + different body *in the same source* — a real mistake.
-                return Err(CompileError::AxiomRedefinition {
+                return Err(CompileError::PremiseRedefinition {
                     name: name.to_string(),
                 });
             }
@@ -457,7 +457,7 @@ impl Compiler {
                 for l in &ante {
                     self.intern(&l.key);
                 }
-                let origin = self.origin(source, line, Some(name), "AXIOM");
+                let origin = self.origin(source, line, Some(name), "PREMISE");
                 for c in consequent {
                     let neg_c = RawLit {
                         key: AtomKey::from_atom(&c.data.atom),
@@ -518,11 +518,11 @@ impl Compiler {
     }
 
     /// Build an [`Origin`] for provenance from the current source/line/name.
-    fn origin(&self, source: &str, line: u32, axiom: Option<&str>, kind: &'static str) -> Origin {
+    fn origin(&self, source: &str, line: u32, premise: Option<&str>, kind: &'static str) -> Origin {
         Origin {
             source: source.to_string(),
             line,
-            axiom: axiom.map(|s| s.to_string()),
+            premise: premise.map(|s| s.to_string()),
             kind,
         }
     }
@@ -670,7 +670,7 @@ impl Resolver for FileResolver {
 /// identity across files). Sources are content-addressed (sha256): a source
 /// already merged is skipped (dedup), and an import cycle is an error.
 ///
-/// Axiom/rule names are per-source labels, not global identifiers: different
+/// Premise/rule names are per-source labels, not global identifiers: different
 /// files (domains) may reuse a name, and the report qualifies them by source. A
 /// name reused with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
@@ -728,7 +728,7 @@ fn clause_sig(lits: &[RawLit]) -> String {
 /// Canonical body string for a named construct, hashed for redefinition checks.
 fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
     let mut s = String::new();
-    let _ = write!(s, "{}|{}|", if is_rule { "RULE" } else { "AXIOM" }, name);
+    let _ = write!(s, "{}|{}|", if is_rule { "RULE" } else { "PREMISE" }, name);
     match body {
         Body::List { op, atoms } => {
             let _ = write!(s, "LIST|{}|", list_kind(*op));
@@ -787,7 +787,7 @@ mod tests {
 
     #[test]
     fn exclusive_unfolds_pairwise() {
-        let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\n        x c\n";
+        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n        x c\n";
         let c = compile_source("<t>", src).unwrap();
         // C(3,2) = 3 clauses, each of 2 positive literals.
         assert_eq!(c.clauses.len(), 3);
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn implication_negates_consequent() {
         // WHEN x a THEN x b  ==  Impossible([x a, NOT x b])
-        let src = "AXIOM r:\n    WHEN x a\n    THEN x b\n";
+        let src = "PREMISE r:\n    WHEN x a\n    THEN x b\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         let cl = &c.clauses[0];
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn negated_consequent_flips_to_positive() {
         // THEN NOT x b  →  NOT(NOT x b) = x b positive inside Impossible
-        let src = "AXIOM r:\n    WHEN x a\n    THEN NOT x b\n";
+        let src = "PREMISE r:\n    WHEN x a\n    THEN NOT x b\n";
         let c = compile_source("<t>", src).unwrap();
         let b = id(&c, &key("x", "b", None));
         assert!(c.clauses[0].lits.contains(&Lit {
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn oneof_is_pairwise_plus_at_least_one() {
-        let src = "AXIOM o:\n    ONEOF\n        x a\n        x b\n";
+        let src = "PREMISE o:\n    ONEOF\n        x a\n        x b\n";
         let c = compile_source("<t>", src).unwrap();
         // pairwise C(2,2)=1 + 1 at-least-one = 2 clauses
         assert_eq!(c.clauses.len(), 2);
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn atleast_is_one_negated_clause() {
-        let src = "AXIOM a:\n    ATLEAST\n        x a\n        x b\n        x c\n";
+        let src = "PREMISE a:\n    ATLEAST\n        x a\n        x b\n        x c\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         assert_eq!(c.clauses[0].lits.len(), 3);
@@ -868,19 +868,19 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_axiom_is_idempotent() {
-        let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\n";
+    fn duplicate_premise_is_idempotent() {
+        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }
 
     #[test]
     fn redefinition_with_different_body_errors() {
-        let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
+        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x c\n";
         let err = compile_source("<t>", src).unwrap_err();
         assert_eq!(
             err,
-            CompileError::AxiomRedefinition {
+            CompileError::PremiseRedefinition {
                 name: "e".to_string()
             }
         );
@@ -912,7 +912,7 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "lib.vrf",
-            "AXIOM needs_fuel:\n    WHEN Engine.X has engine\n    THEN Engine.X has fuel\n",
+            "PREMISE needs_fuel:\n    WHEN Engine.X has engine\n    THEN Engine.X has fuel\n",
         );
         r.add(
             "main.vrf",
@@ -920,10 +920,10 @@ mod tests {
         );
         let c = compile("main.vrf", &r).unwrap();
         assert!(c.pending_imports.is_empty());
-        assert_eq!(c.clauses.len(), 1); // the imported axiom
+        assert_eq!(c.clauses.len(), 1); // the imported premise
         assert_eq!(c.facts.len(), 2);
 
-        // `Engine.X has fuel` from the FACT and from the imported axiom share an id.
+        // `Engine.X has fuel` from the FACT and from the imported premise share an id.
         let fuel = key("Engine.X", "has", Some("fuel"));
         let fuel_id = id(&c, &fuel);
         assert!(c.facts.iter().any(|f| f.atom == fuel_id));
@@ -936,7 +936,7 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "base.vrf",
-            "AXIOM b:\n    EXCLUSIVE\n        x a\n        x b\n",
+            "PREMISE b:\n    EXCLUSIVE\n        x a\n        x b\n",
         );
         r.add("a.vrf", "IMPORT \"base.vrf\"\n");
         r.add("c.vrf", "IMPORT \"base.vrf\"\n");
@@ -964,17 +964,17 @@ mod tests {
 
     #[test]
     fn same_name_across_domains_coexists() {
-        // Two files may legitimately reuse an axiom NAME with different bodies
-        // (different domains). Names are per-source labels — both axioms apply,
+        // Two files may legitimately reuse a premise NAME with different bodies
+        // (different domains). Names are per-source labels — both premises apply,
         // and the report qualifies them by source. NOT a redefinition error.
         let mut r = MemoryResolver::new();
         r.add(
             "physics.vrf",
-            "AXIOM safety:\n    EXCLUSIVE\n        x a\n        x b\n",
+            "PREMISE safety:\n    EXCLUSIVE\n        x a\n        x b\n",
         );
         r.add(
             "main.vrf",
-            "IMPORT \"physics.vrf\"\nAXIOM safety:\n    EXCLUSIVE\n        x a\n        x c\n",
+            "IMPORT \"physics.vrf\"\nPREMISE safety:\n    EXCLUSIVE\n        x a\n        x c\n",
         );
         let c = compile("main.vrf", &r).unwrap();
         assert_eq!(c.clauses.len(), 2); // a-b from physics, a-c from main
@@ -990,26 +990,26 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "A.vrf",
-            "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has b\n",
+            "PREMISE x:\n    EXCLUSIVE\n        S has a\n        S has b\n",
         );
         r.add(
             "B.vrf",
-            "AXIOM x:\n    EXCLUSIVE\n        S has a\n        S has c\n",
+            "PREMISE x:\n    EXCLUSIVE\n        S has a\n        S has c\n",
         );
         r.add("C.vrf", "IMPORT \"A.vrf\"\nIMPORT \"B.vrf\"\n");
         let c = compile("C.vrf", &r).unwrap();
 
-        // both `x` axioms contributed a clause, kept apart by source
+        // both `x` premises contributed a clause, kept apart by source
         assert_eq!(c.clauses.len(), 2);
         assert!(
             c.clauses
                 .iter()
-                .any(|cl| cl.origin.source == "A.vrf" && cl.origin.axiom.as_deref() == Some("x"))
+                .any(|cl| cl.origin.source == "A.vrf" && cl.origin.premise.as_deref() == Some("x"))
         );
         assert!(
             c.clauses
                 .iter()
-                .any(|cl| cl.origin.source == "B.vrf" && cl.origin.axiom.as_deref() == Some("x"))
+                .any(|cl| cl.origin.source == "B.vrf" && cl.origin.premise.as_deref() == Some("x"))
         );
 
         // the shared atom `S has a` is a single interned id used by both clauses
@@ -1027,11 +1027,11 @@ mod tests {
     #[test]
     fn redefinition_within_one_source_still_errors() {
         // But reusing a name with a different body *inside one source* is a mistake.
-        let src = "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x c\n";
+        let src = "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x c\n";
         let err = compile_source("main.vrf", src).unwrap_err();
         assert_eq!(
             err,
-            CompileError::AxiomRedefinition {
+            CompileError::PremiseRedefinition {
                 name: "e".to_string()
             }
         );
@@ -1052,7 +1052,7 @@ mod tests {
         assert!(c.pending_imports.is_empty());
         // physics.vrf: one_path (EXCLUSIVE, 1 clause) + speed_order (impl, 1 clause)
         assert_eq!(c.clauses.len(), 2);
-        // over_200 / over_100 unify between the facts and the imported axiom.
+        // over_200 / over_100 unify between the facts and the imported premise.
         let over_100 = id(&c, &key("Motor", "over_100", None));
         assert!(c.facts.iter().any(|f| f.atom == over_100));
         assert!(
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn forbids_unfolds_pairwise() {
-        let src = "AXIOM f:\n    FORBIDS\n        x a\n        x b\n        x c\n";
+        let src = "PREMISE f:\n    FORBIDS\n        x a\n        x b\n        x c\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 3); // C(3,2), like EXCLUSIVE
         assert!(
@@ -1097,7 +1097,7 @@ mod tests {
     #[test]
     fn negated_antecedent_literal_keeps_polarity() {
         // WHEN NOT x a THEN x b  ==  Impossible([NOT x a, NOT x b])
-        let src = "AXIOM a:\n    WHEN NOT x a\n    THEN x b\n";
+        let src = "PREMISE a:\n    WHEN NOT x a\n    THEN x b\n";
         let c = compile_source("<t>", src).unwrap();
         let xa = id(&c, &key("x", "a", None));
         assert!(c.clauses[0].lits.contains(&Lit {
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn compilation_is_deterministic() {
-        let src = "AXIOM e:\n    EXCLUSIVE\n        z z\n        a a\n        m m\nFACT q q\n";
+        let src = "PREMISE e:\n    EXCLUSIVE\n        z z\n        a a\n        m m\nFACT q q\n";
         assert_eq!(
             compile_source("<t>", src).unwrap(),
             compile_source("<t>", src).unwrap()
@@ -1129,9 +1129,9 @@ mod tests {
     }
 
     #[test]
-    fn same_clause_from_two_named_axioms_is_deduped() {
+    fn same_clause_from_two_named_premises_is_deduped() {
         // Different names, identical logical content → one clause, no redefinition.
-        let src = "AXIOM e1:\n    EXCLUSIVE\n        x a\n        x b\nAXIOM e2:\n    EXCLUSIVE\n        x a\n        x b\n";
+        let src = "PREMISE e1:\n    EXCLUSIVE\n        x a\n        x b\nPREMISE e2:\n    EXCLUSIVE\n        x a\n        x b\n";
         let c = compile_source("<t>", src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }

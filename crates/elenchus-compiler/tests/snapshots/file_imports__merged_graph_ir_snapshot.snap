@@ -61,7 +61,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
                 line: 6,
-                axiom: None,
+                premise: None,
                 kind: "FACT",
             },
         },
@@ -71,7 +71,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
                 line: 7,
-                axiom: None,
+                premise: None,
                 kind: "FACT",
             },
         },
@@ -81,7 +81,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
                 line: 8,
-                axiom: None,
+                premise: None,
                 kind: "FACT",
             },
         },
@@ -91,7 +91,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
                 line: 9,
-                axiom: None,
+                premise: None,
                 kind: "FACT",
             },
         },
@@ -111,7 +111,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
                 line: 2,
-                axiom: Some(
+                premise: Some(
                     "exactly_one_gear",
                 ),
                 kind: "ONEOF",
@@ -131,7 +131,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
                 line: 2,
-                axiom: Some(
+                premise: Some(
                     "exactly_one_gear",
                 ),
                 kind: "ONEOF",
@@ -151,7 +151,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
                 line: 2,
-                axiom: Some(
+                premise: Some(
                     "exactly_one_gear",
                 ),
                 kind: "ONEOF",
@@ -175,7 +175,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
                 line: 2,
-                axiom: Some(
+                premise: Some(
                     "exactly_one_gear",
                 ),
                 kind: "ONEOF",
@@ -195,10 +195,10 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/std/engine.vrf",
                 line: 4,
-                axiom: Some(
+                premise: Some(
                     "engine_needs_fuel",
                 ),
-                kind: "AXIOM",
+                kind: "PREMISE",
             },
         },
         Clause {
@@ -215,10 +215,10 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/std/safety.vrf",
                 line: 5,
-                axiom: Some(
+                premise: Some(
                     "drive_safely",
                 ),
-                kind: "AXIOM",
+                kind: "PREMISE",
             },
         },
     ],
@@ -239,7 +239,7 @@ Compiled {
             origin: Origin {
                 source: "tests/fixtures/std/engine.vrf",
                 line: 8,
-                axiom: Some(
+                premise: Some(
                     "running_implies_warm",
                 ),
                 kind: "RULE",

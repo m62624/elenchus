@@ -6,9 +6,9 @@
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
 A small **SAT checker with three-valued logic** (TRUE / FALSE / UNKNOWN), aimed at
-small local LLMs. You write **facts** and **first principles** (axioms) in a tiny
+small local LLMs. You write **facts** and **first principles** (premises) in a tiny
 English-like DSL; a Rust engine does the boolean bookkeeping and flags
-contradictions. The model can only get an axiom wrong — never a step in a long
+contradictions. The model can only get a premise wrong — never a step in a long
 chain — and that is caught mechanically.
 
 The name comes from *elenchus* (ἔλεγχος) — Socratic refutation by finding
@@ -27,12 +27,12 @@ Given a `.vrf` program it returns one of four verdicts (and a matching exit code
 | Result | exit | Meaning |
 |--------|:----:|---------|
 | **CONSISTENT** | 0 | no contradictions, and the answer is pinned down |
-| **WARNING** | 1 | an axiom couldn't be checked — a needed atom is UNKNOWN |
+| **WARNING** | 1 | a premise couldn't be checked — a needed atom is UNKNOWN |
 | **UNDERDETERMINED** | 1 | satisfiable, but more than one model fits |
-| **CONFLICT** | 2 | an axiom is violated, or the axioms are jointly unsatisfiable |
+| **CONFLICT** | 2 | a premise is violated, or the premises are jointly unsatisfiable |
 
 The intended loop: run → if not `CONSISTENT`, add the missing facts or rethink the
-axioms → re-run until `CONSISTENT`.
+premises → re-run until `CONSISTENT`.
 
 ## Example
 
@@ -54,7 +54,7 @@ RULE living_things_are_mortal:
     WHEN socrates is living
     THEN socrates is mortal
 
-AXIOM mortal_xor_immortal:        // can't be both
+PREMISE mortal_xor_immortal:        // can't be both
     EXCLUSIVE
         socrates is mortal
         socrates is immortal
@@ -79,7 +79,7 @@ EXIT_CODE: 2
 ```
 
 The DSL: `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false);
-`AXIOM` states a checked first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`,
+`PREMISE` states a checked first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`,
 or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
 (optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar.
 

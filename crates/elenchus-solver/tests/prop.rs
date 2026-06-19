@@ -98,7 +98,7 @@ fn origin() -> Origin {
     Origin {
         source: "<prop>".into(),
         line: 0,
-        axiom: None,
+        premise: None,
         kind: "EXCLUSIVE",
     }
 }

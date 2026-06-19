@@ -27,10 +27,10 @@ fn full_car_graph_merges_with_diamond_dedup() {
 }
 
 #[test]
-fn fact_unifies_with_imported_axiom_atom() {
+fn fact_unifies_with_imported_premise_atom() {
     let c = compile(&fixture("car.vrf"), &FileResolver).unwrap();
     // `Car has fuel` is written as a FACT in car.vrf and constrained by the
-    // engine_needs_fuel axiom imported from std/engine.vrf — same atom id.
+    // engine_needs_fuel premise imported from std/engine.vrf — same atom id.
     let has_fuel = c
         .atoms
         .iter()
@@ -41,11 +41,11 @@ fn fact_unifies_with_imported_axiom_atom() {
 
     assert!(c.facts.iter().any(|f| f.atom == has_fuel));
     assert!(
-        c.clauses
-            .iter()
-            .any(|cl| cl.origin.axiom.as_deref() == Some("engine_needs_fuel")
-                && cl.lits.iter().any(|l| l.atom == has_fuel)),
-        "the imported axiom must reference the same atom as the local fact"
+        c.clauses.iter().any(
+            |cl| cl.origin.premise.as_deref() == Some("engine_needs_fuel")
+                && cl.lits.iter().any(|l| l.atom == has_fuel)
+        ),
+        "the imported premise must reference the same atom as the local fact"
     );
 }
 
@@ -57,7 +57,7 @@ fn base_provenance_points_at_the_shared_file() {
     let gear = c
         .clauses
         .iter()
-        .find(|cl| cl.origin.axiom.as_deref() == Some("exactly_one_gear"))
+        .find(|cl| cl.origin.premise.as_deref() == Some("exactly_one_gear"))
         .expect("exactly_one_gear clause");
     assert!(gear.origin.source.ends_with("core/base.vrf"));
 }

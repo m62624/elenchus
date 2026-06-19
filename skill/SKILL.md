@@ -16,9 +16,9 @@ description: >-
 
 A model is good at stating facts but bad at holding a long logical chain without
 quietly contradicting itself. elenchus moves the logic out of the model: you
-state only **facts** and **first principles (axioms)**; a Rust engine does the
+state only **facts** and **first principles (premises)**; a Rust engine does the
 inference and finds contradictions mathematically. You can only be wrong at the
-axiom level — and that is caught immediately.
+premise level — and that is caught immediately.
 
 **What this actually is: a simplified SAT checker.** SAT = boolean
 *satisfiability*: given a pile of TRUE/FALSE constraints, find an assignment of
@@ -38,18 +38,18 @@ Running once is not the job. The verdict tells you what to do next; you iterate
 until it is **CONSISTENT**.
 
 ```
-   write facts + axioms ─▶ run ─▶ CONSISTENT?  ── yes ─▶ done (exit 0)
+   write facts + premises ─▶ run ─▶ CONSISTENT?  ── yes ─▶ done (exit 0)
             ▲                         │ no
             │                         ▼
-            └──── add facts / fix or rethink an axiom ◀── read the verdict
+            └──── add facts / fix or rethink a premise ◀── read the verdict
 ```
 
 | Verdict | exit | It means | Your next move |
 |--------|:----:|----------|----------------|
 | **CONSISTENT** | 0 | no contradiction, answer is pinned down | done |
-| **WARNING** | 1 | an axiom can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` |
+| **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` |
 | **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
-| **CONFLICT** | 2 | an axiom is violated, or the axioms are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
+| **CONFLICT** | 2 | a premise is violated, or the premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
 
 So: **WARNING / UNDERDETERMINED / CONFLICT are never "done"** — they are the
 engine telling you exactly what is missing or wrong. Re-run after each change.
@@ -62,15 +62,15 @@ model**, not just a green result:
 - When you hit WARNING/UNDERDETERMINED, add the **real** missing `FACT`/`NOT` — not
   an invented one. If you don't actually know it, that uncertainty is the finding.
 - When you hit CONFLICT, fix the thing that is actually wrong. **Never delete a
-  valid axiom or assert something false just to make it pass** — that throws away
+  valid premise or assert something false just to make it pass** — that throws away
   the very check you wanted.
 - Before each run, ask: *have I encoded every constraint that matters here?* Add
-  every genuine first principle as an `AXIOM` (mutual exclusions, required-together
-  gates, orderings, "exactly one of"). A missing axiom = false confidence: the
+  every genuine first principle as an `PREMISE` (mutual exclusions, required-together
+  gates, orderings, "exactly one of"). A missing premise = false confidence: the
   engine will happily say CONSISTENT about an under-specified problem.
 
-Done = CONSISTENT **with every real axiom present and every known fact stated** —
-no remaining "but…". Keep iterating (add data, add axioms) until you reach that.
+Done = CONSISTENT **with every real premise present and every known fact stated** —
+no remaining "but…". Keep iterating (add data, add premises) until you reach that.
 
 ## DSL cheat-sheet
 
@@ -81,13 +81,13 @@ comment. An atom is `Subject predicate [object]`.
 |------|---------|
 | `FACT s p [o]` | assert it TRUE |
 | `NOT s p [o]` | assert it FALSE |
-| `AXIOM n:` → `EXCLUSIVE` *(≥2 atoms)* | **at most one** is TRUE |
-| `AXIOM n:` → `FORBIDS` | at most one is TRUE (for two: "not both") |
-| `AXIOM n:` → `ONEOF` | **exactly one** is TRUE |
-| `AXIOM n:` → `ATLEAST` | **at least one** is TRUE |
-| `AXIOM n:` → `WHEN a` `AND b` `THEN c` | if `a ∧ b` hold then `c` must hold (else CONFLICT) |
+| `PREMISE n:` → `EXCLUSIVE` *(≥2 atoms)* | **at most one** is TRUE |
+| `PREMISE n:` → `FORBIDS` | at most one is TRUE (for two: "not both") |
+| `PREMISE n:` → `ONEOF` | **exactly one** is TRUE |
+| `PREMISE n:` → `ATLEAST` | **at least one** is TRUE |
+| `PREMISE n:` → `WHEN a` `AND b` `THEN c` | if `a ∧ b` hold then `c` must hold (else CONFLICT) |
 | `RULE n:` → `WHEN … THEN c` | same shape, but **derives** `c` as a new fact |
-| `IMPORT "lib.vrf"` | merge a reusable axiom library (atoms unify across files) |
+| `IMPORT "lib.vrf"` | merge a reusable premise library (atoms unify across files) |
 | `CHECK [s] [BIDIRECTIONAL]` | run it; `BIDIRECTIONAL` also searches for alternative models (UNDERDETERMINED) |
 
 Numbers? Turn a condition into a named boolean atom (`speed >= 100` → `over_100`)
@@ -103,8 +103,8 @@ engine stays small and total.
 **Atom identity is verbatim — the #1 gotcha.** Atoms are compared
 character-for-character, case-sensitively, by the triple `(subject, predicate,
 object)`. `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`. A typo or alternate spelling
-silently creates a *new* UNKNOWN atom — so an axiom about `Engine has fuel` will
-not see your `Engine has_fuel`. Keep names identical across facts, axioms, and
+silently creates a *new* UNKNOWN atom — so a premise about `Engine has fuel` will
+not see your `Engine has_fuel`. Keep names identical across facts, premises, and
 imports, or you'll get phantom WARNINGs.
 
 **WHEN…THEN: why WARNING vs CONFLICT.** For `WHEN A AND B THEN C`:
@@ -114,17 +114,17 @@ imports, or you'll get phantom WARNINGs.
 - all TRUE with C UNKNOWN, or an antecedent UNKNOWN → **WARNING** (state more);
 - a `RULE` instead *derives* C = TRUE when the antecedent holds.
 
-List axioms (`EXCLUSIVE`/…) with UNKNOWN atoms stay CONSISTENT — no data, no
+List premises (`EXCLUSIVE`/…) with UNKNOWN atoms stay CONSISTENT — no data, no
 conflict yet.
 
 **Forward vs backward.** The forward pass checks the facts you gave and runs
 `RULE`s. `CHECK X BIDIRECTIONAL` adds a backward pass (a small SAT search): it
 reports **UNDERDETERMINED** when more than one model fits, and catches a
-**CONFLICT** where the axioms are jointly unsatisfiable even though no single one
+**CONFLICT** where the premises are jointly unsatisfiable even though no single one
 is visibly violated. Use `BIDIRECTIONAL` when you care "is the answer *unique*?".
 
 **IMPORT.** `IMPORT "lib.vrf"` flat-merges another source; atoms **unify across
-files** (a library axiom constrains your local fact). Axiom *names* are per-source
+files** (a library premise constrains your local fact). Premise *names* are per-source
 labels — two files may reuse a name; identical duplicates are idempotent.
 
 **Not supported (on purpose).** No arithmetic (turn a number into a boolean atom),
@@ -146,7 +146,7 @@ of mistakes a model makes across a long chain.
 ### 1. Exactly-one assignment (deduced by the engine)
 
 ```vrf
-AXIOM alice_role:
+PREMISE alice_role:
     ONEOF
         alice is lead
         alice is dev
@@ -167,12 +167,12 @@ clue to pin it. Assert two leads → `CONFLICT`.
 FACT svc built
 FACT svc unit_tested
 NOT  svc deprecated
-AXIOM ready_needs_all:
+PREMISE ready_needs_all:
     WHEN svc built
     AND  svc integration_tested
     AND  svc security_scanned
     THEN svc release_ready
-AXIOM can_deploy:
+PREMISE can_deploy:
     WHEN svc release_ready
     AND  NOT svc deprecated
     THEN svc can_deploy
@@ -183,7 +183,7 @@ Run → `WARNING` (`blocked by: svc integration_tested, svc security_scanned`).
 You haven't stated enough. Add `FACT svc integration_tested`, `FACT svc
 security_scanned`, `FACT svc release_ready`, `FACT svc can_deploy` → re-run →
 `CONSISTENT`. But if you assert `FACT svc release_ready` with `NOT svc
-can_deploy`, the `can_deploy` axiom fires → `CONFLICT` (fix the fact).
+can_deploy`, the `can_deploy` premise fires → `CONFLICT` (fix the fact).
 
 ### 3. Branch coverage — find a bug with no numbers
 
@@ -195,7 +195,7 @@ RULE pick_fast:
 RULE pick_slow:
     WHEN NOT Motor over_100
     THEN Motor uses slow_path
-AXIOM one_path:
+PREMISE one_path:
     EXCLUSIVE
         Motor uses fast_path
         Motor uses slow_path
@@ -205,28 +205,28 @@ CHECK Motor
 `CONSISTENT` (derives `uses fast_path`). If your logic could ever take both
 paths, `one_path` reports `CONFLICT` — a branch bug caught structurally.
 
-### 4. Jointly-unsatisfiable axioms — only the backward pass finds it
+### 4. Jointly-unsatisfiable premises — only the backward pass finds it
 
 ```vrf
-AXIOM a_to_b:
+PREMISE a_to_b:
     WHEN x a
     THEN x b
-AXIOM a_to_not_b:
+PREMISE a_to_not_b:
     WHEN x a
     THEN NOT x b
-AXIOM need_a_or_c:
+PREMISE need_a_or_c:
     ATLEAST
         x a
         x c
-AXIOM c_to_a:
+PREMISE c_to_a:
     WHEN x c
     THEN x a
 CHECK x BIDIRECTIONAL
 ```
 
-No single clause is violated (everything is UNKNOWN), but the axioms can't all
+No single clause is violated (everything is UNKNOWN), but the premises can't all
 hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT`:
-"the axioms and facts are jointly unsatisfiable." Rethink the principles.
+"the premises and facts are jointly unsatisfiable." Rethink the principles.
 
 ### 5. A puzzle solved by deduction (the SAT pass at work)
 
@@ -235,7 +235,7 @@ proves it's the only one. (Full file: `docs/examples/roles-puzzle.vrf`.)
 
 ```vrf
 // 3 people × 3 roles. Each person ONEOF its 3 roles; each role ONEOF the 3 people.
-AXIOM alice_one_role:
+PREMISE alice_one_role:
     ONEOF
         alice is lead
         alice is dev
@@ -305,8 +305,8 @@ both). **`IMPORT` only resolves in the file form** (relative to the file);
 **MCP + this skill — when the host exposes MCP tools but no shell.** The
 `elenchus-mcp` server provides one tool, `elenchus_check`; call it with
 `{ "program": "<.vrf text>", "format": "json" }`. It's one source too — no
-`IMPORT` resolution; inline the axioms instead.
+`IMPORT` resolution; inline the premises instead.
 
 Either way the rule is the same: read `status`; if it isn't `CONSISTENT`, change
-the program (add facts, fix or rethink an axiom) and run again — **loop until it
+the program (add facts, fix or rethink a premise) and run again — **loop until it
 is CONSISTENT**.

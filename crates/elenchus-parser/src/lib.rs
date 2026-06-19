@@ -8,7 +8,7 @@
 //! Grammar (see docs/SPEC.md, "Grammar (EBNF)"):
 //! - statements are newline-terminated; indentation is cosmetic, not significant;
 //! - keywords are ALWAYS CAPS, identifiers are content (case-sensitive, verbatim);
-//! - block boundaries (AXIOM/RULE bodies) are found by keywords, never by indent.
+//! - block boundaries (PREMISE/RULE bodies) are found by keywords, never by indent.
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
 #![warn(missing_docs)]
@@ -68,7 +68,7 @@ pub struct Literal<'a> {
     pub atom: Atom<'a>,
 }
 
-/// List constraint operators (body of a list-style `AXIOM`).
+/// List constraint operators (body of a list-style `PREMISE`).
 ///
 /// These are surface sugar; the compiler desugars each to `Impossible` clauses
 /// (see `elenchus-compiler`). The meanings below are *what the author asserts*.
@@ -86,7 +86,7 @@ pub enum ListOp {
     AtLeast,
 }
 
-/// The body of an `AXIOM` or `RULE`.
+/// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
     /// `EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST` over >= 2 atoms.
@@ -114,9 +114,9 @@ pub enum Statement<'a> {
     Fact(Located<'a, Atom<'a>>),
     /// `NOT <atom>` — a FALSE assertion.
     Negation(Located<'a, Atom<'a>>),
-    /// `AXIOM <name>: ...` — a checked first principle.
-    Axiom {
-        /// The axiom's label (a per-source name, not a global identifier).
+    /// `PREMISE <name>: ...` — a checked first principle.
+    Premise {
+        /// The premise's label (a per-source name, not a global identifier).
         name: Located<'a, &'a str>,
         /// The constraint itself: a list body or a `WHEN … THEN` implication.
         body: Body<'a>,
@@ -140,7 +140,7 @@ pub enum Statement<'a> {
 /// A parsed program: a flat sequence of statements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program<'a> {
-    /// Top-level statements in source order. The list is flat: AXIOM/RULE bodies
+    /// Top-level statements in source order. The list is flat: PREMISE/RULE bodies
     /// live inside their [`Statement`], not as separate entries.
     pub statements: Vec<Statement<'a>>,
 }
@@ -150,7 +150,7 @@ pub const RESERVED: &[&str] = &[
     "IMPORT",
     "FACT",
     "NOT",
-    "AXIOM",
+    "PREMISE",
     "RULE",
     "CHECK",
     "BIDIRECTIONAL",
@@ -364,13 +364,13 @@ fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
 /// line (at least two).
 ///
 /// Commit strategy: the leading `list_op` failing stays a recoverable `Error`
-/// so the `AXIOM` `alt` can fall through and try [`impl_body`] instead. *Once*
+/// so the `PREMISE` `alt` can fall through and try [`impl_body`] instead. *Once*
 /// the operator matched we are committed, so every subsequent failure is
 /// [`promote`]d to a `Failure` with a specific message — no backtracking to a
 /// generic "expected a statement".
 fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
-    // list_op failing stays Error so the AXIOM alt can try impl_body.
+    // list_op failing stays Error so the PREMISE alt can try impl_body.
     let (input, op) = list_op(input)?;
     // Past here we are committed to a list body.
     let (input, _) = promote(
@@ -382,13 +382,13 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, first) = promote(
         atom_line(input),
         at,
-        "a list axiom needs at least two atoms",
+        "a list premise needs at least two atoms",
     )?;
     let at = input;
     let (input, second) = promote(
         atom_line(input),
         at,
-        "a list axiom needs at least two atoms",
+        "a list premise needs at least two atoms",
     )?;
     let (input, rest) = many0(atom_line).parse(input)?;
 
@@ -416,12 +416,12 @@ fn and_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
 /// An implication body: `WHEN <lit> [AND <lit>]* THEN <lit> [AND <lit>]*`.
 ///
 /// Like [`list_body`], a missing leading `WHEN` stays a recoverable `Error` (so
-/// the `AXIOM` `alt` can try a list body); after `WHEN` matches we are committed
+/// the `PREMISE` `alt` can try a list body); after `WHEN` matches we are committed
 /// and use [`promote`] for precise errors. Antecedent and consequent each start
 /// with one mandatory literal followed by zero or more `AND` lines.
 fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
-    // No WHEN → Error so the AXIOM alt can fall through to a list body.
+    // No WHEN → Error so the PREMISE alt can fall through to a list body.
     let (input, _) = (tag("WHEN"), space1).parse(input)?;
     // Committed to an implication body now.
     let at = input;
@@ -525,33 +525,33 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     ))
 }
 
-/// `AXIOM <name>: <body>` where the body is a list or an implication.
-fn stmt_axiom<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("AXIOM"), space1).parse(input)?;
-    // Committed to an axiom now.
+/// `PREMISE <name>: <body>` where the body is a list or an implication.
+fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag("PREMISE"), space1).parse(input)?;
+    // Committed to a premise now.
     let at = input;
     let (input, name) = promote(
         identifier(input),
         at,
-        "expected an axiom name (a lowercase identifier)",
+        "expected a premise name (a lowercase identifier)",
     )?;
     let (input, _) = space0(input)?;
     let (input, _) = promote(
         char(':').parse(input),
         input,
-        "expected ':' after the axiom name",
+        "expected ':' after the premise name",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after 'AXIOM <name>:'")?;
+    let (input, _) = promote(eol(input), input, "unexpected text after 'PREMISE <name>:'")?;
     let at = input;
     let (input, body) = promote(
         alt((list_body, impl_body)).parse(input),
         at,
-        "an axiom body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN",
+        "a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN",
     )?;
-    Ok((input, Statement::Axiom { name, body }))
+    Ok((input, Statement::Premise { name, body }))
 }
 
-/// `RULE <name>: <implication>` — like an axiom but the body must be `WHEN … THEN`.
+/// `RULE <name>: <implication>` — like a premise but the body must be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("RULE"), space1).parse(input)?;
     let at = input;
@@ -579,7 +579,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     alt((
         stmt_import,
         stmt_fact,
-        stmt_axiom,
+        stmt_premise,
         stmt_rule,
         stmt_check,
         stmt_negation,
@@ -608,7 +608,7 @@ pub fn parse(src: &str) -> Result<Program<'_>, ParseError<'_>> {
                     source: src,
                     span: rest,
                     message: String::from(
-                        "expected a statement (IMPORT/FACT/NOT/AXIOM/RULE/CHECK)",
+                        "expected a statement (IMPORT/FACT/NOT/PREMISE/RULE/CHECK)",
                     ),
                 });
             }
@@ -650,7 +650,7 @@ mod tests {
 
     /// `(subject, predicate, object?)` of one atom, borrowed from the source.
     type AtomShape<'a> = (&'a str, &'a str, Option<&'a str>);
-    /// A list axiom flattened to `(operator, its atoms)`.
+    /// A list premise flattened to `(operator, its atoms)`.
     type ListShape<'a> = (ListOp, Vec<AtomShape<'a>>);
 
     /// Atom data flattened to owned tuples — span-independent, for structural
@@ -659,7 +659,7 @@ mod tests {
         p.statements
             .iter()
             .filter_map(|s| match s {
-                Statement::Axiom {
+                Statement::Premise {
                     body: Body::List { op, atoms },
                     ..
                 } => Some((
@@ -717,11 +717,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_exclusive_axiom() {
-        let src = "AXIOM fly_xor_swim:\n    EXCLUSIVE\n        Creature.A has flying\n        Creature.A has swimming\n";
+    fn parses_exclusive_premise() {
+        let src = "PREMISE fly_xor_swim:\n    EXCLUSIVE\n        Creature.A has flying\n        Creature.A has swimming\n";
         let p = prog(src);
         match &p.statements[0] {
-            Statement::Axiom { name, body } => {
+            Statement::Premise { name, body } => {
                 assert_eq!(name.data, "fly_xor_swim");
                 match body {
                     Body::List { op, atoms } => {
@@ -732,16 +732,16 @@ mod tests {
                     other => panic!("expected list body, got {:?}", other),
                 }
             }
-            other => panic!("expected axiom, got {:?}", other),
+            other => panic!("expected premise, got {:?}", other),
         }
     }
 
     #[test]
-    fn parses_implication_axiom_with_and() {
-        let src = "AXIOM wings_need_bone:\n    WHEN Creature.A has flying\n    THEN Creature.A has wing\n    AND  Creature.A has bone\n";
+    fn parses_implication_premise_with_and() {
+        let src = "PREMISE wings_need_bone:\n    WHEN Creature.A has flying\n    THEN Creature.A has wing\n    AND  Creature.A has bone\n";
         let p = prog(src);
         match &p.statements[0] {
-            Statement::Axiom {
+            Statement::Premise {
                 body:
                     Body::Impl {
                         antecedent,
@@ -755,16 +755,16 @@ mod tests {
                 assert_eq!(consequent[0].data.atom.object, Some("wing"));
                 assert_eq!(consequent[1].data.atom.object, Some("bone"));
             }
-            other => panic!("expected impl axiom, got {:?}", other),
+            other => panic!("expected impl premise, got {:?}", other),
         }
     }
 
     #[test]
     fn antecedent_and_goes_before_then() {
-        let src = "AXIOM deploy:\n    WHEN s tested\n    AND s reviewed\n    THEN s can_deploy\n";
+        let src = "PREMISE deploy:\n    WHEN s tested\n    AND s reviewed\n    THEN s can_deploy\n";
         let p = prog(src);
         match &p.statements[0] {
-            Statement::Axiom {
+            Statement::Premise {
                 body:
                     Body::Impl {
                         antecedent,
@@ -831,8 +831,8 @@ mod tests {
 
     #[test]
     fn indentation_is_cosmetic() {
-        let flat = "AXIOM x:\nEXCLUSIVE\na b\na c\n";
-        let indented = "AXIOM x:\n        EXCLUSIVE\n  a b\n            a c\n";
+        let flat = "PREMISE x:\nEXCLUSIVE\na b\na c\n";
+        let indented = "PREMISE x:\n        EXCLUSIVE\n  a b\n            a c\n";
         // Spans differ by offset (cosmetic); the parsed structure must be identical.
         assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
     }
@@ -841,7 +841,7 @@ mod tests {
     fn full_creature_example_parses() {
         let src = include_str!("../../../docs/examples/creature.vrf");
         let p = prog(src);
-        // 2 FACT + 3 AXIOM + 1 RULE + 1 CHECK = 7
+        // 2 FACT + 3 PREMISE + 1 RULE + 1 CHECK = 7
         assert_eq!(p.statements.len(), 7);
     }
 
@@ -877,10 +877,10 @@ mod tests {
 
     #[test]
     fn tabs_as_indentation() {
-        let p = prog("AXIOM e:\n\tEXCLUSIVE\n\t\tx a\n\t\tx b\n");
+        let p = prog("PREMISE e:\n\tEXCLUSIVE\n\t\tx a\n\t\tx b\n");
         assert!(matches!(
             p.statements[0],
-            Statement::Axiom {
+            Statement::Premise {
                 body: Body::List {
                     op: ListOp::Exclusive,
                     ..
@@ -898,9 +898,9 @@ mod tests {
             ("ONEOF", ListOp::OneOf),
             ("ATLEAST", ListOp::AtLeast),
         ] {
-            let src = alloc::format!("AXIOM a:\n    {kw}\n        x a\n        x b\n");
+            let src = alloc::format!("PREMISE a:\n    {kw}\n        x a\n        x b\n");
             match &prog(&src).statements[0] {
-                Statement::Axiom {
+                Statement::Premise {
                     body: Body::List { op, .. },
                     ..
                 } => assert_eq!(*op, want),
@@ -942,9 +942,9 @@ mod tests {
 
     #[test]
     fn negated_consequent_then_not() {
-        let src = "AXIOM a:\n    WHEN x on\n    THEN NOT x off\n";
+        let src = "PREMISE a:\n    WHEN x on\n    THEN NOT x off\n";
         match &prog(src).statements[0] {
-            Statement::Axiom {
+            Statement::Premise {
                 body: Body::Impl { consequent, .. },
                 ..
             } => {

@@ -1,6 +1,6 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"FACT y c\\nNOT y c\\nFACT x a\\nFACT x b\\nAXIOM e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x\\n\")"
+expression: "report(\"FACT y c\\nNOT y c\\nFACT x a\\nFACT x b\\nPREMISE e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x\\n\")"
 ---
 RESULT: CONFLICT
   CONFLICT  - (FACT)  [v.vrf:1]

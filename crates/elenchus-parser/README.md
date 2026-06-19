@@ -23,7 +23,7 @@ IMPORT "physics.vrf"
 FACT Creature.A has flying
 NOT  Creature.A has cold_blood
 
-AXIOM fly_xor_swim:
+PREMISE fly_xor_swim:
     EXCLUSIVE
         Creature.A has flying
         Creature.A has swimming

@@ -6,18 +6,18 @@ FACT Creature.A has flying
 FACT Creature.A has warm_blood
 // has swimming not mentioned → UNKNOWN
 
-// First principles (axioms — cannot be violated)
-AXIOM fly_xor_swim:
+// First principles (premises — cannot be violated)
+PREMISE fly_xor_swim:
     EXCLUSIVE
         Creature.A has flying
         Creature.A has swimming
 
-AXIOM wings_need_bone:
+PREMISE wings_need_bone:
     WHEN Creature.A has flying
     THEN Creature.A has wing
     AND  Creature.A has bone
 
-AXIOM no_dual_temp:
+PREMISE no_dual_temp:
     FORBIDS
         Creature.A has warm_blood
         Creature.A has cold_blood

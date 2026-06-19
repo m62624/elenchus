@@ -6,14 +6,14 @@
 //! 1. seed a model from confident `FACT`/`NOT` facts (and report `FACT X` + `NOT X`);
 //! 2. forward-chain `RULE`s to a fixpoint, deriving facts (a derived value that
 //!    contradicts an existing one is a CONFLICT);
-//! 3. evaluate every `Impossible` clause (the desugared `AXIOM`s):
+//! 3. evaluate every `Impossible` clause (the desugared `PREMISE`s):
 //!    - all literals forced TRUE → **CONFLICT** (the constraint is violated);
 //!    - some literal FALSE → satisfied → CONSISTENT;
-//!    - otherwise (no FALSE, an UNKNOWN remains): for implication axioms this is a
-//!      **WARNING** (blocked by missing data), for list axioms (EXCLUSIVE/FORBIDS/
+//!    - otherwise (no FALSE, an UNKNOWN remains): for implication premises this is a
+//!      **WARNING** (blocked by missing data), for list premises (EXCLUSIVE/FORBIDS/
 //!      ONEOF/ATLEAST) it is CONSISTENT (UNKNOWN means "no conflict yet").
 //!
-//! On `CHECK ... BIDIRECTIONAL` a **backward pass** also runs: the axioms, rules
+//! On `CHECK ... BIDIRECTIONAL` a **backward pass** also runs: the premises, rules
 //! and confident facts are encoded as CNF and handed to a small in-crate CDCL SAT
 //! core ([`sat`], replicating varisat's algorithm) to count models — 0 means the
 //! system is jointly unsatisfiable (a CONFLICT the forward pass may miss), ≥2
@@ -67,16 +67,16 @@ pub enum Status {
     /// The constraints are satisfiable but do not pin a unique assignment — an
     /// alternative model exists (found by the backward pass on `BIDIRECTIONAL`).
     Underdetermined,
-    /// An axiom could not be checked because a needed atom is UNKNOWN.
+    /// A premise could not be checked because a needed atom is UNKNOWN.
     Warning,
-    /// An axiom is violated, or the axioms+facts are jointly unsatisfiable.
+    /// A premise is violated, or the premises + facts are jointly unsatisfiable.
     Conflict,
 }
 
 /// A violated constraint (or a fact-level contradiction).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
-    /// Provenance of the violated constraint (source, line, axiom name, kind).
+    /// Provenance of the violated constraint (source, line, premise name, kind).
     pub origin: Origin,
     /// Human labels of the atoms participating in the contradiction.
     pub atoms: Vec<String>,
@@ -109,7 +109,7 @@ pub struct Report {
     pub status: Status,
     /// Every violated constraint / fact contradiction (sorted by source+line).
     pub conflicts: Vec<Conflict>,
-    /// Every axiom blocked by an UNKNOWN atom (sorted by source+line).
+    /// Every premise blocked by an UNKNOWN atom (sorted by source+line).
     pub warnings: Vec<Warning>,
     /// Facts produced by forward-chaining `RULE`s.
     pub derived: Vec<Derived>,
@@ -220,11 +220,11 @@ fn json_array(items: &[String], out: &mut String) {
     out.push(']');
 }
 
-/// `"axiom":..,"kind":..,"source":..,"line":..` (no braces).
+/// `"premise":..,"kind":..,"source":..,"line":..` (no braces).
 fn json_origin_fields(o: &Origin, out: &mut String) {
     use core::fmt::Write as _;
-    out.push_str("\"axiom\":");
-    match &o.axiom {
+    out.push_str("\"premise\":");
+    match &o.premise {
         Some(name) => json_str(name, out),
         None => out.push_str("null"),
     }
@@ -408,7 +408,7 @@ impl<'a> Eval<'a> {
     }
 
     /// 3. Evaluate every `Impossible` clause against the model.
-    fn check_axioms(&mut self) {
+    fn check_premises(&mut self) {
         let c = self.c;
         for clause in &c.clauses {
             match eval_clause(&self.model, clause) {
@@ -417,9 +417,9 @@ impl<'a> Eval<'a> {
                     atoms: clause.lits.iter().map(|l| self.label(l.atom)).collect(),
                 }),
                 ClauseEval::Satisfied => {}
-                // Implication axioms warn on missing data; list axioms treat
+                // Implication premises warn on missing data; list premises treat
                 // UNKNOWN as "no conflict yet" and stay consistent.
-                ClauseEval::Blocked(unknowns) if clause.origin.kind == "AXIOM" => {
+                ClauseEval::Blocked(unknowns) if clause.origin.kind == "PREMISE" => {
                     self.warnings.push(Warning {
                         origin: clause.origin.clone(),
                         blocked_by: unknowns.iter().map(|a| self.label(*a)).collect(),
@@ -431,7 +431,7 @@ impl<'a> Eval<'a> {
     }
 
     /// Backward pass (model finding), run only when a CHECK requests BIDIRECTIONAL.
-    /// Encodes axioms + rules + facts as CNF and asks the SAT core for models.
+    /// Encodes premises + rules + facts as CNF and asks the SAT core for models.
     /// No model means the system is jointly unsatisfiable (a CONFLICT the forward
     /// pass may have missed). Two or more models means an alternative exists; we
     /// return the UNDERDETERMINED witness — the first constrained atom the two
@@ -448,11 +448,11 @@ impl<'a> Eval<'a> {
                     origin: Origin {
                         source: String::from("<system>"),
                         line: 0,
-                        axiom: None,
+                        premise: None,
                         kind: "UNSAT",
                     },
                     atoms: vec![String::from(
-                        "the axioms and facts are jointly unsatisfiable",
+                        "the premises and facts are jointly unsatisfiable",
                     )],
                 });
                 None
@@ -499,11 +499,11 @@ pub fn solve(c: &Compiled) -> Report {
     let mut e = Eval::new(c);
     e.seed_facts();
     e.saturate_rules();
-    e.check_axioms();
+    e.check_premises();
     e.finish()
 }
 
-/// Encode the axioms (`Impossible` clauses), rules (as implications), and
+/// Encode the premises (`Impossible` clauses), rules (as implications), and
 /// confident facts (as unit clauses) into CNF for the backward pass. Also
 /// returns the constrained atoms (those appearing in a clause or rule) to
 /// project model counting onto.
@@ -585,8 +585,8 @@ impl fmt::Display for Status {
 }
 
 /// Format provenance as `name (KIND)  [source:line]` for the human report.
-fn axiom_tag(o: &Origin) -> String {
-    let name = o.axiom.as_deref().unwrap_or("-");
+fn premise_tag(o: &Origin) -> String {
+    let name = o.premise.as_deref().unwrap_or("-");
     alloc::format!("{} ({})  [{}:{}]", name, o.kind, o.source, o.line)
 }
 
@@ -594,13 +594,13 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "RESULT: {}", self.status)?;
         for c in &self.conflicts {
-            writeln!(f, "  CONFLICT  {}", axiom_tag(&c.origin))?;
+            writeln!(f, "  CONFLICT  {}", premise_tag(&c.origin))?;
             for a in &c.atoms {
                 writeln!(f, "      {}", a)?;
             }
         }
         for w in &self.warnings {
-            writeln!(f, "  WARNING   {}", axiom_tag(&w.origin))?;
+            writeln!(f, "  WARNING   {}", premise_tag(&w.origin))?;
             writeln!(f, "      blocked by: {}", w.blocked_by.join(", "))?;
         }
         if let Some(atom) = &self.underdetermined {
@@ -617,7 +617,7 @@ impl fmt::Display for Report {
                 "  DERIVED   {} = {}   from {}",
                 d.atom,
                 v,
-                axiom_tag(&d.origin)
+                premise_tag(&d.origin)
             )?;
         }
         let underdetermined = usize::from(self.status == Status::Underdetermined);
@@ -656,14 +656,17 @@ mod tests {
         let src = include_str!("../../../docs/examples/conflict.vrf");
         let r = verify_source("conflict.vrf", src).unwrap();
         assert_eq!(r.status, Status::Conflict);
-        assert_eq!(r.conflicts[0].origin.axiom.as_deref(), Some("fly_xor_swim"));
+        assert_eq!(
+            r.conflicts[0].origin.premise.as_deref(),
+            Some("fly_xor_swim")
+        );
         assert_eq!(r.conflicts[0].atoms.len(), 2);
     }
 
     #[test]
     fn exclusive_with_unknown_is_consistent_not_warning() {
         // flying TRUE, swimming UNKNOWN — at most one can hold, no conflict, no warning.
-        let r = verify_source("<t>", "FACT A has flying\nAXIOM e:\n    EXCLUSIVE\n        A has flying\n        A has swimming\n").unwrap();
+        let r = verify_source("<t>", "FACT A has flying\nPREMISE e:\n    EXCLUSIVE\n        A has flying\n        A has swimming\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.warnings.is_empty());
     }
@@ -673,7 +676,7 @@ mod tests {
         // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
         let r = verify_source(
             "<t>",
-            "FACT A has flying\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n",
+            "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
         )
         .unwrap();
         assert_eq!(r.status, Status::Warning);
@@ -683,14 +686,14 @@ mod tests {
 
     #[test]
     fn implication_satisfied_is_consistent() {
-        let r = verify_source("<t>", "FACT A has flying\nFACT A has wing\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = verify_source("<t>", "FACT A has flying\nFACT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
     }
 
     #[test]
     fn implication_violated_is_conflict() {
         // antecedent TRUE, consequent FALSE → CONFLICT.
-        let r = verify_source("<t>", "FACT A has flying\nNOT A has wing\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = verify_source("<t>", "FACT A has flying\nNOT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
     }
 
@@ -718,7 +721,7 @@ mod tests {
         // EXCLUSIVE(a,b) with no facts: {FF, TF, FT} all satisfy → not unique.
         let r = verify_source(
             "<t>",
-            "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
         )
         .unwrap();
         assert_eq!(r.status, Status::Underdetermined);
@@ -726,10 +729,10 @@ mod tests {
 
     #[test]
     fn fact_pins_unique_model_consistent() {
-        // Same axiom, but FACT x a forces b false → the only model → CONSISTENT.
+        // Same premise, but FACT x a forces b false → the only model → CONSISTENT.
         let r = verify_source(
             "<t>",
-            "FACT x a\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            "FACT x a\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
@@ -740,7 +743,7 @@ mod tests {
         // Plain CHECK: alternatives are not searched → stays CONSISTENT, not UNDERDETERMINED.
         let r = verify_source(
             "<t>",
-            "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
@@ -787,13 +790,13 @@ mod tests {
     #[test]
     fn socrates_chain_is_a_conflict() {
         // human → animal → living → mortal (3 derivations), then mortal EXCLUSIVE
-        // immortal with `immortal` asserted → CONFLICT on the exclusivity axiom.
+        // immortal with `immortal` asserted → CONFLICT on the exclusivity premise.
         let src = include_str!("../../../docs/examples/socrates.vrf");
         let r = verify_source("socrates.vrf", src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.conflicts.len(), 1);
         assert_eq!(
-            r.conflicts[0].origin.axiom.as_deref(),
+            r.conflicts[0].origin.premise.as_deref(),
             Some("mortal_xor_immortal")
         );
         assert_eq!(r.derived.len(), 3); // animal, living, mortal

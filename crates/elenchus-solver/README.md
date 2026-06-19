@@ -16,14 +16,14 @@ UNKNOWN ≠ FALSE).
 1. Seeds a model from confident `FACT`/`NOT` facts; `FACT X` + `NOT X` is a CONFLICT.
 2. Forward-chains `RULE`s to a fixpoint, deriving facts (a derived value that
    contradicts a known one is a CONFLICT).
-3. Evaluates every `Impossible` clause (the desugared axioms):
+3. Evaluates every `Impossible` clause (the desugared premises):
    - all literals forced TRUE → **CONFLICT** (constraint violated);
    - some literal FALSE → satisfied → **CONSISTENT**;
-   - otherwise an UNKNOWN blocks the check → **WARNING** for implication axioms
-     (missing data), CONSISTENT for list axioms (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/
+   - otherwise an UNKNOWN blocks the check → **WARNING** for implication premises
+     (missing data), CONSISTENT for list premises (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/
      `ATLEAST` — UNKNOWN means "no conflict yet").
 
-On `CHECK ... BIDIRECTIONAL` a **backward pass** runs too: the axioms, rules and
+On `CHECK ... BIDIRECTIONAL` a **backward pass** runs too: the premises, rules and
 confident facts are encoded as CNF and solved by a small in-crate CDCL SAT core
 (`sat`, a `no_std` replication of [varisat](https://github.com/jix/varisat)'s
 algorithm — trail + decision levels, two-watched-literal propagation, 1-UIP
@@ -39,7 +39,7 @@ use elenchus_solver::{verify_source, Status};
 
 let report = verify_source(
     "demo.vrf",
-    "FACT A has flying\nAXIOM w:\n    WHEN A has flying\n    THEN A has wing\n",
+    "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
 )
 .unwrap();
 assert_eq!(report.status, Status::Warning); // `A has wing` is UNKNOWN
@@ -48,7 +48,7 @@ println!("{report}");
 
 ```text
 RESULT: WARNING
-  WARNING   w (AXIOM)  [demo.vrf:2]
+  WARNING   w (PREMISE)  [demo.vrf:2]
       blocked by: A has wing
 SUMMARY: 0 conflicts, 1 warnings, 0 derived
 ```

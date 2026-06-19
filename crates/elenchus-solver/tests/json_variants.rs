@@ -14,19 +14,19 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         ),
         (
             "warning_single",
-            "FACT x a\nAXIOM w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            "FACT x a\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
         ),
         (
             "warning_multiple_with_derived",
-            "FACT s ready\nAXIOM need_two:\n    WHEN s ready\n    THEN s checked\n    AND s signed\nRULE mark:\n    WHEN s ready\n    THEN s seen\nCHECK s\n",
+            "FACT s ready\nPREMISE need_two:\n    WHEN s ready\n    THEN s checked\n    AND s signed\nRULE mark:\n    WHEN s ready\n    THEN s seen\nCHECK s\n",
         ),
         (
             "conflict_exclusive_violation",
-            "FACT x a\nFACT x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            "FACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
         ),
         (
             "conflict_implication_violation",
-            "FACT x a\nNOT x b\nAXIOM w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            "FACT x a\nNOT x b\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
         ),
         (
             "conflict_fact_contradiction",
@@ -38,15 +38,15 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         ),
         (
             "conflict_multiple_sorted",
-            "FACT y c\nNOT y c\nFACT x a\nFACT x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            "FACT y c\nNOT y c\nFACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
         ),
         (
             "conflict_system_unsatisfiable",
-            "AXIOM a_implies_b:\n    WHEN x a\n    THEN x b\nAXIOM a_implies_not_b:\n    WHEN x a\n    THEN NOT x b\nAXIOM atleast_a_c:\n    ATLEAST\n        x a\n        x c\nAXIOM c_implies_a:\n    WHEN x c\n    THEN x a\nCHECK x BIDIRECTIONAL\n",
+            "PREMISE a_implies_b:\n    WHEN x a\n    THEN x b\nPREMISE a_implies_not_b:\n    WHEN x a\n    THEN NOT x b\nPREMISE atleast_a_c:\n    ATLEAST\n        x a\n        x c\nPREMISE c_implies_a:\n    WHEN x c\n    THEN x a\nCHECK x BIDIRECTIONAL\n",
         ),
         (
             "underdetermined_with_witness_hint",
-            "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
         ),
     ]
 }
