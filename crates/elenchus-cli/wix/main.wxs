@@ -69,7 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='Command-line interface for the elenchus reasoning engine: check a .vrf string or file and report CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT.'
+            Description='Command-line interface for the elenchus consistency checker: check a .vrf string or file and report CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT.'
             Manufacturer='Mansur Azatbek'
             InstallerVersion='450'
             Languages='1033'
