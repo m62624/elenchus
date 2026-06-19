@@ -1,36 +1,39 @@
 ---
 name: elenchus
 description: >-
-  Check that a set of facts and constraints is logically consistent — catch
-  contradictions, missing data, and under-specified problems. Reach for it
-  whenever correctness depends on a web of conditions that are easy to get
-  subtly wrong: role/shift/seat assignments, "exactly one of these",
-  mutually-exclusive states, readiness/deploy gates, if/else branch coverage,
-  state-machine legality, or invariants across many flags. You write facts and
-  first principles in a tiny English-like DSL; the elenchus engine does all the
-  logic and answers CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT. Keep
-  refining and re-running until it answers CONSISTENT.
+  Mechanically check that a set of facts and constraints is logically consistent
+  — instead of trusting your own long chain of reasoning. Reach for it ANY time
+  correctness depends on a web of interacting conditions that are easy to get
+  subtly wrong, in logic OR in code: role/shift/seat assignments, "exactly one
+  of", mutually-exclusive states or feature flags, readiness/deploy gates,
+  if/else and state-machine branch coverage, access-control rules,
+  dependency/ordering constraints, config invariants, permission matrices, or
+  multi-step logic puzzles. You write facts and first principles in a tiny
+  English-like DSL; the elenchus engine (a three-valued SAT checker) does the
+  logic and answers CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT and shows
+  why. Use it to catch contradictions and gaps a hand-derived argument would miss,
+  and iterate until it answers CONSISTENT.
 ---
 
 # elenchus — a logical-consistency checker
 
 A model is good at stating facts but bad at holding a long logical chain without
-quietly contradicting itself. elenchus moves the logic out of the model: you
+quietly contradicting itself. elenchus moves the logic **out** of the model: you
 state only **facts** and **first principles (premises)**; a Rust engine does the
 inference and finds contradictions mathematically. You can only be wrong at the
 premise level — and that is caught immediately.
 
-**What this actually is: a simplified SAT checker.** SAT = boolean
-*satisfiability*: given a pile of TRUE/FALSE constraints, find an assignment of
-values that satisfies all of them at once, or prove that none exists. That's the
-whole engine. elenchus adds one thing — a third truth value, **UNKNOWN** — and
-reports the outcome as CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT instead
-of a raw sat/unsat. It does **not** do arithmetic or proofs about numbers (that's
-SMT, a bigger tool) — only boolean structure.
+**What it is:** a simplified SAT (boolean *satisfiability*) checker. Given a pile
+of TRUE/FALSE constraints it finds an assignment satisfying all of them, or proves
+none exists. elenchus adds a third truth value, **UNKNOWN**, and reports a verdict
+instead of a raw sat/unsat. It does **not** do arithmetic or proofs about numbers
+(that is SMT, a bigger tool) — only boolean structure.
 
-Three truth values: an atom is **TRUE** (you wrote `FACT`), **FALSE** (you wrote
-`NOT`), or **UNKNOWN** (you didn't mention it). UNKNOWN is *not* false — the engine
-never guesses.
+> **This file is the whole language.** Every keyword and form is listed below.
+> **If a construct is not described here, it does not exist** — there are no
+> parentheses, no operators inside a name, no nesting, no arithmetic. When you
+> need something the language lacks, model it as boolean atoms (see "What does
+> not exist").
 
 ## The loop — this is the point
 
@@ -44,211 +47,299 @@ until it is **CONSISTENT**.
             └──── add facts / fix or rethink a premise ◀── read the verdict
 ```
 
-| Verdict | exit | It means | Your next move |
-|--------|:----:|----------|----------------|
-| **CONSISTENT** | 0 | no contradiction, answer is pinned down | done |
+| Verdict | exit | Meaning | Your next move |
+|--------|:----:|---------|----------------|
+| **CONSISTENT** | 0 | no contradiction; answer pinned down | done |
 | **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` |
 | **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
-| **CONFLICT** | 2 | a premise is violated, or the premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
+| **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
 
-So: **WARNING / UNDERDETERMINED / CONFLICT are never "done"** — they are the
-engine telling you exactly what is missing or wrong. Re-run after each change.
+**The target before you act on the reasoning is `CONSISTENT` (exit 0) — nothing
+else.** WARNING, UNDERDETERMINED and CONFLICT are *not* "done"; each is the engine
+telling you exactly what is missing or wrong (see the "Your next move" column).
+Treat any non-zero verdict as "keep going", not as a result to report.
 
-**Reach CONSISTENT by stating more truth, not by gaming the check.** CONSISTENT
-only certifies "no contradiction *among what you wrote*" — it cannot vouch for
-constraints you never stated. So the goal of the loop is a **faithful, complete
-model**, not just a green result:
+**But `CONSISTENT` is only as good as what you fed it.** It certifies "no
+contradiction *among the facts and premises you wrote*" — it cannot vouch for a
+constraint you never stated. A CONSISTENT verdict on an under-specified model is
+false confidence. So:
 
-- When you hit WARNING/UNDERDETERMINED, add the **real** missing `FACT`/`NOT` — not
-  an invented one. If you don't actually know it, that uncertainty is the finding.
-- When you hit CONFLICT, fix the thing that is actually wrong. **Never delete a
-  valid premise or assert something false just to make it pass** — that throws away
-  the very check you wanted.
-- Before each run, ask: *have I encoded every constraint that matters here?* Add
-  every genuine first principle as an `PREMISE` (mutual exclusions, required-together
-  gates, orderings, "exactly one of"). A missing premise = false confidence: the
-  engine will happily say CONSISTENT about an under-specified problem.
+- **Before the first run, account for everything:** encode every genuine first
+  principle as a `PREMISE` (mutual exclusions, "exactly one of", required-together
+  gates, orderings, branch coverage) and state every fact you actually know. A
+  missing premise = the engine will happily say CONSISTENT about a broken model.
+- **Reach CONSISTENT by stating more truth, never by gaming the check** — don't
+  delete a valid premise or assert something you don't know just to turn it green;
+  that throws away the very check you wanted. If you genuinely don't know a fact,
+  that uncertainty *is* the finding.
 
-Done = CONSISTENT **with every real premise present and every known fact stated** —
-no remaining "but…". Keep iterating (add data, add premises) until you reach that.
+So "done" = **CONSISTENT with every real premise present and every known fact
+stated** — no remaining "but…". Only then trust the reasoning and proceed.
 
-## DSL cheat-sheet
+## Keyword reference (the complete set)
 
-Keywords are ALWAYS CAPS (ASCII). Names are content — **case-sensitive and matched
-verbatim** (`has_fuel` ≠ `hasFuel`) — and may use letters of **any script**
-(`условие`, `名前` are fine; `snake_case` is just convention). Join multi-word names
-with `_` (no spaces inside one name). Indentation is cosmetic, `//` is a comment.
-An atom is `Subject predicate [object]`.
+Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 
-| Form | Meaning |
-|------|---------|
-| `FACT s p [o]` | assert it TRUE |
-| `NOT s p [o]` | assert it FALSE |
-| `PREMISE n:` → `EXCLUSIVE` *(≥2 atoms)* | **at most one** is TRUE |
-| `PREMISE n:` → `FORBIDS` | at most one is TRUE (for two: "not both") |
-| `PREMISE n:` → `ONEOF` | **exactly one** is TRUE |
-| `PREMISE n:` → `ATLEAST` | **at least one** is TRUE |
-| `PREMISE n:` → `WHEN a` `AND b` `THEN c` | if `a ∧ b` hold then `c` must hold (else CONFLICT) |
-| `PREMISE n:` → `WHEN a` `OR b` `THEN c` | if **either** `a` or `b` holds then `c` must hold |
-| `PREMISE n:` → `WHEN a` `THEN b` `OR c` | if `a` holds then **at least one** of `b`/`c` must hold |
-| `RULE n:` → `WHEN … THEN c` | same shape, but **derives** `c` as a new fact |
-| `IMPORT "lib.vrf"` | merge a reusable premise library (atoms unify across files) |
-| `CHECK [s] [BIDIRECTIONAL]` | run it; `BIDIRECTIONAL` also searches for alternative models (UNDERDETERMINED) |
+| Keyword | Where | One-line meaning |
+|---------|-------|------------------|
+| `FACT` | statement | assert an atom TRUE |
+| `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
+| `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
+| `RULE` | statement | an implication that **derives** new facts (forward chaining) |
+| `CHECK` | statement | run the engine (optionally for one subject) |
+| `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
+| `IMPORT` | statement | flat-merge another `.vrf` source (atoms unify by identity) |
+| `EXCLUSIVE` | `PREMISE` body | **at most one** of the listed atoms is TRUE |
+| `FORBIDS` | `PREMISE` body | synonym of `EXCLUSIVE` (reads well for two: "not both") |
+| `ONEOF` | `PREMISE` body | **exactly one** of the listed atoms is TRUE |
+| `ATLEAST` | `PREMISE` body | **at least one** of the listed atoms is TRUE |
+| `WHEN` | `PREMISE`/`RULE` body | starts the antecedent of an implication |
+| `THEN` | `PREMISE`/`RULE` body | starts the consequent |
+| `AND` | `WHEN`/`THEN` group | conjunction of literals in that group |
+| `OR` | `WHEN`/`THEN` group | disjunction of literals in that group |
+| `//` | anywhere | line comment (to end of line) |
 
-**`AND` / `OR` in `WHEN`/`THEN`.** Continuation lines use `AND` *or* `OR` — but
-**do not mix them in one group** (`WHEN a AND b OR c` is a parse error; split into
-two premises). Each is its own line: `WHEN a` / `OR b` / `THEN c`. A `RULE`
-*derives* its result, so **`OR` in a `RULE`'s `THEN` is rejected** (a rule can't
-assert "one of these"); use a `PREMISE` for a disjunctive consequent. There is no
-`AND`/`OR` *inside* one literal and no parentheses — group logic across lines.
+The line-oriented rules that hold everywhere: **one statement per line** (newlines
+separate them); **indentation and extra spaces are cosmetic**; an **atom** is two
+or three space-separated identifiers `subject predicate [object]`; a **literal** is
+an atom optionally prefixed with `NOT`.
 
-Numbers? Turn a condition into a named boolean atom (`speed >= 100` → `over_100`)
-and reason about the branch, not the arithmetic.
+## Each keyword: syntax · why · mini-example
 
-## Deeper mechanics (condensed from the spec)
+### `FACT` / `NOT` — confident facts
+- **Syntax:** `FACT <subject> <predicate> [<object>]` · `NOT <subject> <predicate> [<object>]`
+- **Why:** the only way to assert truth. `FACT` = TRUE, `NOT` = FALSE. An atom you
+  never mention is **UNKNOWN** (not false — the engine never guesses).
+```vrf
+FACT socrates is human
+NOT  socrates is robot
+```
 
-**One primitive.** Every constraint compiles to `Impossible([…])` — "these
-literals can't all be TRUE at once". `EXCLUSIVE`/`ONEOF`/`ATLEAST`/`FORBIDS` and
-`WHEN…THEN` are sugar over it. You never write `Impossible`; this is just why the
-engine stays small and total.
+### `PREMISE` — a checked first principle
+- **Syntax:** `PREMISE <name>:` then a body on the following lines (a list body or
+  a `WHEN…THEN` body). `<name>` is a label for the report only.
+- **Why:** premises are the constraints elenchus checks. A violated premise is a
+  CONFLICT. (See the body keywords below.)
+```vrf
+PREMISE one_state:
+    ONEOF
+        door is open
+        door is closed
+```
 
-**Atom identity is verbatim — the #1 gotcha.** Atoms are compared
-character-for-character, case-sensitively, by the triple `(subject, predicate,
-object)`. `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`, and crucially **`is rolled_back`
-(two words) ≠ `is_rolled_back` (one word)** — `_` vs space changes which token is
-the predicate vs the object, so they are different atoms. A typo or alternate
-spelling silently creates a *new* UNKNOWN atom — so a premise about `Engine has
-fuel` will not see your `Engine has_fuel`, and the constraint you thought you wrote
-simply never fires. **Before each run, scan your atoms and make every name that
-should be the same atom byte-identical** (pick one spelling for a state/predicate
-and reuse it everywhere — facts, premises, rules, imports). Mismatches show up as
-phantom WARNINGs or, worse, as a check that silently passes because it never
-engaged.
+### `EXCLUSIVE` / `FORBIDS` — at most one
+- **Syntax:** the keyword on its own line, then **≥2 atoms**, one per line.
+- **Why:** mutual exclusion. For n>2 it means pairwise "no two together", not
+  "not all at once". `FORBIDS` is the same rule, nicer for a pair.
+```vrf
+PREMISE one_path:
+    EXCLUSIVE
+        motor uses fast_path
+        motor uses slow_path
+```
 
-The engine helps you catch this: it emits advisory **`HINT`** lines (JSON:
-`hints`) when two atom names look like the same atom typed two ways — e.g.
-*"possible typo — 'auth is rolled_back' and 'auth is_rolled_back' look like the
-same atom"*. A `HINT` never changes the verdict or exit code; it's a nudge. When
-you see one, decide: if they *should* be one atom, fix the spelling and re-run; if
-they're genuinely different, ignore it. (It only flags case / `_`-vs-space, or a
-single-character slip within the same subject — so distinct atoms like `x a` /
-`x b`, or antonyms like `mortal` / `immortal`, are left alone.)
-
-**WHEN…THEN: why WARNING vs CONFLICT.** For `WHEN A AND B THEN C`:
-
-- any antecedent FALSE → the rule doesn't fire → CONSISTENT (not a warning);
-- all antecedents TRUE and C FALSE → **CONFLICT**;
-- all TRUE with C UNKNOWN, or an antecedent UNKNOWN → **WARNING** (state more);
-- a `RULE` instead *derives* C = TRUE when the antecedent holds.
-
-List premises (`EXCLUSIVE`/…) with UNKNOWN atoms stay CONSISTENT — no data, no
-conflict yet.
-
-**Forward vs backward.** The forward pass checks the facts you gave and runs
-`RULE`s. `CHECK X BIDIRECTIONAL` adds a backward pass (a small SAT search): it
-reports **UNDERDETERMINED** when more than one model fits, and catches a
-**CONFLICT** where the premises are jointly unsatisfiable even though no single one
-is visibly violated. Use `BIDIRECTIONAL` when you care "is the answer *unique*?".
-
-**IMPORT.** `IMPORT "lib.vrf"` flat-merges another source. Think of it like a
-**linker**, not like importing a function: there is nothing to "call" or
-"override". Files link through **shared atoms** — `Engine.X has fuel` means the
-same atom in every file, so an imported premise automatically constrains your
-local `FACT` about that atom. Premise *names* are per-source **labels** (for the
-report only), not global identifiers: two files may reuse a name with no clash,
-and you never reference a premise by name. Consequences worth knowing:
-- Imports **compose by conjunction** — you get the AND of all premises. There is
-  no precedence and no overriding; if two files genuinely disagree
-  (`A→B` vs `A→¬B`) that is a real **CONFLICT** and the engine surfaces it (that's
-  the point — it won't silently pick a winner).
-- Identical premises/facts (same content) dedupe; transitive and diamond imports
-  merge once; cycles are rejected.
-- Want two domains that should *not* link? Don't share atom names — namespace the
-  **subject** (`fantasy.bird has wings` vs `bio.bird has wings`). Separation lives
-  in atom names, not in premise names.
-
-**Not supported (on purpose).** No arithmetic (turn a number into a boolean atom),
-no quantifiers (∀/∃), no probabilities. Pure boolean structure — exactly the class
-of mistakes a model makes across a long chain.
-
-## Patterns (recipes)
-
-- **Exactly one of N** → `ONEOF`. (Each person one role; a request is exactly one of pending/done/failed.)
-- **Mutually exclusive** → `EXCLUSIVE` / `FORBIDS`. (Can't be both `fast_path` and `slow_path`.)
-- **Required together / gate** → `WHEN … THEN …`. (Deploy only when built ∧ tested ∧ reviewed.)
-- **At least one (unconditional)** → `ATLEAST`. (At least one reviewer; at least one branch taken.)
-- **Conditional disjunction** ("if `p` then one of `a`/`b`/`c`") → `WHEN p` `THEN a` `OR b` `OR c`. (If gateway is in prod, then at least one backend is in staging.)
-- **Any of several triggers** ("if `a` or `b` then `c`") → `WHEN a` `OR b` `THEN c`.
-- **Ordering / implication between thresholds** → `WHEN over_200 THEN over_100`.
-- **Derive consequences** → `RULE`. (If `flying`, derive `needs oxygen`.) For a *disjunctive* result, use a `PREMISE` with `THEN … OR …`, not a `RULE`.
-- **Shared first principles** → `IMPORT` a vetted library; you write only the `FACT`s.
-
-## Worked examples (note the loop)
-
-### 1. Exactly-one assignment (deduced by the engine)
-
+### `ONEOF` — exactly one
+- **Syntax:** keyword line, then ≥2 atoms.
+- **Why:** at most one **and** at least one is TRUE. The workhorse for assignment
+  ("each person has exactly one role").
 ```vrf
 PREMISE alice_role:
     ONEOF
         alice is lead
         alice is dev
         alice is qa
-// ...bob_role, carol_role, and lead_one / dev_one / qa_one the same way...
-FACT alice is lead
-NOT  bob is qa
+```
+
+### `ATLEAST` — at least one
+- **Syntax:** keyword line, then ≥2 atoms.
+- **Why:** a disjunction with no upper bound ("at least one reviewer").
+```vrf
+PREMISE has_reviewer:
+    ATLEAST
+        pr reviewed_by_ann
+        pr reviewed_by_bob
+```
+
+### `WHEN … THEN …` — implication (with `AND` / `OR`)
+- **Syntax:** `WHEN <lit>` then zero or more `AND <lit>` **or** `OR <lit>` lines,
+  then `THEN <lit>` then zero or more `AND`/`OR` lines. Each literal is `[NOT] atom`.
+- **Why:** "if the antecedent holds, the consequent must hold". As a `PREMISE` a
+  violation is a CONFLICT. **One group may not mix `AND` and `OR`** (split it into
+  two premises).
+- **The four combinations:**
+  - `AND` antecedent / single `THEN`: `a ∧ b → c`
+  - `OR` antecedent: `(a ∨ b) → c` (fires if *either* holds)
+  - `OR` consequent: `a → (c ∨ d)` (at least one of c/d must hold)
+  - both: `(a ∨ b) → (c ∨ d)`
+```vrf
+PREMISE deploy_gate:
+    WHEN svc built
+    AND  svc tested
+    THEN svc deployable
+
+PREMISE needs_a_backend:
+    WHEN gateway in_prod
+    THEN auth in_staging
+    OR   api in_staging
+```
+
+### `RULE` — derive new facts
+- **Syntax:** `RULE <name>:` then a `WHEN…THEN` body (a list body is **not**
+  allowed here).
+- **Why:** unlike `PREMISE` (which only checks), a `RULE` *asserts* its consequent
+  as a new TRUE/FALSE fact when the antecedent holds (forward chaining). `OR` in a
+  `RULE`'s `THEN` is **rejected** — a rule cannot derive "one of these"; use a
+  `PREMISE` for a disjunctive consequent. (`OR` in a rule's `WHEN` is fine.)
+```vrf
+RULE flyers_breathe:
+    WHEN bird can_fly
+    THEN bird needs_oxygen
+```
+
+### `CHECK` / `BIDIRECTIONAL` — run it
+- **Syntax:** `CHECK` · `CHECK <subject>` · `CHECK [<subject>] BIDIRECTIONAL`.
+- **Why:** runs the engine. A bare `CHECK` checks everything; a subject restricts
+  the report. **`BIDIRECTIONAL`** adds the backward SAT pass: it reports
+  **UNDERDETERMINED** when more than one model fits, and catches a **CONFLICT**
+  where premises are jointly unsatisfiable even though no single one is visibly
+  violated (printing a `CORE`). Use it when you care "is the answer *unique*?".
+```vrf
 CHECK alice BIDIRECTIONAL
 ```
 
-`CONSISTENT` — from the clues the engine deduced bob=dev, carol=qa by case
-analysis. Remove `NOT bob is qa` → `UNDERDETERMINED` (bob/carol could swap); add a
-clue to pin it. Assert two leads → `CONFLICT`.
+### `IMPORT` — reuse another source
+- **Syntax:** `IMPORT "<path>"` (quoted path).
+- **Why:** flat-merges another `.vrf` file. Think **linker**, not function import:
+  files link through **shared atoms** — `Engine.X has fuel` is the same atom
+  everywhere, so an imported premise constrains your local facts about that atom.
+  Premise *names* are per-source labels (no clash, never referenced). Imports
+  compose by **AND**; a genuine disagreement (`a→b` vs `a→¬b`) is a real CONFLICT.
+  **`IMPORT` only resolves in file mode** (not `--text`/stdin).
+```vrf
+IMPORT "physics.vrf"
+FACT motor over_100
+```
 
-### 2. A deploy gate — iterate from WARNING to CONSISTENT
+### `//` — comments
+- **Syntax:** `//` to end of line (own line or trailing).
+```vrf
+FACT a b   // a trailing note
+```
 
+## Atoms & identity — the #1 gotcha
+
+An **atom** is the triple `(subject, predicate, object?)` and is compared
+**verbatim, case-sensitively**. Identifiers may use letters of **any script**
+(`условие`, `名前` are fine), then letters/digits/`_`/`.`; they can't start with a
+digit or equal a keyword.
+
+`has_fuel` ≠ `hasFuel` ≠ `Has_fuel`, and crucially **`is rolled_back` (two words)
+≠ `is_rolled_back` (one word)** — `_`-vs-space changes which token is predicate vs
+object, so they are *different atoms*. A typo silently makes a new UNKNOWN atom, so
+the constraint you thought you wrote never fires. **Before each run, pick one
+spelling per concept and make every name that should be one atom byte-identical.**
+
+The engine helps: it emits advisory **`HINT`** lines (JSON: `hints`) when two names
+look like the same atom typed two ways. A `HINT` **never changes the verdict or
+exit code** — it's a nudge: fix the spelling if they should be one atom, ignore it
+if they're genuinely different.
+
+## What does NOT exist (model it as booleans)
+
+If you reach for any of these, the parser will reject it or, worse, silently
+misread it. There is **no**:
+
+- **arithmetic or comparisons** (`>=`, `+`, numbers as math) → turn a threshold
+  into a named atom: `speed >= 100` becomes the atom `motor over_100`, and you
+  reason about the branch. Order them with a premise: `WHEN motor over_200 THEN
+  motor over_100`.
+- **operators or `OR`/`AND` *inside* a literal**, and **no parentheses** → group
+  logic across `WHEN`/`THEN` lines instead.
+- **mixing `AND` and `OR` in one group** → split into separate premises.
+- **`OR` in a `RULE`'s `THEN`** → use a `PREMISE` (a rule can't derive a disjunction).
+- **quantifiers** (∀/∃), **probabilities**, **nesting**, **else/default branches**.
+- list bodies don't take `NOT` items; negate in `WHEN…THEN` bodies via `NOT <atom>`.
+
+## Reading the report
+
+- **`why:` trace** (on a violated premise): the derivation chain that forced the
+  clashing atoms — supporting facts first, then each rule built on them — so you
+  see the exact wrong step. Present in human output and JSON (`trace`).
+- **`CORE`** (on a jointly-unsatisfiable system, found by `BIDIRECTIONAL`): the
+  smallest set of premises/facts jointly to blame (JSON `unsat_core`).
+- **`HINT`** (advisory): possible atom-name typos (JSON `hints`). Never affects the
+  verdict.
+- **exit code** = the verdict (0/1/1/2) — a ready CI gate.
+
+## Worked examples — easy → hard
+
+### 1. The smallest contradiction
+```vrf
+FACT x a
+NOT  x a
+CHECK x
+```
+`CONFLICT` (exit 2): the same atom can't be TRUE and FALSE.
+
+### 2. Exactly-one assignment
+```vrf
+PREMISE alice_role:
+    ONEOF
+        alice is lead
+        alice is dev
+        alice is qa
+FACT alice is lead
+CHECK alice
+```
+`CONSISTENT`. Assert a second role (`FACT alice is dev`) → `CONFLICT`.
+
+### 3. A gate — iterate WARNING → CONSISTENT
 ```vrf
 FACT svc built
-FACT svc unit_tested
-NOT  svc deprecated
-PREMISE ready_needs_all:
+PREMISE ready:
     WHEN svc built
-    AND  svc integration_tested
-    AND  svc security_scanned
-    THEN svc release_ready
-PREMISE can_deploy:
-    WHEN svc release_ready
-    AND  NOT svc deprecated
-    THEN svc can_deploy
+    AND  svc tested
+    THEN svc deployable
 CHECK svc
 ```
+`WARNING` (`blocked by: svc tested`). Add `FACT svc tested` and `FACT svc
+deployable` → `CONSISTENT`. Add `FACT svc tested` but `NOT svc deployable` →
+`CONFLICT` (the premise fires and is violated).
 
-Run → `WARNING` (`blocked by: svc integration_tested, svc security_scanned`).
-You haven't stated enough. Add `FACT svc integration_tested`, `FACT svc
-security_scanned`, `FACT svc release_ready`, `FACT svc can_deploy` → re-run →
-`CONSISTENT`. But if you assert `FACT svc release_ready` with `NOT svc
-can_deploy`, the `can_deploy` premise fires → `CONFLICT` (fix the fact).
-
-### 3. Branch coverage — find a bug with no numbers
-
+### 4. Disjunction — `OR` in `THEN`
 ```vrf
-FACT Motor over_100
+PREMISE needs_backend:
+    WHEN gateway in_prod
+    THEN auth in_staging
+    OR   api in_staging
+FACT gateway in_prod
+NOT  auth in_staging
+NOT  api in_staging
+CHECK
+```
+`CONFLICT` — the gate fires but every backend is out of staging. Set any one to
+`FACT … in_staging` → `CONSISTENT`. (`WHEN a OR b THEN c` mirrors this on the left:
+it fires when *either* trigger holds.)
+
+### 5. Derivation + branch coverage (`RULE` + `EXCLUSIVE`)
+```vrf
+FACT motor over_100
 RULE pick_fast:
-    WHEN Motor over_100
-    THEN Motor uses fast_path
+    WHEN motor over_100
+    THEN motor uses fast_path
 RULE pick_slow:
-    WHEN NOT Motor over_100
-    THEN Motor uses slow_path
+    WHEN NOT motor over_100
+    THEN motor uses slow_path
 PREMISE one_path:
     EXCLUSIVE
-        Motor uses fast_path
-        Motor uses slow_path
-CHECK Motor
+        motor uses fast_path
+        motor uses slow_path
+CHECK motor
 ```
+`CONSISTENT` (derives `uses fast_path`). If your logic could ever take both paths,
+`one_path` reports `CONFLICT` — a branch bug caught structurally.
 
-`CONSISTENT` (derives `uses fast_path`). If your logic could ever take both
-paths, `one_path` reports `CONFLICT` — a branch bug caught structurally.
-
-### 4. Jointly-unsatisfiable premises — only the backward pass finds it
-
+### 6. Jointly-unsatisfiable — only `BIDIRECTIONAL` finds it
 ```vrf
 PREMISE a_to_b:
     WHEN x a
@@ -265,191 +356,85 @@ PREMISE c_to_a:
     THEN x a
 CHECK x BIDIRECTIONAL
 ```
+No single clause is visibly violated (all UNKNOWN), but the premises can't all hold
+(c→a→both b and ¬b). elenchus reports `CONFLICT` and prints a `CORE` naming the
+four premises jointly to blame.
 
-No single clause is violated (everything is UNKNOWN), but the premises can't all
-hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT` and
-prints a **`CORE`** — the minimal set of premises jointly to blame, so you know
-exactly which principles to revisit:
-
-```
-  CONFLICT  - (UNSAT)  [<system>:0]
-      the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
-        a_to_b (PREMISE) [..]   a_to_not_b (PREMISE) [..]
-        need_a_or_c (ATLEAST) [..]   c_to_a (PREMISE) [..]
-```
-
-### 5. A puzzle solved by deduction (the SAT pass at work)
-
-You give constraints, not the answer; the backward (SAT) pass deduces it and
-proves it's the only one. (Full file: `docs/examples/roles-puzzle.vrf`.)
-
+### 7. Reuse via `IMPORT`
 ```vrf
-// 3 people × 3 roles. Each person ONEOF its 3 roles; each role ONEOF the 3 people.
-PREMISE alice_one_role:
-    ONEOF
-        alice is lead
-        alice is dev
-        alice is qa
-// ...bob_one_role, carol_one_role, and lead_one_person/dev_one_person/qa_one_person
-//    the same shape (each ONEOF over its three atoms)...
-FACT alice is lead       // clue 1
-NOT  bob is qa           // clue 2
-CHECK BIDIRECTIONAL
+// physics.vrf provides: PREMISE fast_xor_slow (EXCLUSIVE motor uses fast_path / slow_path)
+IMPORT "physics.vrf"
+FACT motor uses fast_path
+FACT motor uses slow_path
+CHECK motor
 ```
+`CONFLICT` — your local facts violate the imported premise, because both files
+share the atoms `motor uses fast_path` / `slow_path`. (`IMPORT` needs file mode.)
 
-`CONSISTENT` — from just two clues the engine deduces bob=dev, carol=qa and proves
-that assignment is **unique**. Drop `NOT bob is qa` → `UNDERDETERMINED` (bob/carol
-can swap). Add `FACT bob is lead` (two leads) → `CONFLICT`. This is the payoff of
-"simplified SAT": you state the rules, the engine does the case analysis you'd
-otherwise get wrong by hand.
+## Run it — do these three steps first, in order (every session)
 
-### 6. Disjunction — `OR` in `WHEN` / `THEN`
+Before you write a single program, set up and verify the engine. Do **not** skip
+ahead and start checking logic — an unconfirmed or mismatched engine makes every
+later result untrustworthy.
 
-"If the gateway is in production, at least one backend must be in staging." The
-consequent is a disjunction, so use `THEN … OR …` (not several `THEN`s, and not a
-`RULE` — a rule cannot derive "one of these"):
+### Step 0a — pick your transport (CLI **or** MCP)
 
-```vrf
-PREMISE gateway_needs_backend:
-    WHEN gateway is_prod
-    THEN auth is_staging
-    OR   api is_staging
-    OR   db is_staging
-FACT gateway is_prod
-NOT  auth is_staging
-NOT  api is_staging
-NOT  db is_staging
-CHECK
-```
+You have exactly one of two ways in. Detect which:
 
-`CONFLICT` — the gate fires but every backend is out of staging. Set any one to
-`FACT … is_staging` → `CONSISTENT`. Mirror image on the left: `WHEN a OR b THEN c`
-fires when *either* trigger holds. Remember: **don't mix `AND` and `OR` in one
-group**, and keep atom names byte-identical (`is_staging`, not `is staging`).
+- **Shell available →** use the **CLI** (the `elenchus` binary).
+  - `elenchus program.vrf` — check a file (the only mode where `IMPORT` resolves).
+  - `elenchus --text "FACT x a\nCHECK x"` — inline (newlines required between lines).
+  - `cat program.vrf | elenchus` — stdin. `--format json` for machine output.
+- **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
+  `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
+  (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). The
+  server also has `elenchus_version` and `elenchus_about`.
+- **Neither →** elenchus is **not installed here**. Stop and send the user to
+  **https://github.com/m62624/elenchus** to install it (how depends on their
+  CLI/harness). Do **not** fabricate verdicts — if you can't run it, say so.
 
-## Reading a CONFLICT: the `why:` trace
+### Step 0b — smoke-test the transport you picked
 
-A `CONFLICT` is not a dead end — the report shows **why**. For a violated premise
-it prints the derivation chain that forced the clashing atoms (supporting facts
-first, then each rule built on them), so you can see the exact step that's wrong:
+Prove at least one transport actually runs before trusting anything. Run the
+known-CONFLICT program and confirm the result:
+
+- **CLI:** `elenchus --text "FACT x a\nNOT x a\nCHECK x"` → expect **CONFLICT**, exit **2**.
+- **MCP:** `elenchus_check` with `{"program":"FACT x a\nNOT x a\nCHECK x"}` → `status` == `"CONFLICT"`.
+
+Any other answer means the install is broken — fix that before continuing.
+
+### Step 0c — version check (MANDATORY; on ANY mismatch, STOP)
+
+This skill targets the version in the marker below. Read the engine's version and
+**print one explicit line** comparing them — never just note it silently:
 
 ```
-  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
-      socrates is mortal
-      socrates is immortal
-      why:
-        socrates is human  = TRUE   [FACT socrates.vrf:13]
-        socrates is animal = TRUE   from humans_are_animals (RULE) [..]  <= socrates is human
-        socrates is living = TRUE   from animals_are_living (RULE) [..]  <= socrates is animal
-        socrates is mortal = TRUE   from living_things_are_mortal (RULE) [..]  <= socrates is living
-        socrates is immortal = TRUE [FACT socrates.vrf:14]
-```
-
-Read it top-down: `socrates is immortal` (a fact) collides with `socrates is
-mortal`, which the chain derived from `socrates is human`. Fix one link — drop the
-fact, or reject a rule. (Jointly-unsatisfiable systems print a `CORE` instead, as
-in example 4.) Both the human report and the JSON carry this (`trace`,
-`unsat_core`).
-
-## How to use it (CLI or MCP — same engine)
-
-The engine is reachable two interchangeable ways. **First decide which one you
-have here, then smoke-test it — don't trust an engine you haven't confirmed runs
-on this machine.**
-
-**Step 0 — detect what's installed.**
-
-- If you can run shell commands → use the **CLI**. Confirm it's there:
-  `elenchus --version` (or `-V`) prints `elenchus <X.Y.Z>` if installed; `--help`
-  shows it too, and a bare `elenchus` prints usage. "command not found" means it
-  isn't installed.
-- If you have no shell but your available tools include an `elenchus_check` tool →
-  use **MCP**.
-- If neither: it isn't installed here. Install it (see the project README —
-  `cargo binstall elenchus-cli`, Homebrew, the Windows `.msi`, or the curl/irm
-  script), then re-check. Don't fabricate verdicts; if you can't run it, say so.
-
-**Step 0.5 — smoke-test it.** Run one tiny program whose answer you already know,
-and confirm the verdict before relying on the engine for real work:
-
-```console
-$ elenchus --text "FACT x a
-NOT x a
-CHECK x"
-RESULT: CONFLICT          # TRUE and FALSE on the same atom MUST be a CONFLICT
-EXIT_CODE: 2              # 2 = CONFLICT
-```
-
-`CONFLICT` / exit 2 means the engine is healthy. (Via MCP: call `elenchus_check`
-with that same `program` and check `status` == `"CONFLICT"`.) If it answers
-anything else, the install is broken — fix that before trusting any result.
-
-**Step 0.6 — version check (mandatory, emit the line).** This skill targets the
-version in the marker below. Read the engine's version and **print one explicit
-line** comparing them before anything else — do not just "note it" silently and
-move on. The line is required output:
-
-```
-elenchus version check: skill <marker> vs engine <reported> → OK | SKEW
+elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
 <!-- skill-version: 0.5.0 -->
 
-- **CLI**: `elenchus --version` (or `-V`) → `elenchus x.y.z`.
-- **MCP**: call the `elenchus_version` tool → `elenchus x.y.z` (the model can't see
+- **CLI:** `elenchus --version` (or `-V`) → `elenchus x.y.z`.
+- **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
   `initialize`'s `serverInfo.version`, so use this tool).
 
-If they match → print `→ OK` and proceed. If they differ → print `→ SKEW` and
-**STOP to warn the user** before relying on anything below. Do **not** rationalize
-a skew as "probably fine" (a newer engine is *not* automatically safe — flags,
-output, or semantics may have changed). Say which side is **newer**: skill newer →
-the binary is outdated (features here like `OR`, the `why:` trace, or `CORE` may be
-missing — update elenchus); engine newer → this skill is stale (syntax or output
-may have changed — update the skill). You may still run it, but tag every result
-"verify — version skew".
+**If engine == marker** → print `→ OK` and proceed.
 
-**CLI + this skill — preferred when you have a shell.** Run the `elenchus` binary
-via Bash. One portable binary, zero host config.
+**If they differ in ANY way — it does not matter which side is newer or older —
+then the functionality the skill describes and the functionality the binary
+provides have diverged, so any result may be wrong. Do ALL of this:**
 
-```console
-$ elenchus program.vrf                  # check a file (IMPORTs resolve next to it)
-$ elenchus --text "FACT x a
-CHECK x" --format json                  # inline; --format json for tooling
-$ cat program.vrf | elenchus            # stdin
-```
-
-It takes one input three ways — a positional `<file>`, inline `--text "..."`, or
-stdin (no arg, or `-`). `--text` and a file are mutually exclusive (don't pass
-both). **`IMPORT` only resolves in the file form** (relative to the file);
-`--text` and stdin are treated as a single source, so a program that uses
-`IMPORT` must be run as a file. Exit code is the verdict (0 = CONSISTENT,
-1 = WARNING/UNDERDETERMINED, 2 = CONFLICT) — a ready CI gate.
-
-**MCP + this skill — when the host exposes MCP tools but no shell.** The
-`elenchus-mcp` server exposes three tools: `elenchus_check` (run a program),
-`elenchus_version` (engine version, for Step 0.6), and `elenchus_about` (a pointer
-back to this skill, for agents that arrived without it). Call `elenchus_check` with
-`{ "program": "<.vrf text>", "format": "json" }`. It's one source — no `IMPORT`
-resolution; inline the premises instead.
-
-`program` is just the ordinary multi-line program text; inside a JSON string the
-newlines are written `\n`. Write it readably — indentation is cosmetic, so these
-two are the **same program**:
-
-```json
-{ "program": "FACT svc built\nPREMISE gate:\n    WHEN svc built\n    THEN svc ready\nFACT svc ready\nCHECK svc\n", "format": "json" }
-```
-
-```vrf
-FACT svc built
-PREMISE gate:
-    WHEN svc built
-    THEN svc ready
-FACT svc ready
-CHECK svc
-```
-
-Either way the rule is the same: read `status`; if it isn't `CONSISTENT`, change
-the program (add facts, fix or rethink a premise) and run again — **loop until it
-is CONSISTENT**.
+1. **STOP.** Do not run the user's actual task. Abort the current execution.
+2. **Immediately emit this warning to the user:** *"⚠️ elenchus version mismatch:
+   this skill targets `X` but the installed engine reports `Y`. They describe
+   different functionality — one of them must be updated to match the other
+   (update the elenchus binary, or update this skill) for compatibility. Update
+   from https://github.com/m62624/elenchus."*
+3. This warning is **advisory for the user** — but for **you (the model) it is a
+   hard stop**: do **not** rationalize it as "probably fine". **Ask the user to
+   explicitly confirm** whether to proceed anyway, and make clear that **any
+   results produced under a version mismatch may be unreliable / not at the
+   correct level**, because the engine's behaviour may not match what this skill
+   assumes.
+4. Proceed **only if the user explicitly says to continue**. If they do, tag every
+   result *"unverified — version mismatch"* until the versions are aligned.
