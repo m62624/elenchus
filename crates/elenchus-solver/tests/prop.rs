@@ -6,9 +6,9 @@
 //! CDCL implementation (watched literals, 1-UIP learning, backjumping) is correct
 //! — much cheaper than DRAT proof checking and sufficient at our scale.
 
-use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Value};
+use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
 use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
-use elenchus_solver::{Status, solve};
+use elenchus_solver::{Status, TraceReason, solve};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -313,6 +313,87 @@ proptest! {
         if !report.unsat_core.is_empty() {
             prop_assert_eq!(report.status, Status::Conflict);
             prop_assert!(sat::solve(&encode(&compiled)).is_none());
+        }
+    }
+}
+
+// --- derivation trace (conflict explainability) ----------------------------
+
+/// A list of rules, each `antecedent literals → one consequent literal`.
+type RawRules = Vec<(Vec<(u32, bool)>, (u32, bool))>;
+
+/// A program that also has random forward-chaining rules, so a conflict's trace
+/// can include `Derived` steps (real chains), not just asserted facts.
+fn trace_instance() -> impl Strategy<Value = (usize, Vec<u8>, RawCnf, RawRules)> {
+    (2usize..=6).prop_flat_map(|n| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        let facts = prop::collection::vec(0u8..3, n);
+        let clause = prop::collection::vec(lit.clone(), 1..=3);
+        let rule = (prop::collection::vec(lit.clone(), 1..=2), lit);
+        (
+            Just(n),
+            facts,
+            prop::collection::vec(clause, 0..=6),
+            prop::collection::vec(rule, 0..=6),
+        )
+    })
+}
+
+fn build_with_rules(
+    n: usize,
+    fact_choice: &[u8],
+    raw: &[Vec<(u32, bool)>],
+    rules: &RawRules,
+) -> Compiled {
+    let mut c = build_compiled(n, fact_choice, raw);
+    c.rules = rules
+        .iter()
+        .map(|rule| {
+            let (cv, cneg) = rule.1;
+            Rule {
+                antecedent: rule
+                    .0
+                    .iter()
+                    .map(|&(v, neg)| Lit {
+                        atom: v,
+                        negated: neg,
+                    })
+                    .collect(),
+                consequent: vec![Lit {
+                    atom: cv,
+                    negated: cneg,
+                }],
+                origin: origin(),
+            }
+        })
+        .collect();
+    c
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    /// A conflict's derivation trace is well-formed: every atom appears once, and
+    /// each `Derived` step's supports appear *earlier* (facts before the rules
+    /// built on them). That is exactly a valid topological order — no duplicates,
+    /// no forward references, no cycles — which is what makes the `why:` chain
+    /// readable top-to-bottom.
+    #[test]
+    fn conflict_trace_is_topologically_well_formed(
+        (n, facts, raw, rules) in trace_instance()
+    ) {
+        let report = solve(&build_with_rules(n, &facts, &raw, &rules));
+        for conflict in &report.conflicts {
+            let mut seen: Vec<String> = Vec::new();
+            for step in &conflict.trace {
+                prop_assert!(!seen.contains(&step.atom), "duplicate trace atom {}", step.atom);
+                if let TraceReason::Derived { from, .. } = &step.reason {
+                    for f in from {
+                        prop_assert!(seen.contains(f), "support `{}` used before it appears", f);
+                    }
+                }
+                seen.push(step.atom.clone());
+            }
         }
     }
 }

@@ -74,8 +74,11 @@ no remaining "but…". Keep iterating (add data, add premises) until you reach t
 
 ## DSL cheat-sheet
 
-Keywords are ALWAYS CAPS, names are lowercase, indentation is cosmetic, `//` is a
-comment. An atom is `Subject predicate [object]`.
+Keywords are ALWAYS CAPS (ASCII). Names are content — **case-sensitive and matched
+verbatim** (`has_fuel` ≠ `hasFuel`) — and may use letters of **any script**
+(`условие`, `名前` are fine; `snake_case` is just convention). Join multi-word names
+with `_` (no spaces inside one name). Indentation is cosmetic, `//` is a comment.
+An atom is `Subject predicate [object]`.
 
 | Form | Meaning |
 |------|---------|
@@ -123,9 +126,22 @@ reports **UNDERDETERMINED** when more than one model fits, and catches a
 **CONFLICT** where the premises are jointly unsatisfiable even though no single one
 is visibly violated. Use `BIDIRECTIONAL` when you care "is the answer *unique*?".
 
-**IMPORT.** `IMPORT "lib.vrf"` flat-merges another source; atoms **unify across
-files** (a library premise constrains your local fact). Premise *names* are per-source
-labels — two files may reuse a name; identical duplicates are idempotent.
+**IMPORT.** `IMPORT "lib.vrf"` flat-merges another source. Think of it like a
+**linker**, not like importing a function: there is nothing to "call" or
+"override". Files link through **shared atoms** — `Engine.X has fuel` means the
+same atom in every file, so an imported premise automatically constrains your
+local `FACT` about that atom. Premise *names* are per-source **labels** (for the
+report only), not global identifiers: two files may reuse a name with no clash,
+and you never reference a premise by name. Consequences worth knowing:
+- Imports **compose by conjunction** — you get the AND of all premises. There is
+  no precedence and no overriding; if two files genuinely disagree
+  (`A→B` vs `A→¬B`) that is a real **CONFLICT** and the engine surfaces it (that's
+  the point — it won't silently pick a winner).
+- Identical premises/facts (same content) dedupe; transitive and diamond imports
+  merge once; cycles are rejected.
+- Want two domains that should *not* link? Don't share atom names — namespace the
+  **subject** (`fantasy.bird has wings` vs `bio.bird has wings`). Separation lives
+  in atom names, not in premise names.
 
 **Not supported (on purpose).** No arithmetic (turn a number into a boolean atom),
 no quantifiers (∀/∃), no probabilities. Pure boolean structure — exactly the class
@@ -225,8 +241,17 @@ CHECK x BIDIRECTIONAL
 ```
 
 No single clause is violated (everything is UNKNOWN), but the premises can't all
-hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT`:
-"the premises and facts are jointly unsatisfiable." Rethink the principles.
+hold (c→a→both b and ¬b). With `BIDIRECTIONAL`, elenchus reports `CONFLICT` and
+prints a **`CORE`** — the minimal set of premises jointly to blame, so you know
+exactly which principles to revisit:
+
+```
+  CONFLICT  - (UNSAT)  [<system>:0]
+      the premises and facts are jointly unsatisfiable
+  CORE  smallest jointly-unsatisfiable set (4):
+        a_to_b (PREMISE) [..]   a_to_not_b (PREMISE) [..]
+        need_a_or_c (ATLEAST) [..]   c_to_a (PREMISE) [..]
+```
 
 ### 5. A puzzle solved by deduction (the SAT pass at work)
 
@@ -252,6 +277,30 @@ that assignment is **unique**. Drop `NOT bob is qa` → `UNDERDETERMINED` (bob/c
 can swap). Add `FACT bob is lead` (two leads) → `CONFLICT`. This is the payoff of
 "simplified SAT": you state the rules, the engine does the case analysis you'd
 otherwise get wrong by hand.
+
+## Reading a CONFLICT: the `why:` trace
+
+A `CONFLICT` is not a dead end — the report shows **why**. For a violated premise
+it prints the derivation chain that forced the clashing atoms (supporting facts
+first, then each rule built on them), so you can see the exact step that's wrong:
+
+```
+  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
+      socrates is mortal
+      socrates is immortal
+      why:
+        socrates is human  = TRUE   [FACT socrates.vrf:13]
+        socrates is animal = TRUE   from humans_are_animals (RULE) [..]  <= socrates is human
+        socrates is living = TRUE   from animals_are_living (RULE) [..]  <= socrates is animal
+        socrates is mortal = TRUE   from living_things_are_mortal (RULE) [..]  <= socrates is living
+        socrates is immortal = TRUE [FACT socrates.vrf:14]
+```
+
+Read it top-down: `socrates is immortal` (a fact) collides with `socrates is
+mortal`, which the chain derived from `socrates is human`. Fix one link — drop the
+fact, or reject a rule. (Jointly-unsatisfiable systems print a `CORE` instead, as
+in example 4.) Both the human report and the JSON carry this (`trace`,
+`unsat_core`).
 
 ## How to use it (CLI or MCP — same engine)
 
