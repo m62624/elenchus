@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 description = "Compiles parsed elenchus DSL into a canonical Impossible/CNF clause IR: import resolution, desugaring, atom interning, content-addressed dedup."
 readme = "README.md"
-keywords = ["logic", "reasoning", "sat", "verification", "no-std"]
+keywords = ["logic", "inference", "sat", "verification", "no-std"]
 categories = ["compilers", "no-std", "mathematics"]
 
 # A library, not a shipped binary — excluded from cargo-dist releases.

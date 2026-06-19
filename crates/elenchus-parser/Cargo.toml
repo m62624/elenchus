@@ -6,9 +6,9 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "English-like DSL parser for the elenchus reasoning engine (facts, premises, rules, checks)."
+description = "English-like DSL parser for the elenchus consistency checker (facts, premises, rules, checks)."
 readme = "README.md"
-keywords = ["dsl", "parser", "logic", "reasoning", "no-std"]
+keywords = ["dsl", "parser", "logic", "inference", "no-std"]
 categories = ["parser-implementations", "no-std"]
 
 # A library, not a shipped binary — excluded from cargo-dist releases.

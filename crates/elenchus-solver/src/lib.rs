@@ -1,4 +1,4 @@
-//! elenchus-solver — the reasoning interpreter (forward pass).
+//! elenchus-solver — the inference interpreter (forward pass).
 //!
 //! Consumes the [`Compiled`] IR from `elenchus-compiler` and evaluates it under
 //! three-valued Kleene logic (TRUE / FALSE / UNKNOWN, where UNKNOWN ≠ FALSE):

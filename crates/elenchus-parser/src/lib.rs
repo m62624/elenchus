@@ -7,7 +7,8 @@
 //!
 //! Grammar (see docs/SPEC.md, "Grammar (EBNF)"):
 //! - statements are newline-terminated; indentation is cosmetic, not significant;
-//! - keywords are ALWAYS CAPS, identifiers are content (case-sensitive, verbatim);
+//! - keywords are ALWAYS CAPS (ASCII); identifiers are content (case-sensitive,
+//!   verbatim, any-script letters — e.g. `условие`, `名前`);
 //! - block boundaries (PREMISE/RULE bodies) are found by keywords, never by indent.
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
@@ -248,19 +249,19 @@ fn perr<'a, T>(input: Span<'a>) -> PResult<'a, T> {
     }))
 }
 
-/// Characters allowed *after* the first in an identifier. `.` is allowed so
-/// dotted subjects like `Creature.A` are a single token.
+/// Characters allowed *after* the first in an identifier. Letters and digits of
+/// *any* script are accepted (Unicode `is_alphanumeric`), so `условие` or `名前`
+/// are valid; `_` joins multi-word names and `.` makes dotted subjects like
+/// `Creature.A` a single token. Punctuation and other symbols are rejected.
 fn is_ident_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '.'
+    c.is_alphanumeric() || c == '_' || c == '.'
 }
 
-/// A bare identifier (does not reject reserved words).
+/// A bare identifier (does not reject reserved words). The first character must
+/// be a letter of any script (`is_alphabetic`) — never a digit, `_`, `.`, or
+/// punctuation — so identifiers stay distinct from numbers and operators.
 fn raw_identifier<'a>(input: Span<'a>) -> PResult<'a, Span<'a>> {
-    recognize((
-        satisfy(|c| c.is_ascii_alphabetic()),
-        take_while(is_ident_char),
-    ))
-    .parse(input)
+    recognize((satisfy(|c| c.is_alphabetic()), take_while(is_ident_char))).parse(input)
 }
 
 /// An identifier that is not a reserved keyword.
@@ -850,6 +851,61 @@ mod tests {
         let src = include_str!("../../../docs/examples/import-demo.vrf");
         let p = prog(src);
         assert!(matches!(p.statements[0], Statement::Import(_)));
+    }
+
+    #[test]
+    fn unicode_identifiers_any_script() {
+        // Cyrillic subject/predicate/object, mixed with `_` and digits (not first).
+        let p = prog("FACT кот пушистый2\nNOT собака has крылья\n");
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.subject, "кот");
+                assert_eq!(a.data.predicate, "пушистый2");
+                assert_eq!(a.data.object, None);
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Negation(a) => {
+                assert_eq!(a.data.subject, "собака");
+                assert_eq!(a.data.object, Some("крылья"));
+            }
+            other => panic!("expected negation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unicode_premise_name_and_body() {
+        let src = "PREMISE правило_лая:\n    WHEN собака has хвост\n    THEN собака умеет_лаять\n";
+        match &prog(src).statements[0] {
+            Statement::Premise { name, body } => {
+                assert_eq!(name.data, "правило_лая");
+                match body {
+                    Body::Impl {
+                        antecedent,
+                        consequent,
+                    } => {
+                        assert_eq!(antecedent[0].data.atom.subject, "собака");
+                        assert_eq!(consequent[0].data.atom.subject, "собака");
+                        assert_eq!(consequent[0].data.atom.predicate, "умеет_лаять");
+                    }
+                    other => panic!("expected impl body, got {:?}", other),
+                }
+            }
+            other => panic!("expected premise, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn identifier_cannot_start_with_digit() {
+        // `2cats` is not a valid subject — first char must be a letter.
+        assert!(parse("FACT 2cats has fur\n").is_err());
+    }
+
+    #[test]
+    fn punctuation_is_rejected_in_identifier() {
+        // `!` and other symbols are not identifier characters.
+        assert!(parse("FACT cat! has fur\n").is_err());
     }
 
     #[test]

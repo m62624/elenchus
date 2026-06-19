@@ -69,7 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='Model Context Protocol (MCP) server for the elenchus reasoning engine: exposes an `elenchus_check` tool over stdio JSON-RPC for AI agents.'
+            Description='Model Context Protocol (MCP) server for the elenchus consistency checker: exposes an `elenchus_check` tool over stdio JSON-RPC for AI agents.'
             Manufacturer='Mansur Azatbek'
             InstallerVersion='450'
             Languages='1033'

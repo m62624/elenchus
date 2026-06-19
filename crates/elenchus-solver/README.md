@@ -5,7 +5,7 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-The reasoning interpreter for [elenchus](https://github.com/m62624/elenchus) — the forward pass.
+The inference interpreter for [elenchus](https://github.com/m62624/elenchus) — the forward pass.
 
 `no_std` (needs `alloc`). Consumes the [`elenchus-compiler`] `Compiled` IR and
 evaluates it under three-valued Kleene logic (TRUE / FALSE / UNKNOWN, where
