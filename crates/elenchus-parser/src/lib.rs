@@ -746,10 +746,12 @@ mod tests {
 
     #[test]
     fn parses_fact_and_negation() {
-        let p = prog(r#"
+        let p = prog(
+            r#"
         FACT Creature.A has flying
         NOT Creature.A has cold_blood
-        "#);
+        "#,
+        );
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
             Statement::Fact(a) => {
@@ -1055,10 +1057,12 @@ mod tests {
     #[test]
     fn unicode_identifiers_any_script() {
         // Cyrillic subject/predicate/object, mixed with `_` and digits (not first).
-        let p = prog(r#"
+        let p = prog(
+            r#"
         FACT кот пушистый2
         NOT собака has крылья
-        "#);
+        "#,
+        );
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "кот");
@@ -1137,21 +1141,25 @@ FACT c d
 
     #[test]
     fn crlf_line_endings() {
-        let p = prog(r#"
+        let p = prog(
+            r#"
         FACT a b
         CHECK a
-        "#);
+        "#,
+        );
         assert_eq!(p.statements.len(), 2);
     }
 
     #[test]
     fn tabs_as_indentation() {
-        let p = prog(r#"
+        let p = prog(
+            r#"
         PREMISE e:
 	EXCLUSIVE
 		x a
 		x b
-        "#);
+        "#,
+        );
         assert!(matches!(
             p.statements[0],
             Statement::Premise {
@@ -1235,11 +1243,13 @@ FACT c d
 
     #[test]
     fn multiple_imports_then_facts() {
-        let p = prog(r#"
+        let p = prog(
+            r#"
         IMPORT "a.vrf"
         IMPORT "b.vrf"
         FACT x y
-        "#);
+        "#,
+        );
         assert!(matches!(p.statements[0], Statement::Import(_)));
         assert!(matches!(p.statements[1], Statement::Import(_)));
         assert!(matches!(p.statements[2], Statement::Fact(_)));

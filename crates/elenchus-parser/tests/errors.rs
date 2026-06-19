@@ -14,37 +14,31 @@ fn err(src: &str) -> String {
 
 #[test]
 fn premise_implication_missing_then() {
-    insta::assert_snapshot!(err(
-        r#"
+    insta::assert_snapshot!(err(r#"
         PREMISE wings_need_bone:
             WHEN Creature.A has flying
         CHECK Creature.A
-        "#
-    ));
+        "#));
 }
 
 #[test]
 fn list_premise_needs_two_atoms() {
-    insta::assert_snapshot!(err(
-        r#"
+    insta::assert_snapshot!(err(r#"
         PREMISE modes:
             EXCLUSIVE
                 Sys mode idle
         CHECK Sys
-        "#
-    ));
+        "#));
 }
 
 #[test]
 fn premise_missing_colon() {
-    insta::assert_snapshot!(err(
-        r#"
+    insta::assert_snapshot!(err(r#"
         PREMISE modes
             EXCLUSIVE
                 a b
                 a c
-        "#
-    ));
+        "#));
 }
 
 #[test]

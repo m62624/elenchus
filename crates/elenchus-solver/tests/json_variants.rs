@@ -66,7 +66,8 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         "#,
         ),
         (
-            "conflict_fact_contradiction", "FACT x a\nNOT x a\nCHECK x\n",
+            "conflict_fact_contradiction",
+            "FACT x a\nNOT x a\nCHECK x\n",
         ),
         (
             "conflict_derived_contradiction",

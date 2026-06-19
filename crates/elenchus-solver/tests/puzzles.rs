@@ -50,21 +50,25 @@ fn puzzle(givens_and_check: &str) -> Status {
 fn well_posed_puzzle_has_a_unique_solution() {
     // alice = lead, and bob is not qa.  Deductions: lead_one ⇒ bob,carol ≠ lead;
     // bob ≠ qa ⇒ bob = dev; then carol = qa. Exactly one full model → CONSISTENT.
-    let s = puzzle(r#"
+    let s = puzzle(
+        r#"
         FACT alice is lead
         NOT bob is qa
         CHECK alice BIDIRECTIONAL
-        "#);
+        "#,
+    );
     assert_eq!(s, Status::Consistent);
 }
 
 #[test]
 fn under_clued_puzzle_is_underdetermined() {
     // Drop the "bob is not qa" clue: bob/carol may swap dev↔qa → two models.
-    let s = puzzle(r#"
+    let s = puzzle(
+        r#"
         FACT alice is lead
         CHECK alice BIDIRECTIONAL
-        "#);
+        "#,
+    );
     assert_eq!(s, Status::Underdetermined);
 }
 
@@ -72,20 +76,24 @@ fn under_clued_puzzle_is_underdetermined() {
 fn over_clued_puzzle_is_conflict() {
     // Two people as lead violates lead_one (at most one) — the forward pass
     // already catches it (a pairwise EXCLUSIVE clause goes all-TRUE).
-    let s = puzzle(r#"
+    let s = puzzle(
+        r#"
         FACT alice is lead
         FACT bob is lead
         CHECK alice
-        "#);
+        "#,
+    );
     assert_eq!(s, Status::Conflict);
 }
 
 #[test]
 fn no_givens_is_underdetermined() {
     // A bare permutation has 3! = 6 solutions.
-    let s = puzzle(r#"
+    let s = puzzle(
+        r#"
         CHECK alice BIDIRECTIONAL
-        "#);
+        "#,
+    );
     assert_eq!(s, Status::Underdetermined);
 }
 
