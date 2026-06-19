@@ -335,25 +335,22 @@ EXIT_CODE: 2              # 2 = CONFLICT
 with that same `program` and check `status` == `"CONFLICT"`.) If it answers
 anything else, the install is broken — fix that before trusting any result.
 
-**Step 0.6 — version check (don't skip).**
+**Step 0.6 — version check (don't skip).** This skill targets the version in the
+marker below. Read the engine's version and confirm they're identical.
+
 <!-- skill-version: 0.3.0 -->
-This skill documents elenchus **0.3.0**. Read the installed version and compare:
-- **CLI**: `elenchus --version` (or `-V`) → `elenchus <X.Y.Z>`.
-- **MCP**: call the `elenchus_version` tool → `elenchus <X.Y.Z>` (the model can't
-  see `initialize`'s `serverInfo.version`, so use this tool).
 
-Compare the reported version to **0.3.0**:
+- **CLI**: `elenchus --version` (or `-V`) → `elenchus x.y.z`.
+- **MCP**: call the `elenchus_version` tool → `elenchus x.y.z` (the model can't see
+  `initialize`'s `serverInfo.version`, so use this tool).
 
-- **Match** → proceed normally.
-- **Mismatch** → STOP and warn the user before relying on any flag or output
-  described below, e.g. *"⚠️ version skew: this skill targets elenchus 0.3.0 but
-  the engine reports 0.2.1."* Then say which side is **newer** and what it implies:
-  - skill **newer** than the binary → the binary is outdated; features described
-    here (the `why:` trace, `CORE`, JSON `trace`/`unsat_core`) may be missing →
-    suggest updating elenchus.
-  - binary **newer** than the skill → this skill is stale; flags or output may
-    have changed → suggest updating the skill.
-  You may still run the engine, but mark every result as "verify — version skew".
+If the reported version differs from the `skill-version` marker above, **STOP** and
+warn the user before relying on anything below — e.g. *"⚠️ version skew: skill
+targets x.y.z, engine reports a.b.c"* — and say which side is **newer**: skill
+newer → the binary is outdated (features here like the `why:` trace / `CORE` may be
+missing, update elenchus); binary newer → this skill is stale (flags or output may
+have changed, update the skill). You may still run it, but mark results "verify —
+version skew".
 
 **CLI + this skill — preferred when you have a shell.** Run the `elenchus` binary
 via Bash. One portable binary, zero host config.
