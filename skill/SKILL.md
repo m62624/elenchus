@@ -338,7 +338,7 @@ anything else, the install is broken — fix that before trusting any result.
 **Step 0.6 — version check (don't skip).** This skill targets the version in the
 marker below. Read the engine's version and confirm they're identical.
 
-<!-- skill-version: 0.4.0 -->
+<!-- skill-version: 0.4.1 -->
 
 - **CLI**: `elenchus --version` (or `-V`) → `elenchus x.y.z`.
 - **MCP**: call the `elenchus_version` tool → `elenchus x.y.z` (the model can't see
