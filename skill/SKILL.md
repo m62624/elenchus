@@ -262,14 +262,55 @@ misread it. There is **no**:
 
 ## Reading the report
 
-- **`why:` trace** (on a violated premise): the derivation chain that forced the
-  clashing atoms — supporting facts first, then each rule built on them — so you
-  see the exact wrong step. Present in human output and JSON (`trace`).
-- **`CORE`** (on a jointly-unsatisfiable system, found by `BIDIRECTIONAL`): the
-  smallest set of premises/facts jointly to blame (JSON `unsat_core`).
-- **`HINT`** (advisory): possible atom-name typos (JSON `hints`). Never affects the
-  verdict.
-- **exit code** = the verdict (0/1/1/2) — a ready CI gate.
+The verdict is never a dead end — the report tells you *where* and *why*. Learn to
+read these four things (shown as the engine actually prints them).
+
+**`why:` trace** — on a violated premise, the derivation chain that forced the
+clashing atoms (supporting facts first, then each rule built on them). Read it
+top-down to the exact wrong step:
+```
+  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
+      socrates is mortal
+      socrates is immortal
+      why:
+        socrates is human  = TRUE   [FACT socrates.vrf:13]
+        socrates is animal = TRUE   from humans_are_animals (RULE) [..]  <= socrates is human
+        socrates is living = TRUE   from animals_are_living (RULE) [..]  <= socrates is animal
+        socrates is mortal = TRUE   from living_things_are_mortal (RULE) [..]  <= socrates is living
+        socrates is immortal = TRUE [FACT socrates.vrf:14]
+```
+Here `socrates is immortal` (a fact) collides with `socrates is mortal`, which the
+chain derived from `socrates is human`. Fix one link.
+
+**`CORE`** — on a jointly-unsatisfiable system (found by `BIDIRECTIONAL`, where no
+single premise is visibly violated), the smallest set jointly to blame:
+```
+  CONFLICT  - (UNSAT)  [<system>:0]
+      the premises and facts are jointly unsatisfiable
+  CORE  smallest jointly-unsatisfiable set (4):
+        a_to_b (PREMISE) [..]      a_to_not_b (PREMISE) [..]
+        need_a_or_c (ATLEAST) [..] c_to_a (PREMISE) [..]
+```
+Revisit exactly those four principles — one of them is wrong.
+
+**`HINT`** — advisory possible-typo nudge; **never changes the verdict**:
+```
+  HINT      possible typo — 'auth is rolled_back' and 'auth is_rolled_back' look like the same atom (...)
+```
+
+**JSON** (`--format json` / MCP) carries the same data for programmatic reading.
+Always branch on `status`; the rest mirrors the human report:
+```json
+{ "status":"CONFLICT", "exit_code":2,
+  "conflicts":[ { "premise":"m", "kind":"RULE", "source":"...", "line":2,
+                  "atoms":["s mortal (derived value contradicts a known fact)"],
+                  "trace":[ {"atom":"s human","value":true,"how":"asserted","kind":"FACT","from":[]},
+                            {"atom":"s mortal","value":false,"how":"asserted","kind":"NOT","from":[]} ] } ],
+  "warnings":[], "derived":[], "underdetermined":null, "unsat_core":[], "hints":[] }
+```
+
+**exit code** = the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED, 2 =
+CONFLICT) — a ready CI gate.
 
 ## Worked examples — easy → hard
 
