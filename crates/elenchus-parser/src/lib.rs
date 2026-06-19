@@ -788,7 +788,12 @@ mod tests {
 
     #[test]
     fn parses_exclusive_premise() {
-        let src = "PREMISE fly_xor_swim:\n    EXCLUSIVE\n        Creature.A has flying\n        Creature.A has swimming\n";
+        let src = r#"
+        PREMISE fly_xor_swim:
+            EXCLUSIVE
+                Creature.A has flying
+                Creature.A has swimming
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise { name, body } => {
@@ -808,7 +813,12 @@ mod tests {
 
     #[test]
     fn parses_implication_premise_with_and() {
-        let src = "PREMISE wings_need_bone:\n    WHEN Creature.A has flying\n    THEN Creature.A has wing\n    AND  Creature.A has bone\n";
+        let src = r#"
+        PREMISE wings_need_bone:
+            WHEN Creature.A has flying
+            THEN Creature.A has wing
+            AND  Creature.A has bone
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise {
@@ -832,7 +842,12 @@ mod tests {
 
     #[test]
     fn antecedent_and_goes_before_then() {
-        let src = "PREMISE deploy:\n    WHEN s tested\n    AND s reviewed\n    THEN s can_deploy\n";
+        let src = r#"
+        PREMISE deploy:
+            WHEN s tested
+            AND s reviewed
+            THEN s can_deploy
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise {
@@ -853,7 +868,12 @@ mod tests {
 
     #[test]
     fn when_or_sets_disjunctive_antecedent() {
-        let src = "PREMISE p:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let src = r#"
+        PREMISE p:
+            WHEN x a
+            OR x b
+            THEN x c
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body:
@@ -876,7 +896,12 @@ mod tests {
 
     #[test]
     fn then_or_sets_disjunctive_consequent() {
-        let src = "PREMISE p:\n    WHEN x a\n    THEN x b\n    OR x c\n";
+        let src = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x b
+            OR x c
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body:
@@ -896,12 +921,22 @@ mod tests {
 
     #[test]
     fn mixing_and_or_in_one_group_is_an_error() {
-        assert!(
-            parse("PREMISE p:\n    WHEN x a\n    AND x b\n    OR x c\n    THEN x d\n").is_err()
-        );
-        assert!(
-            parse("PREMISE p:\n    WHEN x a\n    THEN x b\n    AND x c\n    OR x d\n").is_err()
-        );
+        let mixed_when = r#"
+        PREMISE p:
+            WHEN x a
+            AND x b
+            OR x c
+            THEN x d
+        "#;
+        let mixed_then = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x b
+            AND x c
+            OR x d
+        "#;
+        assert!(parse(mixed_when).is_err());
+        assert!(parse(mixed_then).is_err());
     }
 
     #[test]
@@ -911,7 +946,11 @@ mod tests {
 
     #[test]
     fn parses_negated_literal_in_rule() {
-        let src = "RULE pick_slow:\n    WHEN NOT Motor over_100\n    THEN Motor uses slow_path\n";
+        let src = r#"
+        RULE pick_slow:
+            WHEN NOT Motor over_100
+            THEN Motor uses slow_path
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Rule {
@@ -1015,7 +1054,11 @@ mod tests {
 
     #[test]
     fn unicode_premise_name_and_body() {
-        let src = "PREMISE правило_лая:\n    WHEN собака has хвост\n    THEN собака умеет_лаять\n";
+        let src = r#"
+        PREMISE правило_лая:
+            WHEN собака has хвост
+            THEN собака умеет_лаять
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise { name, body } => {
                 assert_eq!(name.data, "правило_лая");
@@ -1138,7 +1181,11 @@ mod tests {
 
     #[test]
     fn negated_consequent_then_not() {
-        let src = "PREMISE a:\n    WHEN x on\n    THEN NOT x off\n";
+        let src = r#"
+        PREMISE a:
+            WHEN x on
+            THEN NOT x off
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body: Body::Impl { consequent, .. },
