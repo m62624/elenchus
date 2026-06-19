@@ -66,9 +66,45 @@ jobs:
     with:
       ref: ${{ needs.prepare.outputs.rc_branch }}
 
+  # Release-only gate: the SKILL.md `skill-version` marker must equal the version
+  # the release is cutting (the workspace version `prepare` just bumped on the RC
+  # branch). This forces SKILL.md to be updated *together with* every release, so
+  # the skill and the shipped binary never silently drift. Runs only here, never
+  # in plain CI.
+  #
+  # Why we do NOT auto-bump the marker (unlike Cargo.toml): bumping it by hand is
+  # the whole point — it's the checkpoint that makes a human re-read SKILL.md and
+  # update its instructions/examples for the new behaviour. An auto-bump would
+  # satisfy this gate while leaving the docs stale, which is exactly what we're
+  # guarding against. So: this job only *checks*; the human bumps the marker (and
+  # reviews the skill) in the release PR.
+  skill-check:
+    name: Skill version matches release
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.rc_branch }}
+      - name: SKILL.md skill-version must equal the workspace version
+        run: |
+          CARGO_VER="$(grep -m1 '^version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          MARKER="$(grep -oE 'skill-version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' skill/SKILL.md \
+                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          echo "workspace=$CARGO_VER  skill-marker=${MARKER:-<none>}"
+          if [ -z "$MARKER" ]; then
+            echo "::error file=skill/SKILL.md::missing '<!-- skill-version: X.Y.Z -->' marker"
+            exit 1
+          fi
+          if [ "$MARKER" != "$CARGO_VER" ]; then
+            echo "::error file=skill/SKILL.md::skill-version $MARKER != release $CARGO_VER — bump the SKILL.md marker (and its docs) for this release"
+            exit 1
+          fi
+          echo "OK: SKILL.md documents $MARKER, matching the release."
+
   tag:
     name: Create release tag
-    needs: [prepare, tests]
+    needs: [prepare, tests, skill-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -92,6 +128,50 @@ jobs:
     with:
       tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
+
+  # cargo-dist creates the GitHub Release (a draft) with an auto-generated body:
+  # the install scripts + per-target download tables. We want OUR changelog on
+  # top and that block below it, so after `dist` we prepend the generated notes
+  # (PRs/commits between this tag and the previous v* tag) to the draft body.
+  release-notes:
+    name: Prepend changelog to the release
+    needs: [prepare, dist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Generate changelog between tags and prepend to the draft
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          # Anchor the auto-notes to the previous v* tag explicitly. GitHub
+          # otherwise anchors to the last *published* release, but every release
+          # is a draft, so each one would re-list every PR since the last
+          # published release. (Same fix as pi-planner's release flow.)
+          PREV_TAG="$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1)"
+          ARGS=(-f tag_name="$TAG")
+          if [ -n "$PREV_TAG" ]; then ARGS+=(-f previous_tag_name="$PREV_TAG"); fi
+          NOTES="$(gh api -X POST "repos/${{ github.repository }}/releases/generate-notes" "${ARGS[@]}" --jq '.body')"
+          # Keep cargo-dist's body (install scripts + download tables) underneath.
+          DIST_BODY="$(gh release view "$TAG" --json body --jq '.body')"
+          # Idempotent: a sentinel guards against double-prepending on re-runs.
+          if printf '%s' "$DIST_BODY" | grep -q '<!-- elenchus-changelog -->'; then
+            echo "changelog already prepended; nothing to do"
+            exit 0
+          fi
+          {
+            echo "<!-- elenchus-changelog -->"
+            echo "$NOTES"
+            echo
+            echo "---"
+            echo
+            echo "$DIST_BODY"
+          } > "$RUNNER_TEMP/combined.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/combined.md"
 
   # crates.io publish waits for `dist`, so a failed binary/installer release
   # cannot burn immutable crate versions. This is what makes `cargo install

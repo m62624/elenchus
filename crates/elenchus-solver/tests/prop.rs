@@ -6,9 +6,9 @@
 //! CDCL implementation (watched literals, 1-UIP learning, backjumping) is correct
 //! — much cheaper than DRAT proof checking and sufficient at our scale.
 
-use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, Fact, Lit, Origin, Value};
-use elenchus_solver::sat::{self, Cnf, SatLit, Var};
-use elenchus_solver::{Status, solve};
+use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
+use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
+use elenchus_solver::{Status, TraceReason, solve};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -29,6 +29,19 @@ fn brute_full_model_count(n: usize, clauses: &[Vec<SatLit>]) -> usize {
         .count()
 }
 
+/// A raw assumption `(var, positive)` holds in `mask`.
+fn assumption_ok(mask: u64, (v, p): (u32, bool)) -> bool {
+    ((mask >> v) & 1 == 1) == p
+}
+
+/// Brute SAT of `clauses` restricted to assignments honoring all `assumptions`.
+fn brute_sat_assuming(n: usize, clauses: &[Vec<SatLit>], assumptions: &[(u32, bool)]) -> bool {
+    (0u64..(1u64 << n)).any(|mask| {
+        assumptions.iter().all(|&a| assumption_ok(mask, a))
+            && clauses.iter().all(|c| clause_sat(mask, c))
+    })
+}
+
 // --- generators ------------------------------------------------------------
 
 /// A CNF as raw `(var, positive)` literals grouped into clauses.
@@ -36,13 +49,27 @@ type RawCnf = Vec<Vec<(u32, bool)>>;
 /// A generated engine case: atom count, per-atom fact choice, and raw clauses.
 type EngineCase = (usize, Vec<u8>, RawCnf);
 
-/// A random CNF: `n` in 1..=6 variables, up to 14 clauses of 1..=4 literals.
+/// A random CNF: `n` in 1..=8 variables, up to 18 clauses of 1..=4 literals.
+/// (n≤8 keeps the 2^n brute-force oracle cheap while widening coverage.)
 fn instance() -> impl Strategy<Value = (usize, RawCnf)> {
-    (1usize..=6).prop_flat_map(|n| {
+    (1usize..=8).prop_flat_map(|n| {
         let lit = (0u32..(n as u32), any::<bool>());
         let clause = prop::collection::vec(lit, 1..=4);
-        (Just(n), prop::collection::vec(clause, 0..=14))
+        (Just(n), prop::collection::vec(clause, 0..=18))
     })
+}
+
+/// An [`instance`] paired with a random set of 0..=n assumption literals over its
+/// variables (possibly redundant or self-contradictory — all valid to assume).
+fn instance_with_assumptions() -> impl Strategy<Value = (usize, RawCnf, Vec<(u32, bool)>)> {
+    instance().prop_flat_map(|(n, raw)| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        (Just(n), Just(raw), prop::collection::vec(lit, 0..=n))
+    })
+}
+
+fn to_assumptions(asm: &[(u32, bool)]) -> Vec<SatLit> {
+    asm.iter().map(|&(v, p)| SatLit::new(v, p)).collect()
 }
 
 fn to_clauses(raw: &[Vec<(u32, bool)>]) -> Vec<Vec<SatLit>> {
@@ -89,6 +116,50 @@ proptest! {
         let all_vars: Vec<Var> = (0..n as Var).collect();
         let counted = sat::models_upto(&cnf, &all_vars, 1usize << n);
         prop_assert_eq!(counted, brute_full_model_count(n, &clauses));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(700))]
+
+    /// Solving under assumptions agrees with brute force on SAT/UNSAT.
+    #[test]
+    fn assuming_matches_bruteforce((n, raw, asm) in instance_with_assumptions()) {
+        let cnf = to_cnf(n, &raw);
+        let clauses = to_clauses(&raw);
+        let got_sat = matches!(sat::solve_assuming(&cnf, &to_assumptions(&asm)), Solved::Sat(_));
+        prop_assert_eq!(got_sat, brute_sat_assuming(n, &clauses, &asm));
+    }
+
+    /// A model returned under assumptions satisfies every clause AND every assumption.
+    #[test]
+    fn assuming_model_honors_clauses_and_assumptions((n, raw, asm) in instance_with_assumptions()) {
+        let cnf = to_cnf(n, &raw);
+        if let Solved::Sat(model) = sat::solve_assuming(&cnf, &to_assumptions(&asm)) {
+            for clause in &to_clauses(&raw) {
+                prop_assert!(clause.iter().any(|&l| model[l.var() as usize] != l.is_negative()));
+            }
+            for &(v, p) in &asm {
+                prop_assert_eq!(model[v as usize], p);
+            }
+        }
+    }
+
+    /// An unsat core is a subset of the assumptions and is itself sufficient:
+    /// `cnf ∧ core` is unsatisfiable (the cheap, faithful core contract).
+    #[test]
+    fn assuming_core_is_a_sufficient_subset((n, raw, asm) in instance_with_assumptions()) {
+        let cnf = to_cnf(n, &raw);
+        let clauses = to_clauses(&raw);
+        let assumptions = to_assumptions(&asm);
+        if let Solved::Unsat(core) = sat::solve_assuming(&cnf, &assumptions) {
+            for l in &core {
+                prop_assert!(assumptions.contains(l), "core lit {:?} not an assumption", l);
+            }
+            let core_pairs: Vec<(u32, bool)> =
+                core.iter().map(|l| (l.var(), !l.is_negative())).collect();
+            prop_assert!(!brute_sat_assuming(n, &clauses, &core_pairs), "core not sufficient");
+        }
     }
 }
 
@@ -215,5 +286,114 @@ proptest! {
     fn to_json_is_always_valid((n, facts, raw) in engine_instance()) {
         let json = solve(&build_compiled(n, &facts, &raw)).to_json();
         prop_assert!(serde_json::from_str::<serde_json::Value>(&json).is_ok(), "{}", json);
+    }
+}
+
+/// Same random program, but with a bidirectional `CHECK` so the backward pass and
+/// the assumption-based unsat-core extraction actually run.
+fn build_checked(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Compiled {
+    let mut c = build_compiled(n, fact_choice, raw);
+    c.checks = vec![Check {
+        subject: None,
+        bidirectional: true,
+    }];
+    c
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// The backward pass + assumption-based core extraction never panic, and a
+    /// reported unsat core only appears alongside a genuine CONFLICT whose encoded
+    /// system is UNSAT — guarding the selector-assumption rewire of the core.
+    #[test]
+    fn reported_unsat_core_implies_unsat((n, facts, raw) in engine_instance()) {
+        let compiled = build_checked(n, &facts, &raw);
+        let report = solve(&compiled);
+        if !report.unsat_core.is_empty() {
+            prop_assert_eq!(report.status, Status::Conflict);
+            prop_assert!(sat::solve(&encode(&compiled)).is_none());
+        }
+    }
+}
+
+// --- derivation trace (conflict explainability) ----------------------------
+
+/// A list of rules, each `antecedent literals → one consequent literal`.
+type RawRules = Vec<(Vec<(u32, bool)>, (u32, bool))>;
+
+/// A program that also has random forward-chaining rules, so a conflict's trace
+/// can include `Derived` steps (real chains), not just asserted facts.
+fn trace_instance() -> impl Strategy<Value = (usize, Vec<u8>, RawCnf, RawRules)> {
+    (2usize..=6).prop_flat_map(|n| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        let facts = prop::collection::vec(0u8..3, n);
+        let clause = prop::collection::vec(lit.clone(), 1..=3);
+        let rule = (prop::collection::vec(lit.clone(), 1..=2), lit);
+        (
+            Just(n),
+            facts,
+            prop::collection::vec(clause, 0..=6),
+            prop::collection::vec(rule, 0..=6),
+        )
+    })
+}
+
+fn build_with_rules(
+    n: usize,
+    fact_choice: &[u8],
+    raw: &[Vec<(u32, bool)>],
+    rules: &RawRules,
+) -> Compiled {
+    let mut c = build_compiled(n, fact_choice, raw);
+    c.rules = rules
+        .iter()
+        .map(|rule| {
+            let (cv, cneg) = rule.1;
+            Rule {
+                antecedent: rule
+                    .0
+                    .iter()
+                    .map(|&(v, neg)| Lit {
+                        atom: v,
+                        negated: neg,
+                    })
+                    .collect(),
+                consequent: vec![Lit {
+                    atom: cv,
+                    negated: cneg,
+                }],
+                origin: origin(),
+            }
+        })
+        .collect();
+    c
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    /// A conflict's derivation trace is well-formed: every atom appears once, and
+    /// each `Derived` step's supports appear *earlier* (facts before the rules
+    /// built on them). That is exactly a valid topological order — no duplicates,
+    /// no forward references, no cycles — which is what makes the `why:` chain
+    /// readable top-to-bottom.
+    #[test]
+    fn conflict_trace_is_topologically_well_formed(
+        (n, facts, raw, rules) in trace_instance()
+    ) {
+        let report = solve(&build_with_rules(n, &facts, &raw, &rules));
+        for conflict in &report.conflicts {
+            let mut seen: Vec<String> = Vec::new();
+            for step in &conflict.trace {
+                prop_assert!(!seen.contains(&step.atom), "duplicate trace atom {}", step.atom);
+                if let TraceReason::Derived { from, .. } = &step.reason {
+                    for f in from {
+                        prop_assert!(seen.contains(f), "support `{}` used before it appears", f);
+                    }
+                }
+                seen.push(step.atom.clone());
+            }
+        }
     }
 }

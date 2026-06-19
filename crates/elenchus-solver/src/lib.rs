@@ -844,17 +844,59 @@ fn subset_is_sat(num_vars: usize, all: &[Construct], active: &[bool]) -> bool {
     sat::solve(&cnf).is_some()
 }
 
-/// A minimal (1-minimal) unsat core via deletion-based minimization: starting
-/// from the whole (unsatisfiable) program, drop each construct in turn; if the
-/// rest is still unsatisfiable the construct was not needed. What survives is an
-/// irreducible set jointly to blame. Called only when the full system is UNSAT.
+/// A fast sufficient core via one assumption-solve: each construct gets a fresh
+/// selector variable `s_k`, every clause becomes `(¬s_k ∨ clause)`, and we solve
+/// asserting all selectors true. The SAT core (a subset of the selectors) names a
+/// sufficient set of constructs in a single solve — versus O(n) deletion solves.
+/// Returns an `active` mask over `all`.
+fn candidate_via_assumptions(c: &Compiled, all: &[Construct]) -> Vec<bool> {
+    let base = c.atoms.len();
+    let mut cnf = sat::Cnf::new(base + all.len());
+    let sel = |i: usize| (base + i) as sat::Var;
+    for (i, k) in all.iter().enumerate() {
+        let s_neg = sat::SatLit::negative(sel(i));
+        for cl in &k.clauses {
+            let mut lits = Vec::with_capacity(cl.len() + 1);
+            lits.push(s_neg);
+            lits.extend_from_slice(cl);
+            cnf.add_clause(lits);
+        }
+    }
+    let assumptions: Vec<sat::SatLit> = (0..all.len())
+        .map(|i| sat::SatLit::positive(sel(i)))
+        .collect();
+    let mut active = vec![false; all.len()];
+    match sat::solve_assuming(&cnf, &assumptions) {
+        sat::Solved::Unsat(core) => {
+            for lit in core {
+                let v = lit.var() as usize;
+                if v >= base {
+                    active[v - base] = true;
+                }
+            }
+        }
+        // The caller only calls this when the system is UNSAT, so this is
+        // unreachable; fall back to all-active so the deletion pass below is still
+        // correct (just slower).
+        sat::Solved::Sat(_) => active.iter_mut().for_each(|a| *a = true),
+    }
+    active
+}
+
+/// A 1-minimal unsat core. First an assumption-solve narrows the program to a
+/// sufficient candidate ([`candidate_via_assumptions`]); then deletion-based
+/// minimization over *that candidate only* drops each construct in turn — if the
+/// rest is still unsatisfiable it was not needed — leaving an irreducible set
+/// jointly to blame. Called only when the full system is UNSAT.
 fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
     let all = constructs(c);
-    let mut active = vec![true; all.len()];
+    let mut active = candidate_via_assumptions(c, &all);
     for i in 0..all.len() {
-        active[i] = false;
-        if subset_is_sat(c.atoms.len(), &all, &active) {
-            active[i] = true; // removing it restored SAT → it is part of the core
+        if active[i] {
+            active[i] = false;
+            if subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true; // removing it restored SAT → it is part of the core
+            }
         }
     }
     let mut core: Vec<CoreItem> = all
