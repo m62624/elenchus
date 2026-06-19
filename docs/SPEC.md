@@ -450,9 +450,15 @@ name        = identifier ;
 string      = '"' , { any-char-except-quote } , '"' ;
 
 identifier  = letter , { letter | digit | "_" | "." } ;
-letter      = "A".."Z" | "a".."z" ;
-digit       = "0".."9" ;
+letter      = ? any Unicode letter (Cyrillic, CJK, Latin, …) ? ;
+digit       = ? any Unicode digit ? ;
 ```
+
+Identifiers accept letters of **any** script, so `условие`, `名前` and `motor` are
+all valid. The first character must be a letter (never a digit, `_`, `.`, or
+punctuation); subsequent characters may also be digits, `_`, or `.`. Keywords stay
+ASCII CAPS (see the reserved list below) — like SQL, only the keywords are fixed to
+one language, the names are yours.
 
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
