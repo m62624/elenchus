@@ -5,7 +5,7 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-Parser for the English-like [elenchus](https://github.com/m62624/elenchus) reasoning DSL.
+Parser for the English-like [elenchus](https://github.com/m62624/elenchus) consistency-checking DSL.
 
 `no_std` (needs `alloc`), built on `nom` + `nom_locate`. Zero-copy over `&str`,
 line/column tracking, and human-friendly errors with a `^--- here` caret.

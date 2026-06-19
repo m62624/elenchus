@@ -6,9 +6,9 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Model Context Protocol (MCP) server for the elenchus reasoning engine: exposes an `elenchus_check` tool over stdio JSON-RPC for AI agents."
+description = "Model Context Protocol (MCP) server for the elenchus consistency checker: exposes an `elenchus_check` tool over stdio JSON-RPC for AI agents."
 readme = "README.md"
-keywords = ["mcp", "logic", "reasoning", "sat", "ai"]
+keywords = ["mcp", "logic", "inference", "sat", "ai"]
 categories = ["command-line-utilities", "mathematics"]
 
 [[bin]]

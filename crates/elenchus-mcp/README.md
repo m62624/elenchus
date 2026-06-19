@@ -6,7 +6,7 @@
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-the [elenchus](https://github.com/m62624/elenchus) reasoning engine to AI agents.
+the [elenchus](https://github.com/m62624/elenchus) consistency checker to AI agents.
 
 Transport: **stdio, newline-delimited JSON-RPC 2.0** (one message per line).
 Hand-rolled with `serde_json` — no MCP SDK dependency.

@@ -16,7 +16,7 @@ use elenchus_solver::{Report, verify, verify_source};
     version,
     about = "Check an elenchus .vrf program for logical consistency.",
     long_about = "Reads a .vrf program (a file, inline --text, or explicit stdin \
-with '-'), runs the reasoning engine, and prints the verdict. With a file, \
+with '-'), runs the engine, and prints the verdict. With a file, \
 IMPORTs are resolved relative to it. Exit code: 0 consistent, 1 \
 underdetermined/warnings, 2 conflicts."
 )]
