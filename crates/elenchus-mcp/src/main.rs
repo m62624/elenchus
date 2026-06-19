@@ -3,9 +3,10 @@
 //!
 //! Transport: stdio, newline-delimited JSON-RPC 2.0 (one message per line).
 //! Hand-rolled with `serde_json` (no MCP SDK). It speaks just enough of the
-//! protocol — `initialize`, `tools/list`, `tools/call`, `ping` — to expose two
-//! tools: `elenchus_check`, which runs a `.vrf` program through the engine, and
-//! `elenchus_version`, which reports the engine version for skill-version checks.
+//! protocol — `initialize`, `tools/list`, `tools/call`, `ping` — to expose three
+//! tools: `elenchus_check`, which runs a `.vrf` program through the engine;
+//! `elenchus_version`, which reports the engine version for skill-version checks;
+//! and `elenchus_about`, a model-facing note pointing at the companion skill.
 
 use std::io::{self, BufRead, Write};
 
@@ -53,9 +54,12 @@ fn handle(req: &Value) -> Option<Value> {
         }),
         "notifications/initialized" => None,
         "ping" => id.map(|id| result(id, json!({}))),
-        "tools/list" => {
-            id.map(|id| result(id, json!({ "tools": [tool_def(), version_tool_def()] })))
-        }
+        "tools/list" => id.map(|id| {
+            result(
+                id,
+                json!({ "tools": [tool_def(), version_tool_def(), about_tool_def()] }),
+            )
+        }),
         "tools/call" => id.map(|id| tools_call(id, req.get("params"))),
         // Unknown method: error only for requests (notifications are ignored).
         _ => id.map(|id| error(id, -32601, "method not found")),
@@ -118,6 +122,27 @@ fn version_tool_def() -> Value {
     })
 }
 
+/// Model-facing guidance, shared by the `elenchus_about` tool's description and
+/// its returned text (so the two never drift). Deliberately version-free —
+/// `elenchus_version` owns the number — and harness-agnostic (no product names).
+const ABOUT_TEXT: &str = "elenchus checks whether a set of facts and first principles is \
+logically consistent (a small three-valued SAT checker). You are calling it over MCP, so \
+you are an AI agent: you'll get markedly better results with the matching `elenchus` skill \
+loaded — it carries the verdict loop (iterate until CONSISTENT), the DSL, and worked \
+examples this server expects. If you don't have that skill, please ask the user to install \
+it from https://github.com/m62624/elenchus (how depends on your harness). To check the \
+engine version, call `elenchus_version`.";
+
+/// The `elenchus_about` tool: a pointer to the companion skill for agents that
+/// reached this server without it. No version here — that's `elenchus_version`.
+fn about_tool_def() -> Value {
+    json!({
+        "name": "elenchus_about",
+        "description": ABOUT_TEXT,
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
 fn tools_call(id: Value, params: Option<&Value>) -> Value {
     let Some(params) = params else {
         return error(id, -32602, "missing params");
@@ -125,6 +150,9 @@ fn tools_call(id: Value, params: Option<&Value>) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     if name == "elenchus_version" {
         return tool_result(id, format!("elenchus {}", env!("CARGO_PKG_VERSION")), false);
+    }
+    if name == "elenchus_about" {
+        return tool_result(id, ABOUT_TEXT.to_string(), false);
     }
     if name != "elenchus_check" {
         return tool_result(id, format!("unknown tool: {name}"), true);
