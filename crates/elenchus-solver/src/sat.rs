@@ -1,19 +1,24 @@
 //! A compact, single-threaded CDCL SAT solver in `no_std`, replicating the core
 //! algorithm of varisat (jix/varisat) in a readable, lazy style.
 //!
-//! The solver is a small **state machine**: `Solver::step` performs exactly one
-//! transition and returns a `Step` saying which way the search went
-//! (propagated / hit a conflict / made a decision / SAT / UNSAT). `Solver::search`
-//! drives steps to a terminal state. Model enumeration is a lazy [`Models`]
-//! iterator that solves **incrementally** — each `next()` adds a blocking clause
-//! and continues from the existing state rather than re-solving from scratch.
+//! `Solver::run` drives the CDCL loop to a terminal state: it propagates, and on a
+//! conflict analyzes/backjumps/learns, otherwise it decides (`Solver::decide`).
+//! Model enumeration is a lazy [`Models`] iterator that solves **incrementally** —
+//! each `next()` adds a blocking clause and continues from the existing state
+//! rather than re-solving from scratch.
+//!
+//! **Assumptions** ([`solve_assuming`]): literals forced true before VSIDS
+//! branching. They are decided first; a contradicted assumption yields an unsat
+//! **core** (a sufficient subset of the assumptions) via MiniSat's `analyzeFinal`.
+//! This is the primitive behind incremental cores and what-if queries.
 //!
 //! Pieces mirror varisat's modules: the trail + decision levels
 //! (`prop/assignment.rs`), two-watched-literal propagation (`prop/long.rs`),
 //! 1-UIP conflict analysis with clause learning (`analyze_conflict.rs`),
-//! non-chronological backjumping, and VSIDS decisions with phase saving.
-//! Its infrastructure (proof/DRAT logging, clause-DB GC, assumptions, restarts,
-//! the `partial_ref` context, multithreading) is intentionally omitted.
+//! non-chronological backjumping, VSIDS decisions with phase saving, and
+//! assumption-based solving. Remaining infrastructure (proof/DRAT logging,
+//! clause-DB GC, restarts, the `partial_ref` context, multithreading) is
+//! intentionally omitted.
 
 extern crate alloc;
 
@@ -101,17 +106,15 @@ struct Watch {
     blocking: SatLit,
 }
 
-/// The outcome of a single CDCL transition. Makes the search direction explicit.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Step {
-    /// A clause was falsified; it was analyzed, learned, and backjumped.
-    LearntFromConflict,
-    /// A new decision literal was assigned.
-    Decided,
-    /// Every variable is assigned — the formula is satisfied.
+/// What the decision phase produced. The search loop reacts to each.
+enum Decision {
+    /// A literal (an assumption or a VSIDS branch) was enqueued; propagate next.
+    Propagated,
+    /// Every variable is assigned under the assumptions — satisfiable.
     Sat,
-    /// A conflict at decision level 0 — the formula is unsatisfiable.
-    Unsat,
+    /// An assumption is contradicted; carries a sufficient core (a subset of the
+    /// assumptions). An empty core means UNSAT independent of the assumptions.
+    UnsatCore(Vec<SatLit>),
 }
 
 /// The full CDCL search state: the assignment trail with decision levels, the
@@ -132,6 +135,10 @@ struct Solver {
     polarity: Vec<bool>, // phase saving
     seen: Vec<bool>,     // reusable scratch for analyze (invariant: all-false between calls)
     ok: bool,            // false once the formula is known UNSAT
+    // Literals forced true before VSIDS branching. Decision levels 1..=len map
+    // one-to-one to assumptions[0..]; an already-true assumption still consumes a
+    // (dummy) level so that mapping holds. Empty for a plain solve.
+    assumptions: Vec<SatLit>,
 }
 
 impl Solver {
@@ -153,6 +160,7 @@ impl Solver {
             polarity: vec![false; n],
             seen: vec![false; n],
             ok: true,
+            assumptions: Vec::new(),
         };
         for clause in &cnf.clauses {
             s.add_clause(clause);
@@ -435,6 +443,55 @@ impl Solver {
         max_l
     }
 
+    /// MiniSat's `analyzeFinal`. `true_lit` is currently TRUE on the trail and is
+    /// the negation of a contradicted assumption; walk its implication graph and
+    /// collect the assumptions that entail it. Returns a *sufficient* core — a
+    /// subset of [`Solver::assumptions`] (including the contradicted assumption
+    /// itself) such that `cnf ∧ core` is unsatisfiable. Restores `seen` on exit.
+    fn analyze_final(&mut self, true_lit: SatLit) -> Vec<SatLit> {
+        let mut core = vec![true_lit.negate()]; // the contradicted assumption
+        if self.current_level() == 0 {
+            // `cnf` entails `~assumption` outright; the assumption alone suffices.
+            return core;
+        }
+        let assn = self.assumptions.len() as u32;
+        let start = self.decisions[0]; // trail index where level 1 begins
+        self.seen[true_lit.var() as usize] = true;
+        let mut touched = vec![true_lit.var()];
+        let mut i = self.trail.len();
+        while i > start {
+            i -= 1;
+            let x = self.trail[i].var() as usize;
+            if !self.seen[x] {
+                continue;
+            }
+            self.seen[x] = false;
+            match self.reason[x] {
+                // A decision sitting at an assumption level *is* an assumption.
+                Reason::Decision => {
+                    if self.level[x] > 0 && self.level[x] <= assn {
+                        core.push(self.trail[i]);
+                    }
+                }
+                Reason::Unit => {}
+                // Pull in the antecedents (clause[1..] are the false literals).
+                Reason::Long(cr) => {
+                    for j in 1..self.clauses[cr].len() {
+                        let v = self.clauses[cr][j].var();
+                        if self.level[v as usize] > 0 && !self.seen[v as usize] {
+                            self.seen[v as usize] = true;
+                            touched.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        for v in touched {
+            self.seen[v as usize] = false;
+        }
+        core
+    }
+
     /// Undo assignments above `level`, saving each unset variable's phase for
     /// later reuse, and rewind the propagation queue to that level.
     fn backtrack(&mut self, level: u32) {
@@ -483,44 +540,64 @@ impl Solver {
 
     // -- the state machine --
 
-    /// Perform one CDCL transition.
-    fn step(&mut self) -> Step {
-        if let Some(cref) = self.propagate() {
-            if self.decisions.is_empty() {
-                return Step::Unsat;
+    /// The decision phase: place the next not-yet-satisfied assumption (or detect a
+    /// contradicted one and return its core), otherwise branch by VSIDS. Each
+    /// assumption — even an already-true one (a dummy level) — consumes exactly one
+    /// decision level, so level `i+1` always corresponds to `assumptions[i]`.
+    fn decide(&mut self) -> Decision {
+        while (self.current_level() as usize) < self.assumptions.len() {
+            let p = self.assumptions[self.current_level() as usize];
+            if self.lit_is_true(p) {
+                self.decisions.push(self.trail.len()); // dummy level, nothing enqueued
+            } else if self.lit_is_false(p) {
+                return Decision::UnsatCore(self.analyze_final(p.negate()));
+            } else {
+                self.decisions.push(self.trail.len());
+                self.enqueue(p, Reason::Decision);
+                return Decision::Propagated;
             }
-            let (learned, backjump) = self.analyze(cref);
-            self.backtrack(backjump);
-            self.learn(learned);
-            Step::LearntFromConflict
-        } else {
-            match self.pick_branch() {
-                None => Step::Sat,
-                Some(lit) => {
-                    self.decisions.push(self.trail.len());
-                    self.enqueue(lit, Reason::Decision);
-                    Step::Decided
+        }
+        match self.pick_branch() {
+            None => Decision::Sat,
+            Some(lit) => {
+                self.decisions.push(self.trail.len());
+                self.enqueue(lit, Reason::Decision);
+                Decision::Propagated
+            }
+        }
+    }
+
+    /// Drive the search to a terminal state under the current assumptions.
+    /// `Ok(())` = SAT; `Err(core)` = UNSAT with a sufficient subset of the
+    /// assumptions (empty when unsat regardless of them). Re-entrant: after
+    /// [`Solver::block`] resets to level 0, calling it again continues the search.
+    fn run(&mut self) -> Result<(), Vec<SatLit>> {
+        if !self.ok {
+            return Err(Vec::new());
+        }
+        loop {
+            if let Some(cref) = self.propagate() {
+                if self.current_level() == 0 {
+                    self.ok = false;
+                    return Err(Vec::new());
+                }
+                let (learned, backjump) = self.analyze(cref);
+                self.backtrack(backjump);
+                self.learn(learned);
+            } else {
+                match self.decide() {
+                    Decision::Propagated => {}
+                    Decision::Sat => return Ok(()),
+                    Decision::UnsatCore(core) => return Err(core),
                 }
             }
         }
     }
 
-    /// Drive steps until SAT or UNSAT. Re-entrant: after [`Solver::block`] adds a
-    /// clause and resets to level 0, calling this again continues the search.
+    /// Plain satisfiability (no assumptions): `true` if a model exists. Re-entrant
+    /// for [`Models`] enumeration.
     fn search(&mut self) -> bool {
-        if !self.ok {
-            return false;
-        }
-        loop {
-            match self.step() {
-                Step::Sat => return true,
-                Step::Unsat => {
-                    self.ok = false;
-                    return false;
-                }
-                _ => {}
-            }
-        }
+        self.run().is_ok()
     }
 
     /// Snapshot the assignment as `var -> bool` (any still-unassigned variable,
@@ -554,10 +631,35 @@ impl Solver {
 
 // --- public API ------------------------------------------------------------
 
+/// The outcome of [`solve_assuming`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Solved {
+    /// Satisfiable: a full model (`var -> bool`).
+    Sat(Vec<bool>),
+    /// Unsatisfiable under the assumptions: a *sufficient* subset of them (a core)
+    /// such that `cnf ∧ core` is unsatisfiable. Empty means the formula is
+    /// unsatisfiable regardless of the assumptions. Not guaranteed minimal.
+    Unsat(Vec<SatLit>),
+}
+
+/// Solve `cnf` with every literal in `assumptions` forced true. Returns a model,
+/// or an unsat core — a sufficient (not necessarily minimal) subset of
+/// `assumptions`. Minimize the core separately if you need 1-minimality.
+pub fn solve_assuming(cnf: &Cnf, assumptions: &[SatLit]) -> Solved {
+    let mut s = Solver::new(cnf);
+    s.assumptions = assumptions.to_vec();
+    match s.run() {
+        Ok(()) => Solved::Sat(s.model()),
+        Err(core) => Solved::Unsat(core),
+    }
+}
+
 /// Solve a CNF. Returns a full model (`var -> bool`) or `None` if unsatisfiable.
 pub fn solve(cnf: &Cnf) -> Option<Vec<bool>> {
-    let mut s = Solver::new(cnf);
-    if s.search() { Some(s.model()) } else { None }
+    match solve_assuming(cnf, &[]) {
+        Solved::Sat(model) => Some(model),
+        Solved::Unsat(_) => None,
+    }
 }
 
 /// A lazy iterator over the models of a CNF, distinct on the `project` variables.
@@ -663,6 +765,58 @@ mod tests {
         assert_eq!(first_two.len(), 2);
         assert_ne!(first_two[0], first_two[1]);
         assert_eq!(all_models(&c, vec![0, 1]).count(), 3);
+    }
+
+    #[test]
+    fn assumption_forces_a_model() {
+        // (a ∨ b); assume ¬a ⇒ b must be true.
+        let mut c = Cnf::new(2);
+        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+        match solve_assuming(&c, &[SatLit::negative(0)]) {
+            Solved::Sat(m) => {
+                assert!(!m[0] && m[1]);
+            }
+            Solved::Unsat(_) => panic!("should be SAT under ¬a"),
+        }
+    }
+
+    #[test]
+    fn contradicted_assumptions_yield_a_sufficient_core() {
+        // (¬a ∨ ¬b); assume a and b ⇒ UNSAT, core ⊆ {a, b} and cnf ∧ core UNSAT.
+        let mut c = Cnf::new(2);
+        c.add_clause(vec![SatLit::negative(0), SatLit::negative(1)]);
+        let assumptions = [SatLit::positive(0), SatLit::positive(1)];
+        match solve_assuming(&c, &assumptions) {
+            Solved::Unsat(core) => {
+                assert!(!core.is_empty());
+                assert!(core.iter().all(|l| assumptions.contains(l)));
+                // cnf ∧ core is unsatisfiable.
+                let mut cc = c.clone();
+                for l in &core {
+                    cc.add_clause(vec![*l]);
+                }
+                assert!(solve(&cc).is_none());
+            }
+            Solved::Sat(_) => panic!("a ∧ b violates (¬a ∨ ¬b)"),
+        }
+    }
+
+    #[test]
+    fn satisfiable_assumptions_round_trip() {
+        // Independent vars; assuming a few is fine and the model honors them.
+        let mut c = Cnf::new(3);
+        c.add_clause(vec![
+            SatLit::positive(0),
+            SatLit::positive(1),
+            SatLit::positive(2),
+        ]);
+        let assumptions = [SatLit::positive(0), SatLit::negative(2)];
+        match solve_assuming(&c, &assumptions) {
+            Solved::Sat(m) => {
+                assert!(m[0] && !m[2]);
+            }
+            Solved::Unsat(_) => panic!("should be SAT"),
+        }
     }
 
     #[test]
