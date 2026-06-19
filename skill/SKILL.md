@@ -89,9 +89,18 @@ An atom is `Subject predicate [object]`.
 | `PREMISE n:` → `ONEOF` | **exactly one** is TRUE |
 | `PREMISE n:` → `ATLEAST` | **at least one** is TRUE |
 | `PREMISE n:` → `WHEN a` `AND b` `THEN c` | if `a ∧ b` hold then `c` must hold (else CONFLICT) |
+| `PREMISE n:` → `WHEN a` `OR b` `THEN c` | if **either** `a` or `b` holds then `c` must hold |
+| `PREMISE n:` → `WHEN a` `THEN b` `OR c` | if `a` holds then **at least one** of `b`/`c` must hold |
 | `RULE n:` → `WHEN … THEN c` | same shape, but **derives** `c` as a new fact |
 | `IMPORT "lib.vrf"` | merge a reusable premise library (atoms unify across files) |
 | `CHECK [s] [BIDIRECTIONAL]` | run it; `BIDIRECTIONAL` also searches for alternative models (UNDERDETERMINED) |
+
+**`AND` / `OR` in `WHEN`/`THEN`.** Continuation lines use `AND` *or* `OR` — but
+**do not mix them in one group** (`WHEN a AND b OR c` is a parse error; split into
+two premises). Each is its own line: `WHEN a` / `OR b` / `THEN c`. A `RULE`
+*derives* its result, so **`OR` in a `RULE`'s `THEN` is rejected** (a rule can't
+assert "one of these"); use a `PREMISE` for a disjunctive consequent. There is no
+`AND`/`OR` *inside* one literal and no parentheses — group logic across lines.
 
 Numbers? Turn a condition into a named boolean atom (`speed >= 100` → `over_100`)
 and reason about the branch, not the arithmetic.
@@ -105,10 +114,16 @@ engine stays small and total.
 
 **Atom identity is verbatim — the #1 gotcha.** Atoms are compared
 character-for-character, case-sensitively, by the triple `(subject, predicate,
-object)`. `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`. A typo or alternate spelling
-silently creates a *new* UNKNOWN atom — so a premise about `Engine has fuel` will
-not see your `Engine has_fuel`. Keep names identical across facts, premises, and
-imports, or you'll get phantom WARNINGs.
+object)`. `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`, and crucially **`is rolled_back`
+(two words) ≠ `is_rolled_back` (one word)** — `_` vs space changes which token is
+the predicate vs the object, so they are different atoms. A typo or alternate
+spelling silently creates a *new* UNKNOWN atom — so a premise about `Engine has
+fuel` will not see your `Engine has_fuel`, and the constraint you thought you wrote
+simply never fires. **Before each run, scan your atoms and make every name that
+should be the same atom byte-identical** (pick one spelling for a state/predicate
+and reuse it everywhere — facts, premises, rules, imports). Mismatches show up as
+phantom WARNINGs or, worse, as a check that silently passes because it never
+engaged.
 
 **WHEN…THEN: why WARNING vs CONFLICT.** For `WHEN A AND B THEN C`:
 
@@ -152,9 +167,11 @@ of mistakes a model makes across a long chain.
 - **Exactly one of N** → `ONEOF`. (Each person one role; a request is exactly one of pending/done/failed.)
 - **Mutually exclusive** → `EXCLUSIVE` / `FORBIDS`. (Can't be both `fast_path` and `slow_path`.)
 - **Required together / gate** → `WHEN … THEN …`. (Deploy only when built ∧ tested ∧ reviewed.)
-- **At least one** → `ATLEAST`. (At least one reviewer; at least one branch taken.)
+- **At least one (unconditional)** → `ATLEAST`. (At least one reviewer; at least one branch taken.)
+- **Conditional disjunction** ("if `p` then one of `a`/`b`/`c`") → `WHEN p` `THEN a` `OR b` `OR c`. (If gateway is in prod, then at least one backend is in staging.)
+- **Any of several triggers** ("if `a` or `b` then `c`") → `WHEN a` `OR b` `THEN c`.
 - **Ordering / implication between thresholds** → `WHEN over_200 THEN over_100`.
-- **Derive consequences** → `RULE`. (If `flying`, derive `needs oxygen`.)
+- **Derive consequences** → `RULE`. (If `flying`, derive `needs oxygen`.) For a *disjunctive* result, use a `PREMISE` with `THEN … OR …`, not a `RULE`.
 - **Shared first principles** → `IMPORT` a vetted library; you write only the `FACT`s.
 
 ## Worked examples (note the loop)
@@ -278,6 +295,30 @@ can swap). Add `FACT bob is lead` (two leads) → `CONFLICT`. This is the payoff
 "simplified SAT": you state the rules, the engine does the case analysis you'd
 otherwise get wrong by hand.
 
+### 6. Disjunction — `OR` in `WHEN` / `THEN`
+
+"If the gateway is in production, at least one backend must be in staging." The
+consequent is a disjunction, so use `THEN … OR …` (not several `THEN`s, and not a
+`RULE` — a rule cannot derive "one of these"):
+
+```vrf
+PREMISE gateway_needs_backend:
+    WHEN gateway is_prod
+    THEN auth is_staging
+    OR   api is_staging
+    OR   db is_staging
+FACT gateway is_prod
+NOT  auth is_staging
+NOT  api is_staging
+NOT  db is_staging
+CHECK
+```
+
+`CONFLICT` — the gate fires but every backend is out of staging. Set any one to
+`FACT … is_staging` → `CONSISTENT`. Mirror image on the left: `WHEN a OR b THEN c`
+fires when *either* trigger holds. Remember: **don't mix `AND` and `OR` in one
+group**, and keep atom names byte-identical (`is_staging`, not `is staging`).
+
 ## Reading a CONFLICT: the `why:` trace
 
 A `CONFLICT` is not a dead end — the report shows **why**. For a violated premise
@@ -335,22 +376,29 @@ EXIT_CODE: 2              # 2 = CONFLICT
 with that same `program` and check `status` == `"CONFLICT"`.) If it answers
 anything else, the install is broken — fix that before trusting any result.
 
-**Step 0.6 — version check (don't skip).** This skill targets the version in the
-marker below. Read the engine's version and confirm they're identical.
+**Step 0.6 — version check (mandatory, emit the line).** This skill targets the
+version in the marker below. Read the engine's version and **print one explicit
+line** comparing them before anything else — do not just "note it" silently and
+move on. The line is required output:
 
-<!-- skill-version: 0.4.1 -->
+```
+elenchus version check: skill <marker> vs engine <reported> → OK | SKEW
+```
+
+<!-- skill-version: 0.5.0 -->
 
 - **CLI**: `elenchus --version` (or `-V`) → `elenchus x.y.z`.
 - **MCP**: call the `elenchus_version` tool → `elenchus x.y.z` (the model can't see
   `initialize`'s `serverInfo.version`, so use this tool).
 
-If the reported version differs from the `skill-version` marker above, **STOP** and
-warn the user before relying on anything below — e.g. *"⚠️ version skew: skill
-targets x.y.z, engine reports a.b.c"* — and say which side is **newer**: skill
-newer → the binary is outdated (features here like the `why:` trace / `CORE` may be
-missing, update elenchus); binary newer → this skill is stale (flags or output may
-have changed, update the skill). You may still run it, but mark results "verify —
-version skew".
+If they match → print `→ OK` and proceed. If they differ → print `→ SKEW` and
+**STOP to warn the user** before relying on anything below. Do **not** rationalize
+a skew as "probably fine" (a newer engine is *not* automatically safe — flags,
+output, or semantics may have changed). Say which side is **newer**: skill newer →
+the binary is outdated (features here like `OR`, the `why:` trace, or `CORE` may be
+missing — update elenchus); engine newer → this skill is stale (syntax or output
+may have changed — update the skill). You may still run it, but tag every result
+"verify — version skew".
 
 **CLI + this skill — preferred when you have a shell.** Run the `elenchus` binary
 via Bash. One portable binary, zero host config.
