@@ -6,5 +6,8 @@ RESULT: CONFLICT
   CONFLICT  fly_xor_swim (EXCLUSIVE)  [conflict.vrf:6]
       Animal.B has flying
       Animal.B has swimming
+      why:
+        Animal.B has flying = TRUE   [FACT conflict.vrf:3]
+        Animal.B has swimming = TRUE   [FACT conflict.vrf:4]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2
