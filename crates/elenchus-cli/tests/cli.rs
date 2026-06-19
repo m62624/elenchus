@@ -39,14 +39,26 @@ fn no_args_prints_help_instead_of_waiting_for_stdin() {
 
 #[test]
 fn dash_reads_stdin() {
-    let out = elenchus_with_stdin(&["-"], "FACT x a\nCHECK x\n");
+    let out = elenchus_with_stdin(
+        &["-"],
+        r#"
+        FACT x a
+        CHECK x
+        "#,
+    );
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("CONSISTENT"));
 }
 
 #[test]
 fn text_consistent_exits_0() {
-    let out = elenchus(&["--text", "FACT x a\nCHECK x\n"]);
+    let out = elenchus(&[
+        "--text",
+        r#"
+        FACT x a
+        CHECK x
+        "#,
+    ]);
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("CONSISTENT"));
 }
@@ -55,20 +67,41 @@ fn text_consistent_exits_0() {
 fn text_warning_exits_1() {
     let out = elenchus(&[
         "--text",
-        "FACT x a\nPREMISE w:\n WHEN x a\n THEN x b\nCHECK x\n",
+        r#"
+        FACT x a
+        PREMISE w:
+            WHEN x a
+            THEN x b
+        CHECK x
+        "#,
     ]);
     assert_eq!(out.status.code(), Some(1));
 }
 
 #[test]
 fn text_conflict_exits_2() {
-    let out = elenchus(&["--text", "FACT x a\nNOT x a\nCHECK x\n"]);
+    let out = elenchus(&[
+        "--text",
+        r#"
+        FACT x a
+        NOT x a
+        CHECK x
+        "#,
+    ]);
     assert_eq!(out.status.code(), Some(2));
 }
 
 #[test]
 fn json_format_is_emitted() {
-    let out = elenchus(&["--text", "FACT x a\nCHECK x\n", "--format", "json"]);
+    let out = elenchus(&[
+        "--text",
+        r#"
+        FACT x a
+        CHECK x
+        "#,
+        "--format",
+        "json",
+    ]);
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("\"status\":\"CONSISTENT\""));
     assert!(s.contains("\"exit_code\":0"));
@@ -76,22 +109,24 @@ fn json_format_is_emitted() {
 
 #[test]
 fn whitespace_is_cosmetic_indented_equals_flat() {
-    // A multi-line program written the readable way: indented WHEN/THEN block.
-    let pretty = "FACT svc built\n\
-                  PREMISE gate:\n    \
-                      WHEN svc built\n    \
-                      THEN svc ready\n\
-                  FACT svc ready\n\
-                  CHECK svc\n";
-    // The exact same program with no indentation. The parser is line-oriented
-    // (newlines required) but ignores leading/extra spaces, so this must be
-    // byte-for-byte identical output.
-    let flat = "FACT svc built\n\
-                PREMISE gate:\n\
-                WHEN svc built\n\
-                THEN svc ready\n\
-                FACT svc ready\n\
-                CHECK svc\n";
+    // The same program written fully indented vs. flat at column 0. Indentation
+    // is cosmetic everywhere, so both must produce a byte-identical report.
+    let pretty = r#"
+        FACT svc built
+        PREMISE gate:
+            WHEN svc built
+            THEN svc ready
+        FACT svc ready
+        CHECK svc
+        "#;
+    let flat = r#"
+FACT svc built
+PREMISE gate:
+WHEN svc built
+THEN svc ready
+FACT svc ready
+CHECK svc
+"#;
     let a = elenchus(&["--text", pretty]);
     let b = elenchus(&["--text", flat]);
     assert_eq!(
@@ -128,8 +163,16 @@ fn consequent_or_is_satisfied_by_one_disjunct() {
     // (Would be CONFLICT if OR were wrongly treated as AND.)
     let out = elenchus(&[
         "--text",
-        "PREMISE gw:\n WHEN gateway is_prod\n THEN auth is_staging\n OR api is_staging\n\
-         FACT gateway is_prod\nFACT auth is_staging\nNOT api is_staging\nCHECK\n",
+        r#"
+        PREMISE gw:
+            WHEN gateway is_prod
+            THEN auth is_staging
+            OR api is_staging
+        FACT gateway is_prod
+        FACT auth is_staging
+        NOT api is_staging
+        CHECK
+        "#,
     ]);
     assert_eq!(out.status.code(), Some(0), "one disjunct true → CONSISTENT");
 }
@@ -139,8 +182,16 @@ fn consequent_or_conflicts_when_all_disjuncts_false() {
     // Both disjuncts false while the antecedent holds ⇒ CONFLICT.
     let out = elenchus(&[
         "--text",
-        "PREMISE gw:\n WHEN gateway is_prod\n THEN auth is_staging\n OR api is_staging\n\
-         FACT gateway is_prod\nNOT auth is_staging\nNOT api is_staging\nCHECK\n",
+        r#"
+        PREMISE gw:
+            WHEN gateway is_prod
+            THEN auth is_staging
+            OR api is_staging
+        FACT gateway is_prod
+        NOT auth is_staging
+        NOT api is_staging
+        CHECK
+        "#,
     ]);
     assert_eq!(out.status.code(), Some(2), "all disjuncts false → CONFLICT");
 }
@@ -151,7 +202,15 @@ fn antecedent_or_fires_on_any_disjunct() {
     // (Would be CONSISTENT if OR were wrongly treated as AND, since x a is UNKNOWN.)
     let out = elenchus(&[
         "--text",
-        "PREMISE r:\n WHEN x a\n OR x b\n THEN x c\nFACT x b\nNOT x c\nCHECK\n",
+        r#"
+        PREMISE r:
+            WHEN x a
+            OR x b
+            THEN x c
+        FACT x b
+        NOT x c
+        CHECK
+        "#,
     ]);
     assert_eq!(
         out.status.code(),
