@@ -140,6 +140,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        ..
                     },
             },
             Stmt::Impl {
@@ -156,6 +157,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        ..
                     },
             },
             Stmt::Impl {

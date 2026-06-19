@@ -87,6 +87,16 @@ pub enum ListOp {
     AtLeast,
 }
 
+/// How the literals in a `WHEN`/`THEN` group combine. A single-literal group is
+/// always [`Conn::And`] (the connective is irrelevant with one literal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conn {
+    /// Continuation lines used `AND` — all literals must hold.
+    And,
+    /// Continuation lines used `OR` — at least one literal must hold.
+    Or,
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -97,12 +107,17 @@ pub enum Body<'a> {
         /// The atoms it ranges over (the parser guarantees at least two).
         atoms: Vec<Located<'a, Atom<'a>>>,
     },
-    /// `WHEN ... [AND ...] THEN ... [AND ...]` — antecedent + consequent literals.
+    /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...]` — antecedent + consequent.
+    /// Within one group the continuation keyword is uniform (no mixing `AND`/`OR`).
     Impl {
-        /// `WHEN`/`AND` conditions; all must hold (logical AND).
+        /// `WHEN`/`AND`/`OR` conditions.
         antecedent: Vec<Located<'a, Literal<'a>>>,
-        /// `THEN`/`AND` results that follow when the antecedent holds.
+        /// How the antecedent literals combine.
+        ante_conn: Conn,
+        /// `THEN`/`AND`/`OR` results that follow when the antecedent holds.
         consequent: Vec<Located<'a, Literal<'a>>>,
+        /// How the consequent literals combine.
+        cons_conn: Conn,
     },
 }
 
@@ -157,6 +172,7 @@ pub const RESERVED: &[&str] = &[
     "BIDIRECTIONAL",
     "WHEN",
     "AND",
+    "OR",
     "THEN",
     "EXCLUSIVE",
     "FORBIDS",
@@ -398,20 +414,49 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     Ok((input, Body::List { op, atoms }))
 }
 
-/// A continuation `AND <literal>` line inside a `WHEN`/`THEN` block. Returns a
-/// recoverable `Error` when the line is not an `AND` so `many0` stops cleanly.
-fn and_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
+/// A continuation `AND <literal>` / `OR <literal>` line inside a `WHEN`/`THEN`
+/// block. Returns `(Conn, literal)`. A line that is neither `AND` nor `OR` yields
+/// a recoverable `Error` so `many0` stops cleanly (e.g. at `THEN`/EOF).
+fn cont_line<'a>(input: Span<'a>) -> PResult<'a, (Conn, Located<'a, Literal<'a>>)> {
     let (input, _) = space0(input)?;
-    // Not an AND line → Error so many0 stops cleanly.
-    let (input, _) = (tag("AND"), space1).parse(input)?;
+    // Not an AND/OR line → Error so many0 stops cleanly.
+    let (input, conn) =
+        alt((value(Conn::And, tag("AND")), value(Conn::Or, tag("OR")))).parse(input)?;
+    let (input, _) = space1(input)?;
     let at = input;
     let (input, lit) = promote(
         literal(input),
         at,
-        "AND expects a literal: [NOT] <Subject> <predicate> [<object>]",
+        "AND/OR expects a literal: [NOT] <Subject> <predicate> [<object>]",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after the AND literal")?;
-    Ok((input, lit))
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the AND/OR literal",
+    )?;
+    Ok((input, (conn, lit)))
+}
+
+/// Reduce a group's continuation lines to a single [`Conn`], rejecting a mix of
+/// `AND` and `OR` in one group (point the error at the first line that switches).
+fn group_conn<'a>(conts: &[(Conn, Located<'a, Literal<'a>>)]) -> Result<Conn, Span<'a>> {
+    let mut seen: Option<Conn> = None;
+    for (conn, lit) in conts {
+        match seen {
+            None => seen = Some(*conn),
+            Some(s) if s != *conn => return Err(lit.span),
+            _ => {}
+        }
+    }
+    Ok(seen.unwrap_or(Conn::And))
+}
+
+/// Fail with a committed message at `at` (for in-body semantic checks).
+fn fail_at<'a, T>(at: Span<'a>, msg: &str) -> PResult<'a, T> {
+    Err(nom::Err::Failure(Problem {
+        input: at,
+        message: String::from(msg),
+    }))
 }
 
 /// An implication body: `WHEN <lit> [AND <lit>]* THEN <lit> [AND <lit>]*`.
@@ -432,7 +477,16 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         "WHEN expects a literal: [NOT] <Subject> <predicate> [<object>]",
     )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the WHEN literal")?;
-    let (input, ante_rest) = many0(and_line).parse(input)?;
+    let (input, ante_rest) = many0(cont_line).parse(input)?;
+    let ante_conn = match group_conn(&ante_rest) {
+        Ok(c) => c,
+        Err(span) => {
+            return fail_at(
+                span,
+                "don't mix AND and OR in one WHEN group — split it into separate premises",
+            );
+        }
+    };
 
     let (input, _) = space0(input)?;
     let at = input;
@@ -448,17 +502,28 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         "THEN expects a literal: [NOT] <Subject> <predicate> [<object>]",
     )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the THEN literal")?;
-    let (input, cons_rest) = many0(and_line).parse(input)?;
+    let (input, cons_rest) = many0(cont_line).parse(input)?;
+    let cons_conn = match group_conn(&cons_rest) {
+        Ok(c) => c,
+        Err(span) => {
+            return fail_at(
+                span,
+                "don't mix AND and OR in one THEN group — split it into separate premises",
+            );
+        }
+    };
 
     let mut antecedent = vec![when];
-    antecedent.extend(ante_rest);
+    antecedent.extend(ante_rest.into_iter().map(|(_, l)| l));
     let mut consequent = vec![then];
-    consequent.extend(cons_rest);
+    consequent.extend(cons_rest.into_iter().map(|(_, l)| l));
     Ok((
         input,
         Body::Impl {
             antecedent,
+            ante_conn,
             consequent,
+            cons_conn,
         },
     ))
 }
@@ -747,6 +812,7 @@ mod tests {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        ..
                     },
                 ..
             } => {
@@ -770,6 +836,7 @@ mod tests {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        ..
                     },
                 ..
             } => {
@@ -778,6 +845,64 @@ mod tests {
             }
             other => panic!("unexpected: {:?}", other),
         }
+    }
+
+    #[test]
+    fn when_or_sets_disjunctive_antecedent() {
+        let src = "PREMISE p:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        match &prog(src).statements[0] {
+            Statement::Premise {
+                body:
+                    Body::Impl {
+                        antecedent,
+                        ante_conn,
+                        consequent,
+                        cons_conn,
+                    },
+                ..
+            } => {
+                assert_eq!(antecedent.len(), 2);
+                assert_eq!(*ante_conn, Conn::Or);
+                assert_eq!(consequent.len(), 1);
+                assert_eq!(*cons_conn, Conn::And); // single consequent → AND
+            }
+            other => panic!("expected impl premise, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn then_or_sets_disjunctive_consequent() {
+        let src = "PREMISE p:\n    WHEN x a\n    THEN x b\n    OR x c\n";
+        match &prog(src).statements[0] {
+            Statement::Premise {
+                body:
+                    Body::Impl {
+                        consequent,
+                        cons_conn,
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(consequent.len(), 2);
+                assert_eq!(*cons_conn, Conn::Or);
+            }
+            other => panic!("expected impl premise, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mixing_and_or_in_one_group_is_an_error() {
+        assert!(
+            parse("PREMISE p:\n    WHEN x a\n    AND x b\n    OR x c\n    THEN x d\n").is_err()
+        );
+        assert!(
+            parse("PREMISE p:\n    WHEN x a\n    THEN x b\n    AND x c\n    OR x d\n").is_err()
+        );
+    }
+
+    #[test]
+    fn or_is_a_reserved_word() {
+        assert!(parse("FACT OR has x\n").is_err());
     }
 
     #[test]
@@ -884,6 +1009,7 @@ mod tests {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        ..
                     } => {
                         assert_eq!(antecedent[0].data.atom.subject, "собака");
                         assert_eq!(consequent[0].data.atom.subject, "собака");

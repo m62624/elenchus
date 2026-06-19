@@ -123,6 +123,44 @@ fn parse_error_exits_2_with_message() {
 }
 
 #[test]
+fn consequent_or_is_satisfied_by_one_disjunct() {
+    // gateway prod ⇒ (auth staging ∨ api staging); auth staging holds ⇒ CONSISTENT.
+    // (Would be CONFLICT if OR were wrongly treated as AND.)
+    let out = elenchus(&[
+        "--text",
+        "PREMISE gw:\n WHEN gateway is_prod\n THEN auth is_staging\n OR api is_staging\n\
+         FACT gateway is_prod\nFACT auth is_staging\nNOT api is_staging\nCHECK\n",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "one disjunct true → CONSISTENT");
+}
+
+#[test]
+fn consequent_or_conflicts_when_all_disjuncts_false() {
+    // Both disjuncts false while the antecedent holds ⇒ CONFLICT.
+    let out = elenchus(&[
+        "--text",
+        "PREMISE gw:\n WHEN gateway is_prod\n THEN auth is_staging\n OR api is_staging\n\
+         FACT gateway is_prod\nNOT auth is_staging\nNOT api is_staging\nCHECK\n",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "all disjuncts false → CONFLICT");
+}
+
+#[test]
+fn antecedent_or_fires_on_any_disjunct() {
+    // (x a ∨ x b) ⇒ x c ; x b holds but NOT x c ⇒ CONFLICT.
+    // (Would be CONSISTENT if OR were wrongly treated as AND, since x a is UNKNOWN.)
+    let out = elenchus(&[
+        "--text",
+        "PREMISE r:\n WHEN x a\n OR x b\n THEN x c\nFACT x b\nNOT x c\nCHECK\n",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "OR antecedent fires on x b → CONFLICT"
+    );
+}
+
+#[test]
 fn file_with_imports_is_resolved() {
     // import-demo.vrf imports physics.vrf relative to itself — a deliberate conflict.
     let path = format!(

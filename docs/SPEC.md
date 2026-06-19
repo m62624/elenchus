@@ -176,7 +176,19 @@ ATLEAST P Q ...      =  Impossible([NOT P, NOT Q, ...])     // at least one TRUE
 ONEOF   P Q ...      =  Impossible([P, Q, ...])             // at most one
                      +  Impossible([NOT P, NOT Q, ...])      // exactly one (= + at least one)
 WHEN A AND B THEN C  =  Impossible([A, B, NOT C])           // several conditions
+WHEN A THEN C OR D   =  Impossible([A, NOT C, NOT D])       // disjunctive consequent
+WHEN A OR B THEN C   =  Impossible([A, NOT C])              // disjunctive antecedent
+                     +  Impossible([B, NOT C])              //   = (A→C) ∧ (B→C)
 ```
+
+`AND`/`OR` may appear in either the `WHEN` group or the `THEN` group, but one
+group may not mix them (`WHEN a AND b OR c` is a parse error — split it). The four
+combinations follow one rule: group each side by its connective, then emit one
+`Impossible(antecedent-group ++ ¬consequent-group)` per group pair (AND-ante puts
+all its literals in every clause; OR-ante makes one clause per literal; AND-cons
+makes one clause per literal; OR-cons puts all its literals in every clause). A
+`RULE` *derives* its consequent, so `OR` in a `RULE`'s `THEN` is rejected (a rule
+cannot assert a disjunction) — use a `PREMISE` constraint instead.
 
 Compare with De Morgan — it is literally the same operation:
 
@@ -436,10 +448,11 @@ list_body   = list_op , NEWLINE , atom_line , atom_line , { atom_line } ;  (* >=
 list_op     = "EXCLUSIVE" | "FORBIDS" | "ONEOF" | "ATLEAST" ;
 atom_line   = atom , NEWLINE ;
 
-impl_body   = when_line , { and_line } , then_line , { and_line } ;
+impl_body   = when_line , { cont_line } , then_line , { cont_line } ;
 when_line   = "WHEN" , literal , NEWLINE ;
 then_line   = "THEN" , literal , NEWLINE ;
-and_line    = "AND"  , literal , NEWLINE ;
+cont_line   = ( "AND" | "OR" ) , literal , NEWLINE ;
+            (* one group (antecedent or consequent) may not mix AND and OR *)
 
 atom        = subject , predicate , [ object ] ;
 literal     = [ "NOT" ] , atom ;

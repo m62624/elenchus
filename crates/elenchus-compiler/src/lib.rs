@@ -32,7 +32,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-use elenchus_parser::{Atom, Body, ListOp, Literal, Statement};
+use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -194,6 +194,14 @@ pub enum CompileError {
     /// Imports form a cycle (a source transitively imports itself).
     #[error("circular import: {0}")]
     CircularImport(String),
+    /// A `RULE` used `OR` in its `THEN`: forward chaining cannot derive a
+    /// disjunction (it would not know which literal to assert). Model it as a
+    /// `PREMISE` constraint instead.
+    #[error("rule '{name}' cannot derive a disjunction (OR in THEN); use a PREMISE instead")]
+    RuleDisjunctiveConsequent {
+        /// The offending rule name.
+        name: String,
+    },
 }
 
 // --- raw (key-based) intermediate, before interning ------------------------
@@ -407,18 +415,41 @@ impl Compiler {
             // RULE always has an implication body (guaranteed by the grammar).
             if let Body::Impl {
                 antecedent,
+                ante_conn,
                 consequent,
+                cons_conn,
             } = body
             {
+                // A rule *derives* its consequent; an `OR` consequent is not a
+                // single fact to assert, so reject it (use a PREMISE instead).
+                if *cons_conn == Conn::Or {
+                    return Err(CompileError::RuleDisjunctiveConsequent {
+                        name: name.to_string(),
+                    });
+                }
                 let (ante, cons) = (raw_lits(antecedent), raw_lits(consequent));
                 for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
-                self.rules.push(RawRule {
-                    antecedent: ante,
-                    consequent: cons,
-                    origin: self.origin(source, line, Some(name), "RULE"),
-                });
+                let origin = self.origin(source, line, Some(name), "RULE");
+                match ante_conn {
+                    // a ∧ b → C : one rule firing on the whole antecedent.
+                    Conn::And => self.rules.push(RawRule {
+                        antecedent: ante,
+                        consequent: cons,
+                        origin,
+                    }),
+                    // (a ∨ b) → C == (a → C) ∧ (b → C): one rule per antecedent.
+                    Conn::Or => {
+                        for a in &ante {
+                            self.rules.push(RawRule {
+                                antecedent: vec![a.clone()],
+                                consequent: cons.clone(),
+                                origin: origin.clone(),
+                            });
+                        }
+                    }
+                }
             }
             return Ok(());
         }
@@ -450,23 +481,43 @@ impl Compiler {
             }
             Body::Impl {
                 antecedent,
+                ante_conn,
                 consequent,
+                cons_conn,
             } => {
-                // A1 ∧ … ∧ An → C  ==  Impossible([A1, …, An, NOT C]) for each consequent C.
+                // Implication A → C as `Impossible(A_true ∧ ¬C)`. We group each
+                // side by its connective and emit one clause per (ante × cons)
+                // group pair — a uniform rule covering all AND/OR combinations:
+                //   AND-ante → all its literals share every clause;
+                //   OR-ante  → one clause per literal;
+                //   AND-cons → one clause per (negated) literal;
+                //   OR-cons  → all its (negated) literals share every clause.
                 let ante = raw_lits(antecedent);
-                for l in &ante {
+                let cons = raw_lits(consequent);
+                for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
                 let origin = self.origin(source, line, Some(name), "PREMISE");
-                for c in consequent {
-                    let neg_c = RawLit {
-                        key: AtomKey::from_atom(&c.data.atom),
-                        negated: !c.data.negated,
-                    };
-                    self.intern(&neg_c.key);
-                    let mut lits = ante.clone();
-                    lits.push(neg_c);
-                    self.push_clause(lits, origin.clone());
+
+                let ante_groups: Vec<Vec<RawLit>> = match ante_conn {
+                    Conn::And => vec![ante.clone()],
+                    Conn::Or => ante.iter().map(|l| vec![l.clone()]).collect(),
+                };
+                let cons_groups: Vec<Vec<RawLit>> = match cons_conn {
+                    Conn::And => cons.iter().map(|l| vec![l.clone()]).collect(),
+                    Conn::Or => vec![cons.clone()],
+                };
+                for ag in &ante_groups {
+                    for cg in &cons_groups {
+                        let mut lits = ag.clone();
+                        for c in cg {
+                            lits.push(RawLit {
+                                key: c.key.clone(),
+                                negated: !c.negated,
+                            });
+                        }
+                        self.push_clause(lits, origin.clone());
+                    }
                 }
             }
         }
@@ -741,11 +792,18 @@ fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
         }
         Body::Impl {
             antecedent,
+            ante_conn,
             consequent,
+            cons_conn,
         } => {
+            let conn = |c: &Conn| if *c == Conn::Or { "OR" } else { "AND" };
             s.push_str("IMPL|ANTE|");
+            s.push_str(conn(ante_conn));
+            s.push('|');
             s.push_str(&lit_sigs(antecedent));
             s.push_str("|CONS|");
+            s.push_str(conn(cons_conn));
+            s.push('|');
             s.push_str(&lit_sigs(consequent));
         }
     }
@@ -827,6 +885,95 @@ mod tests {
             atom: b,
             negated: false
         }));
+    }
+
+    #[test]
+    fn consequent_or_is_one_clause_with_all_negated() {
+        // WHEN x p THEN x a OR x b  ==  Impossible([x p, NOT x a, NOT x b])
+        let src = "PREMISE r:\n    WHEN x p\n    THEN x a\n    OR x b\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.clauses.len(), 1);
+        let cl = &c.clauses[0];
+        assert_eq!(cl.lits.len(), 3);
+        let p = id(&c, &key("x", "p", None));
+        let a = id(&c, &key("x", "a", None));
+        let b = id(&c, &key("x", "b", None));
+        assert!(cl.lits.contains(&Lit {
+            atom: p,
+            negated: false
+        }));
+        assert!(cl.lits.contains(&Lit {
+            atom: a,
+            negated: true
+        }));
+        assert!(cl.lits.contains(&Lit {
+            atom: b,
+            negated: true
+        }));
+    }
+
+    #[test]
+    fn antecedent_or_is_one_clause_per_disjunct() {
+        // WHEN x a OR x b THEN x c
+        //   == Impossible([x a, NOT x c]) ∧ Impossible([x b, NOT x c])
+        let src = "PREMISE r:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.clauses.len(), 2);
+        let a = id(&c, &key("x", "a", None));
+        let b = id(&c, &key("x", "b", None));
+        let cc = id(&c, &key("x", "c", None));
+        // every clause has exactly two lits and carries NOT c
+        for cl in &c.clauses {
+            assert_eq!(cl.lits.len(), 2);
+            assert!(cl.lits.contains(&Lit {
+                atom: cc,
+                negated: true
+            }));
+        }
+        let has = |atom| {
+            c.clauses.iter().any(|cl| {
+                cl.lits.contains(&Lit {
+                    atom,
+                    negated: false,
+                })
+            })
+        };
+        assert!(has(a) && has(b));
+    }
+
+    #[test]
+    fn antecedent_or_with_consequent_or_distributes() {
+        // (a ∨ b) → (c ∨ d): Impossible([a,¬c,¬d]) ∧ Impossible([b,¬c,¬d])
+        let src = "PREMISE r:\n    WHEN x a\n    OR x b\n    THEN x c\n    OR x d\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.clauses.len(), 2);
+        for cl in &c.clauses {
+            assert_eq!(cl.lits.len(), 3);
+        }
+    }
+
+    #[test]
+    fn rule_with_or_antecedent_splits_into_two_rules() {
+        // (a ∨ b) → c derives c whenever either fires: two single-antecedent rules.
+        let src = "RULE r:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let c = compile_source("<t>", src).unwrap();
+        assert_eq!(c.rules.len(), 2);
+        assert!(
+            c.rules
+                .iter()
+                .all(|r| r.antecedent.len() == 1 && r.consequent.len() == 1)
+        );
+    }
+
+    #[test]
+    fn rule_with_or_consequent_is_rejected() {
+        // A rule cannot derive a disjunction — must be a PREMISE.
+        let src = "RULE r:\n    WHEN x a\n    THEN x b\n    OR x c\n";
+        let err = compile_source("<t>", src).unwrap_err();
+        assert!(matches!(
+            err,
+            CompileError::RuleDisjunctiveConsequent { .. }
+        ));
     }
 
     #[test]
