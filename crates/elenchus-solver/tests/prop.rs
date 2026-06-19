@@ -8,7 +8,7 @@
 
 use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
 use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
-use elenchus_solver::{Status, TraceReason, solve, verify_source};
+use elenchus_solver::{Status, TraceReason, compile_source, solve, verify_source};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -617,6 +617,103 @@ proptest! {
     fn pipeline_never_panics_on_arbitrary_text(src in fuzz_program()) {
         if let Ok(report) = verify_source("<fuzz>", &src) {
             prop_assert!((0..=2).contains(&report.exit_code()));
+        }
+    }
+}
+
+// --- OR/AND implication lowering vs an exhaustive truth table -----------------
+// The four AND/OR combinations of WHEN…THEN compile to `Impossible` clauses. This
+// proves the lowering is *logically equivalent* to the implication: over every
+// assignment to the atoms, "all compiled clauses hold" must equal "the implication
+// holds". A small k keeps the 2^k enumeration cheap.
+
+#[derive(Debug, Clone)]
+struct ImplCase {
+    k: usize,
+    ante: Vec<(usize, bool)>, // (atom index, negated)
+    ante_or: bool,
+    cons: Vec<(usize, bool)>,
+    cons_or: bool,
+}
+
+fn impl_case() -> impl Strategy<Value = ImplCase> {
+    (2usize..=5).prop_flat_map(|k| {
+        (
+            Just(k),
+            prop::collection::vec((0..k, any::<bool>()), 1..=3),
+            any::<bool>(),
+            prop::collection::vec((0..k, any::<bool>()), 1..=3),
+            any::<bool>(),
+        )
+            .prop_map(|(k, ante, ante_or, cons, cons_or)| ImplCase {
+                k,
+                ante,
+                ante_or,
+                cons,
+                cons_or,
+            })
+    })
+}
+
+fn build_impl_program(c: &ImplCase) -> String {
+    let lit = |(i, neg): (usize, bool)| {
+        let a = format!("x a{i}");
+        if neg { format!("NOT {a}") } else { a }
+    };
+    let mut s = String::from("PREMISE p:\n");
+    s += &format!("    WHEN {}\n", lit(c.ante[0]));
+    for &l in &c.ante[1..] {
+        s += &format!("    {} {}\n", if c.ante_or { "OR" } else { "AND" }, lit(l));
+    }
+    s += &format!("    THEN {}\n", lit(c.cons[0]));
+    for &l in &c.cons[1..] {
+        s += &format!("    {} {}\n", if c.cons_or { "OR" } else { "AND" }, lit(l));
+    }
+    s += "CHECK\n";
+    s
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    #[test]
+    fn or_and_implication_lowering_matches_truth_table(case in impl_case()) {
+        let compiled = compile_source("<or>", &build_impl_program(&case))
+            .expect("a single premise compiles");
+        // atom index -> interned id
+        let mut id_of = vec![None; case.k];
+        for (id, key) in compiled.atoms.iter().enumerate() {
+            if key.subject == "x" {
+                if let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok()) {
+                    if i < case.k {
+                        id_of[i] = Some(id as u32);
+                    }
+                }
+            }
+        }
+        for mask in 0u32..(1u32 << case.k) {
+            let bit = |i: usize| (mask >> i) & 1 == 1;
+            let holds = |(i, neg): (usize, bool)| if neg { !bit(i) } else { bit(i) };
+            let ante_holds = if case.ante_or {
+                case.ante.iter().any(|&l| holds(l))
+            } else {
+                case.ante.iter().all(|&l| holds(l))
+            };
+            let cons_holds = if case.cons_or {
+                case.cons.iter().any(|&l| holds(l))
+            } else {
+                case.cons.iter().all(|&l| holds(l))
+            };
+            let impl_ok = !ante_holds || cons_holds;
+            // Every Impossible clause is satisfied iff its listed literals are not
+            // all simultaneously true.
+            let clauses_ok = compiled.clauses.iter().all(|cl| {
+                !cl.lits.iter().all(|l| {
+                    let idx = id_of.iter().position(|&x| x == Some(l.atom)).unwrap();
+                    if l.negated { !bit(idx) } else { bit(idx) }
+                })
+            });
+            prop_assert_eq!(impl_ok, clauses_ok, "mask={} case={:?}", mask, case);
         }
     }
 }
