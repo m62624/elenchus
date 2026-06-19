@@ -71,6 +71,13 @@ jobs:
   # branch). This forces SKILL.md to be updated *together with* every release, so
   # the skill and the shipped binary never silently drift. Runs only here, never
   # in plain CI.
+  #
+  # Why we do NOT auto-bump the marker (unlike Cargo.toml): bumping it by hand is
+  # the whole point — it's the checkpoint that makes a human re-read SKILL.md and
+  # update its instructions/examples for the new behaviour. An auto-bump would
+  # satisfy this gate while leaving the docs stale, which is exactly what we're
+  # guarding against. So: this job only *checks*; the human bumps the marker (and
+  # reviews the skill) in the release PR.
   skill-check:
     name: Skill version matches release
     needs: prepare
