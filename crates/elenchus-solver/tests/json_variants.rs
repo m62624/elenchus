@@ -10,23 +10,60 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         ("consistent_minimal", "FACT x a\nCHECK x\n"),
         (
             "consistent_with_derived",
-            "FACT x a\nRULE r:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            r#"
+        FACT x a
+        RULE r:
+            WHEN x a
+            THEN x b
+        CHECK x
+        "#,
         ),
         (
             "warning_single",
-            "FACT x a\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            r#"
+        FACT x a
+        PREMISE w:
+            WHEN x a
+            THEN x b
+        CHECK x
+        "#,
         ),
         (
             "warning_multiple_with_derived",
-            "FACT s ready\nPREMISE need_two:\n    WHEN s ready\n    THEN s checked\n    AND s signed\nRULE mark:\n    WHEN s ready\n    THEN s seen\nCHECK s\n",
+            r#"
+        FACT s ready
+        PREMISE need_two:
+            WHEN s ready
+            THEN s checked
+            AND s signed
+        RULE mark:
+            WHEN s ready
+            THEN s seen
+        CHECK s
+        "#,
         ),
         (
             "conflict_exclusive_violation",
-            "FACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            r#"
+        FACT x a
+        FACT x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x
+        "#,
         ),
         (
             "conflict_implication_violation",
-            "FACT x a\nNOT x b\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            r#"
+        FACT x a
+        NOT x b
+        PREMISE w:
+            WHEN x a
+            THEN x b
+        CHECK x
+        "#,
         ),
         (
             "conflict_fact_contradiction",
@@ -34,19 +71,57 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         ),
         (
             "conflict_derived_contradiction",
-            "FACT x a\nNOT x b\nRULE r:\n    WHEN x a\n    THEN x b\nCHECK x\n",
+            r#"
+        FACT x a
+        NOT x b
+        RULE r:
+            WHEN x a
+            THEN x b
+        CHECK x
+        "#,
         ),
         (
             "conflict_multiple_sorted",
-            "FACT y c\nNOT y c\nFACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+            r#"
+        FACT y c
+        NOT y c
+        FACT x a
+        FACT x b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x
+        "#,
         ),
         (
             "conflict_system_unsatisfiable",
-            "PREMISE a_implies_b:\n    WHEN x a\n    THEN x b\nPREMISE a_implies_not_b:\n    WHEN x a\n    THEN NOT x b\nPREMISE atleast_a_c:\n    ATLEAST\n        x a\n        x c\nPREMISE c_implies_a:\n    WHEN x c\n    THEN x a\nCHECK x BIDIRECTIONAL\n",
+            r#"
+        PREMISE a_implies_b:
+            WHEN x a
+            THEN x b
+        PREMISE a_implies_not_b:
+            WHEN x a
+            THEN NOT x b
+        PREMISE atleast_a_c:
+            ATLEAST
+                x a
+                x c
+        PREMISE c_implies_a:
+            WHEN x c
+            THEN x a
+        CHECK x BIDIRECTIONAL
+        "#,
         ),
         (
             "underdetermined_with_witness_hint",
-            "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n",
+            r#"
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK x BIDIRECTIONAL
+        "#,
         ),
     ]
 }

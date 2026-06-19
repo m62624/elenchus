@@ -8,7 +8,7 @@
 
 use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
 use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
-use elenchus_solver::{Status, TraceReason, solve, verify_source};
+use elenchus_solver::{Status, TraceReason, compile_source, solve, verify_source};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -557,5 +557,162 @@ proptest! {
         prop_assert_eq!(before, got.len(), "duplicate hint pair emitted");
 
         prop_assert_eq!(got, expected, "engine hints differ from the reference");
+    }
+}
+
+// --- full-stack panic-safety: parse → compile → solve never panics -----------
+// As the language grows, the cheapest safety net is "arbitrary text in, an Ok or
+// an Err out — never a panic". This fuzzes the whole pipeline through the public
+// `verify_source`, mixing plausible statements with garbage so deep parser and
+// compiler states are reached. A panic here fails the test automatically.
+
+fn fuzz_ident() -> impl Strategy<Value = String> {
+    prop::sample::select(vec![
+        "x", "y", "auth", "rel", "a", "b", "c", "tested", "is", "staging", "over_100",
+    ])
+    .prop_map(String::from)
+}
+
+fn fuzz_atom() -> impl Strategy<Value = String> {
+    (fuzz_ident(), fuzz_ident(), prop::option::of(fuzz_ident())).prop_map(|(s, p, o)| match o {
+        Some(o) => format!("{s} {p} {o}"),
+        None => format!("{s} {p}"),
+    })
+}
+
+fn fuzz_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        fuzz_atom().prop_map(|a| format!("FACT {a}")),
+        fuzz_atom().prop_map(|a| format!("NOT {a}")),
+        Just("CHECK".to_string()),
+        fuzz_ident().prop_map(|s| format!("CHECK {s}")),
+        fuzz_ident().prop_map(|s| format!("CHECK {s} BIDIRECTIONAL")),
+        fuzz_ident().prop_map(|n| format!("IMPORT \"{n}.vrf\"")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("PREMISE {n}:\n    ONEOF\n        {a}\n        {b}")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("PREMISE {n}:\n    WHEN {a}\n    OR {b}\n    THEN {a}")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("RULE {n}:\n    WHEN {a}\n    THEN {b}")),
+        "//[a-z ]{0,10}".prop_map(String::from),
+        // raw garbage to hit error paths
+        "[A-Za-z0-9 _.!?\"]{0,16}".prop_map(String::from),
+    ]
+}
+
+fn fuzz_program() -> impl Strategy<Value = String> {
+    prop::collection::vec(fuzz_line(), 0..=12).prop_map(|lines| {
+        let mut s = lines.join("\n");
+        s.push('\n');
+        s
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(800))]
+
+    /// Arbitrary program text never panics: the pipeline returns a parse/compile
+    /// error or a well-formed report (exit code always 0/1/2).
+    #[test]
+    fn pipeline_never_panics_on_arbitrary_text(src in fuzz_program()) {
+        if let Ok(report) = verify_source("<fuzz>", &src) {
+            prop_assert!((0..=2).contains(&report.exit_code()));
+        }
+    }
+}
+
+// --- OR/AND implication lowering vs an exhaustive truth table -----------------
+// The four AND/OR combinations of WHEN…THEN compile to `Impossible` clauses. This
+// proves the lowering is *logically equivalent* to the implication: over every
+// assignment to the atoms, "all compiled clauses hold" must equal "the implication
+// holds". A small k keeps the 2^k enumeration cheap.
+
+#[derive(Debug, Clone)]
+struct ImplCase {
+    k: usize,
+    ante: Vec<(usize, bool)>, // (atom index, negated)
+    ante_or: bool,
+    cons: Vec<(usize, bool)>,
+    cons_or: bool,
+}
+
+fn impl_case() -> impl Strategy<Value = ImplCase> {
+    (2usize..=5).prop_flat_map(|k| {
+        (
+            Just(k),
+            prop::collection::vec((0..k, any::<bool>()), 1..=3),
+            any::<bool>(),
+            prop::collection::vec((0..k, any::<bool>()), 1..=3),
+            any::<bool>(),
+        )
+            .prop_map(|(k, ante, ante_or, cons, cons_or)| ImplCase {
+                k,
+                ante,
+                ante_or,
+                cons,
+                cons_or,
+            })
+    })
+}
+
+fn build_impl_program(c: &ImplCase) -> String {
+    let lit = |(i, neg): (usize, bool)| {
+        let a = format!("x a{i}");
+        if neg { format!("NOT {a}") } else { a }
+    };
+    let mut s = String::from("PREMISE p:\n");
+    s += &format!("    WHEN {}\n", lit(c.ante[0]));
+    for &l in &c.ante[1..] {
+        s += &format!("    {} {}\n", if c.ante_or { "OR" } else { "AND" }, lit(l));
+    }
+    s += &format!("    THEN {}\n", lit(c.cons[0]));
+    for &l in &c.cons[1..] {
+        s += &format!("    {} {}\n", if c.cons_or { "OR" } else { "AND" }, lit(l));
+    }
+    s += "CHECK\n";
+    s
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    #[test]
+    fn or_and_implication_lowering_matches_truth_table(case in impl_case()) {
+        let compiled = compile_source("<or>", &build_impl_program(&case))
+            .expect("a single premise compiles");
+        // atom index -> interned id
+        let mut id_of = vec![None; case.k];
+        for (id, key) in compiled.atoms.iter().enumerate() {
+            if key.subject == "x"
+                && let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok())
+                && i < case.k
+            {
+                id_of[i] = Some(id as u32);
+            }
+        }
+        for mask in 0u32..(1u32 << case.k) {
+            let bit = |i: usize| (mask >> i) & 1 == 1;
+            let holds = |(i, neg): (usize, bool)| if neg { !bit(i) } else { bit(i) };
+            let ante_holds = if case.ante_or {
+                case.ante.iter().any(|&l| holds(l))
+            } else {
+                case.ante.iter().all(|&l| holds(l))
+            };
+            let cons_holds = if case.cons_or {
+                case.cons.iter().any(|&l| holds(l))
+            } else {
+                case.cons.iter().all(|&l| holds(l))
+            };
+            let impl_ok = !ante_holds || cons_holds;
+            // Every Impossible clause is satisfied iff its listed literals are not
+            // all simultaneously true.
+            let clauses_ok = compiled.clauses.iter().all(|cl| {
+                !cl.lits.iter().all(|l| {
+                    let idx = id_of.iter().position(|&x| x == Some(l.atom)).unwrap();
+                    if l.negated { !bit(idx) } else { bit(idx) }
+                })
+            });
+            prop_assert_eq!(impl_ok, clauses_ok, "mask={} case={:?}", mask, case);
+        }
     }
 }

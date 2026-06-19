@@ -50,14 +50,25 @@ fn puzzle(givens_and_check: &str) -> Status {
 fn well_posed_puzzle_has_a_unique_solution() {
     // alice = lead, and bob is not qa.  Deductions: lead_one ⇒ bob,carol ≠ lead;
     // bob ≠ qa ⇒ bob = dev; then carol = qa. Exactly one full model → CONSISTENT.
-    let s = puzzle("FACT alice is lead\nNOT bob is qa\nCHECK alice BIDIRECTIONAL\n");
+    let s = puzzle(
+        r#"
+        FACT alice is lead
+        NOT bob is qa
+        CHECK alice BIDIRECTIONAL
+        "#,
+    );
     assert_eq!(s, Status::Consistent);
 }
 
 #[test]
 fn under_clued_puzzle_is_underdetermined() {
     // Drop the "bob is not qa" clue: bob/carol may swap dev↔qa → two models.
-    let s = puzzle("FACT alice is lead\nCHECK alice BIDIRECTIONAL\n");
+    let s = puzzle(
+        r#"
+        FACT alice is lead
+        CHECK alice BIDIRECTIONAL
+        "#,
+    );
     assert_eq!(s, Status::Underdetermined);
 }
 
@@ -65,14 +76,24 @@ fn under_clued_puzzle_is_underdetermined() {
 fn over_clued_puzzle_is_conflict() {
     // Two people as lead violates lead_one (at most one) — the forward pass
     // already catches it (a pairwise EXCLUSIVE clause goes all-TRUE).
-    let s = puzzle("FACT alice is lead\nFACT bob is lead\nCHECK alice\n");
+    let s = puzzle(
+        r#"
+        FACT alice is lead
+        FACT bob is lead
+        CHECK alice
+        "#,
+    );
     assert_eq!(s, Status::Conflict);
 }
 
 #[test]
 fn no_givens_is_underdetermined() {
     // A bare permutation has 3! = 6 solutions.
-    let s = puzzle("CHECK alice BIDIRECTIONAL\n");
+    let s = puzzle(
+        r#"
+        CHECK alice BIDIRECTIONAL
+        "#,
+    );
     assert_eq!(s, Status::Underdetermined);
 }
 
@@ -127,7 +148,14 @@ fn deploy_chain_is_warning_when_data_is_missing() {
 #[test]
 fn deploy_chain_completed_is_consistent() {
     // Supply the missing facts; every implication is satisfied → CONSISTENT.
-    let extra = "FACT svc has_artifact\nFACT svc integration_tested\nFACT svc security_scanned\nFACT svc release_ready\nFACT svc can_deploy\nCHECK svc\n";
+    let extra = r#"
+        FACT svc has_artifact
+        FACT svc integration_tested
+        FACT svc security_scanned
+        FACT svc release_ready
+        FACT svc can_deploy
+        CHECK svc
+        "#;
     let r = verify_source("deploy.vrf", &format!("{DEPLOY}{extra}")).unwrap();
     assert_eq!(r.status, Status::Consistent);
 }
@@ -136,7 +164,11 @@ fn deploy_chain_completed_is_consistent() {
 fn deploy_chain_violation_is_conflict() {
     // release_ready holds and not deprecated, but can_deploy is denied →
     // deploy_needs_ready is violated.
-    let extra = "FACT svc release_ready\nNOT svc can_deploy\nCHECK svc\n";
+    let extra = r#"
+        FACT svc release_ready
+        NOT svc can_deploy
+        CHECK svc
+        "#;
     let r = verify_source("deploy.vrf", &format!("{DEPLOY}{extra}")).unwrap();
     assert_eq!(r.status, Status::Conflict);
 }

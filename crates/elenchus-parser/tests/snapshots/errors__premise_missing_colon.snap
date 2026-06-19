@@ -1,7 +1,7 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-expression: "err(\"PREMISE modes\\n    EXCLUSIVE\\n        a b\\n        a c\\n\")"
+expression: "err(r#\"\n        PREMISE modes\n            EXCLUSIVE\n                a b\n                a c\n        \"#)"
 ---
-Syntax Error at line 1, col 14: expected ':' after the premise name
-  | PREMISE modes
-  |              ^--- here
+Syntax Error at line 2, col 22: expected ':' after the premise name
+  |         PREMISE modes
+  |                      ^--- here

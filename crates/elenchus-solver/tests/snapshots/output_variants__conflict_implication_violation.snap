@@ -1,13 +1,13 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"FACT x a\\nNOT x b\\nPREMISE w:\\n    WHEN x a\\n    THEN x b\\nCHECK x\\n\")"
+expression: "report(r#\"\n        FACT x a\n        NOT x b\n        PREMISE w:\n            WHEN x a\n            THEN x b\n        CHECK x\n        \"#)"
 ---
 RESULT: CONFLICT
-  CONFLICT  w (PREMISE)  [v.vrf:3]
+  CONFLICT  w (PREMISE)  [v.vrf:4]
       x a
       x b
       why:
-        x a = TRUE   [FACT v.vrf:1]
-        x b = FALSE   [NOT v.vrf:2]
+        x a = TRUE   [FACT v.vrf:2]
+        x b = FALSE   [NOT v.vrf:3]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

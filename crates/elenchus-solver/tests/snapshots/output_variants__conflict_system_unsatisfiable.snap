@@ -1,20 +1,20 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"PREMISE a_implies_b:\\n    WHEN x a\\n    THEN x b\\nPREMISE a_implies_not_b:\\n    WHEN x a\\n    THEN NOT x b\\nPREMISE atleast_a_c:\\n    ATLEAST\\n        x a\\n        x c\\nPREMISE c_implies_a:\\n    WHEN x c\\n    THEN x a\\nCHECK x BIDIRECTIONAL\\n\")"
+expression: "report(r#\"\n        PREMISE a_implies_b:\n            WHEN x a\n            THEN x b\n        PREMISE a_implies_not_b:\n            WHEN x a\n            THEN NOT x b\n        PREMISE atleast_a_c:\n            ATLEAST\n                x a\n                x c\n        PREMISE c_implies_a:\n            WHEN x c\n            THEN x a\n        CHECK x BIDIRECTIONAL\n        \"#)"
 ---
 RESULT: CONFLICT
   CONFLICT  - (UNSAT)  [<system>:0]
       the premises and facts are jointly unsatisfiable
   CORE  smallest jointly-unsatisfiable set (4):
-        a_implies_b (PREMISE)  [v.vrf:1]
-        a_implies_not_b (PREMISE)  [v.vrf:4]
-        atleast_a_c (ATLEAST)  [v.vrf:7]
-        c_implies_a (PREMISE)  [v.vrf:11]
-  WARNING   a_implies_b (PREMISE)  [v.vrf:1]
+        a_implies_b (PREMISE)  [v.vrf:2]
+        a_implies_not_b (PREMISE)  [v.vrf:5]
+        atleast_a_c (ATLEAST)  [v.vrf:8]
+        c_implies_a (PREMISE)  [v.vrf:12]
+  WARNING   a_implies_b (PREMISE)  [v.vrf:2]
       blocked by: x a, x b
-  WARNING   a_implies_not_b (PREMISE)  [v.vrf:4]
+  WARNING   a_implies_not_b (PREMISE)  [v.vrf:5]
       blocked by: x a, x b
-  WARNING   c_implies_a (PREMISE)  [v.vrf:11]
+  WARNING   c_implies_a (PREMISE)  [v.vrf:12]
       blocked by: x c, x a
 SUMMARY: 1 conflicts, 0 underdetermined, 3 warnings, 0 derived
 EXIT_CODE: 2

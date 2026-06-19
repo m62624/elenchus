@@ -642,6 +642,10 @@ fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// and `stmt_negation` comes last so a leading `NOT` is only read as a top-level
 /// negation when nothing else matched.
 fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    // Leading indentation is cosmetic everywhere, including on the top-level
+    // keyword line — so a whole program may be written indented (e.g. inside a
+    // host's here-doc) and parse identically.
+    let (input, _) = space0(input)?;
     alt((
         stmt_import,
         stmt_fact,
@@ -742,7 +746,12 @@ mod tests {
 
     #[test]
     fn parses_fact_and_negation() {
-        let p = prog("FACT Creature.A has flying\nNOT Creature.A has cold_blood\n");
+        let p = prog(
+            r#"
+        FACT Creature.A has flying
+        NOT Creature.A has cold_blood
+        "#,
+        );
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
             Statement::Fact(a) => {
@@ -784,7 +793,12 @@ mod tests {
 
     #[test]
     fn parses_exclusive_premise() {
-        let src = "PREMISE fly_xor_swim:\n    EXCLUSIVE\n        Creature.A has flying\n        Creature.A has swimming\n";
+        let src = r#"
+        PREMISE fly_xor_swim:
+            EXCLUSIVE
+                Creature.A has flying
+                Creature.A has swimming
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise { name, body } => {
@@ -804,7 +818,12 @@ mod tests {
 
     #[test]
     fn parses_implication_premise_with_and() {
-        let src = "PREMISE wings_need_bone:\n    WHEN Creature.A has flying\n    THEN Creature.A has wing\n    AND  Creature.A has bone\n";
+        let src = r#"
+        PREMISE wings_need_bone:
+            WHEN Creature.A has flying
+            THEN Creature.A has wing
+            AND  Creature.A has bone
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise {
@@ -828,7 +847,12 @@ mod tests {
 
     #[test]
     fn antecedent_and_goes_before_then() {
-        let src = "PREMISE deploy:\n    WHEN s tested\n    AND s reviewed\n    THEN s can_deploy\n";
+        let src = r#"
+        PREMISE deploy:
+            WHEN s tested
+            AND s reviewed
+            THEN s can_deploy
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Premise {
@@ -849,7 +873,12 @@ mod tests {
 
     #[test]
     fn when_or_sets_disjunctive_antecedent() {
-        let src = "PREMISE p:\n    WHEN x a\n    OR x b\n    THEN x c\n";
+        let src = r#"
+        PREMISE p:
+            WHEN x a
+            OR x b
+            THEN x c
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body:
@@ -872,7 +901,12 @@ mod tests {
 
     #[test]
     fn then_or_sets_disjunctive_consequent() {
-        let src = "PREMISE p:\n    WHEN x a\n    THEN x b\n    OR x c\n";
+        let src = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x b
+            OR x c
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body:
@@ -892,12 +926,22 @@ mod tests {
 
     #[test]
     fn mixing_and_or_in_one_group_is_an_error() {
-        assert!(
-            parse("PREMISE p:\n    WHEN x a\n    AND x b\n    OR x c\n    THEN x d\n").is_err()
-        );
-        assert!(
-            parse("PREMISE p:\n    WHEN x a\n    THEN x b\n    AND x c\n    OR x d\n").is_err()
-        );
+        let mixed_when = r#"
+        PREMISE p:
+            WHEN x a
+            AND x b
+            OR x c
+            THEN x d
+        "#;
+        let mixed_then = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x b
+            AND x c
+            OR x d
+        "#;
+        assert!(parse(mixed_when).is_err());
+        assert!(parse(mixed_then).is_err());
     }
 
     #[test]
@@ -907,7 +951,11 @@ mod tests {
 
     #[test]
     fn parses_negated_literal_in_rule() {
-        let src = "RULE pick_slow:\n    WHEN NOT Motor over_100\n    THEN Motor uses slow_path\n";
+        let src = r#"
+        RULE pick_slow:
+            WHEN NOT Motor over_100
+            THEN Motor uses slow_path
+        "#;
         let p = prog(src);
         match &p.statements[0] {
             Statement::Rule {
@@ -957,10 +1005,38 @@ mod tests {
 
     #[test]
     fn indentation_is_cosmetic() {
-        let flat = "PREMISE x:\nEXCLUSIVE\na b\na c\n";
-        let indented = "PREMISE x:\n        EXCLUSIVE\n  a b\n            a c\n";
+        let flat = r#"
+        PREMISE x:
+        EXCLUSIVE
+        a b
+        a c
+        "#;
+        let indented = r#"
+        PREMISE x:
+                EXCLUSIVE
+          a b
+                    a c
+        "#;
         // Spans differ by offset (cosmetic); the parsed structure must be identical.
         assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
+    }
+
+    #[test]
+    fn top_level_statements_may_be_indented() {
+        // Leading indentation on the FACT/PREMISE/CHECK lines themselves is also
+        // cosmetic (so a whole program can be pasted indented inside a here-doc).
+        let flat = r#"
+        FACT x a
+        NOT x b
+        CHECK x
+        "#;
+        let indented = r#"
+            FACT x a
+                NOT x b
+            CHECK x
+        "#;
+        assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
+        assert_eq!(prog(indented).statements.len(), 3);
     }
 
     #[test]
@@ -981,7 +1057,12 @@ mod tests {
     #[test]
     fn unicode_identifiers_any_script() {
         // Cyrillic subject/predicate/object, mixed with `_` and digits (not first).
-        let p = prog("FACT кот пушистый2\nNOT собака has крылья\n");
+        let p = prog(
+            r#"
+        FACT кот пушистый2
+        NOT собака has крылья
+        "#,
+        );
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "кот");
@@ -1001,7 +1082,11 @@ mod tests {
 
     #[test]
     fn unicode_premise_name_and_body() {
-        let src = "PREMISE правило_лая:\n    WHEN собака has хвост\n    THEN собака умеет_лаять\n";
+        let src = r#"
+        PREMISE правило_лая:
+            WHEN собака has хвост
+            THEN собака умеет_лаять
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise { name, body } => {
                 assert_eq!(name.data, "правило_лая");
@@ -1042,7 +1127,10 @@ mod tests {
 
     #[test]
     fn pretty_error_points_at_offending_line() {
-        let src = "FACT a b\n!garbage here\nFACT c d\n";
+        let src = r#"FACT a b
+!garbage here
+FACT c d
+"#;
         let err = parse(src).expect_err("should fail");
         let shown = format!("{}", err);
         assert!(shown.contains("Syntax Error"));
@@ -1053,13 +1141,25 @@ mod tests {
 
     #[test]
     fn crlf_line_endings() {
-        let p = prog("FACT a b\r\nCHECK a\r\n");
+        let p = prog(
+            r#"
+        FACT a b
+        CHECK a
+        "#,
+        );
         assert_eq!(p.statements.len(), 2);
     }
 
     #[test]
     fn tabs_as_indentation() {
-        let p = prog("PREMISE e:\n\tEXCLUSIVE\n\t\tx a\n\t\tx b\n");
+        let p = prog(
+            r#"
+        PREMISE e:
+	EXCLUSIVE
+		x a
+		x b
+        "#,
+        );
         assert!(matches!(
             p.statements[0],
             Statement::Premise {
@@ -1124,7 +1224,11 @@ mod tests {
 
     #[test]
     fn negated_consequent_then_not() {
-        let src = "PREMISE a:\n    WHEN x on\n    THEN NOT x off\n";
+        let src = r#"
+        PREMISE a:
+            WHEN x on
+            THEN NOT x off
+        "#;
         match &prog(src).statements[0] {
             Statement::Premise {
                 body: Body::Impl { consequent, .. },
@@ -1139,7 +1243,13 @@ mod tests {
 
     #[test]
     fn multiple_imports_then_facts() {
-        let p = prog("IMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nFACT x y\n");
+        let p = prog(
+            r#"
+        IMPORT "a.vrf"
+        IMPORT "b.vrf"
+        FACT x y
+        "#,
+        );
         assert!(matches!(p.statements[0], Statement::Import(_)));
         assert!(matches!(p.statements[1], Statement::Import(_)));
         assert!(matches!(p.statements[2], Statement::Fact(_)));

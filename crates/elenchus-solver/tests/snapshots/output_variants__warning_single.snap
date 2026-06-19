@@ -1,9 +1,9 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"FACT x a\\nPREMISE w:\\n    WHEN x a\\n    THEN x b\\nCHECK x\\n\")"
+expression: "report(r#\"\n        FACT x a\n        PREMISE w:\n            WHEN x a\n            THEN x b\n        CHECK x\n        \"#)"
 ---
 RESULT: WARNING
-  WARNING   w (PREMISE)  [v.vrf:2]
+  WARNING   w (PREMISE)  [v.vrf:3]
       blocked by: x b
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1
