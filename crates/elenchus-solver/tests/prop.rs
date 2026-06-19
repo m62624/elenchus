@@ -559,3 +559,64 @@ proptest! {
         prop_assert_eq!(got, expected, "engine hints differ from the reference");
     }
 }
+
+// --- full-stack panic-safety: parse → compile → solve never panics -----------
+// As the language grows, the cheapest safety net is "arbitrary text in, an Ok or
+// an Err out — never a panic". This fuzzes the whole pipeline through the public
+// `verify_source`, mixing plausible statements with garbage so deep parser and
+// compiler states are reached. A panic here fails the test automatically.
+
+fn fuzz_ident() -> impl Strategy<Value = String> {
+    prop::sample::select(vec![
+        "x", "y", "auth", "rel", "a", "b", "c", "tested", "is", "staging", "over_100",
+    ])
+    .prop_map(String::from)
+}
+
+fn fuzz_atom() -> impl Strategy<Value = String> {
+    (fuzz_ident(), fuzz_ident(), prop::option::of(fuzz_ident())).prop_map(|(s, p, o)| match o {
+        Some(o) => format!("{s} {p} {o}"),
+        None => format!("{s} {p}"),
+    })
+}
+
+fn fuzz_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        fuzz_atom().prop_map(|a| format!("FACT {a}")),
+        fuzz_atom().prop_map(|a| format!("NOT {a}")),
+        Just("CHECK".to_string()),
+        fuzz_ident().prop_map(|s| format!("CHECK {s}")),
+        fuzz_ident().prop_map(|s| format!("CHECK {s} BIDIRECTIONAL")),
+        fuzz_ident().prop_map(|n| format!("IMPORT \"{n}.vrf\"")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("PREMISE {n}:\n    ONEOF\n        {a}\n        {b}")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("PREMISE {n}:\n    WHEN {a}\n    OR {b}\n    THEN {a}")),
+        (fuzz_ident(), fuzz_atom(), fuzz_atom())
+            .prop_map(|(n, a, b)| format!("RULE {n}:\n    WHEN {a}\n    THEN {b}")),
+        "//[a-z ]{0,10}".prop_map(String::from),
+        // raw garbage to hit error paths
+        "[A-Za-z0-9 _.!?\"]{0,16}".prop_map(String::from),
+    ]
+}
+
+fn fuzz_program() -> impl Strategy<Value = String> {
+    prop::collection::vec(fuzz_line(), 0..=12).prop_map(|lines| {
+        let mut s = lines.join("\n");
+        s.push('\n');
+        s
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(800))]
+
+    /// Arbitrary program text never panics: the pipeline returns a parse/compile
+    /// error or a well-formed report (exit code always 0/1/2).
+    #[test]
+    fn pipeline_never_panics_on_arbitrary_text(src in fuzz_program()) {
+        if let Ok(report) = verify_source("<fuzz>", &src) {
+            prop_assert!((0..=2).contains(&report.exit_code()));
+        }
+    }
+}
