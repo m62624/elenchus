@@ -1,11 +1,13 @@
 name: CI
 
 on:
-  # Not tied to a specific branch: pushes to any branch and PRs against any base
-  # branch run CI (so an integration branch collecting many PRs is covered too).
+  # Push CI runs only on the default branch (post-merge validation). Feature
+  # branches are covered by the pull_request event below, so a branch with an
+  # open PR is not built twice (one push run + one PR run racing each other).
+  # rc/v* release branches run through workflow_call, not this trigger.
   push:
-    branches-ignore:
-      - "rc/v*"
+    branches:
+      - main
     paths:
       - ".github/workflows/**"
       - "crates/**"
