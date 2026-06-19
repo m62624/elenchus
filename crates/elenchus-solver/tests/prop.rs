@@ -683,12 +683,11 @@ proptest! {
         // atom index -> interned id
         let mut id_of = vec![None; case.k];
         for (id, key) in compiled.atoms.iter().enumerate() {
-            if key.subject == "x" {
-                if let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok()) {
-                    if i < case.k {
-                        id_of[i] = Some(id as u32);
-                    }
-                }
+            if key.subject == "x"
+                && let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok())
+                && i < case.k
+            {
+                id_of[i] = Some(id as u32);
             }
         }
         for mask in 0u32..(1u32 << case.k) {
