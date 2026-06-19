@@ -144,6 +144,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # Pin to the freshly-created release tag. `prepare` deletes the
+          # `pin/v*` trigger tag, so a checkout with no `ref:` would default to
+          # that now-missing ref and fail (`couldn't find remote ref`). We only
+          # need history + tags here to compute the previous v* tag.
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
       - name: Generate changelog between tags and prepend to the draft
         run: |
