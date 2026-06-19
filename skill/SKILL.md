@@ -334,6 +334,23 @@ EXIT_CODE: 2              # 2 = CONFLICT
 with that same `program` and check `status` == `"CONFLICT"`.) If it answers
 anything else, the install is broken — fix that before trusting any result.
 
+**Step 0.6 — version check (don't skip).**
+<!-- skill-version: 0.3.0 -->
+This skill documents elenchus **0.3.0**. You already learned the installed
+version (`elenchus --version`, or the MCP `initialize` response's
+`serverInfo.version`). Compare it to **0.3.0**:
+
+- **Match** → proceed normally.
+- **Mismatch** → STOP and warn the user before relying on any flag or output
+  described below, e.g. *"⚠️ version skew: this skill targets elenchus 0.3.0 but
+  the engine reports 0.2.1."* Then say which side is **newer** and what it implies:
+  - skill **newer** than the binary → the binary is outdated; features described
+    here (the `why:` trace, `CORE`, JSON `trace`/`unsat_core`) may be missing →
+    suggest updating elenchus.
+  - binary **newer** than the skill → this skill is stale; flags or output may
+    have changed → suggest updating the skill.
+  You may still run the engine, but mark every result as "verify — version skew".
+
 **CLI + this skill — preferred when you have a shell.** Run the `elenchus` binary
 via Bash. One portable binary, zero host config.
 
