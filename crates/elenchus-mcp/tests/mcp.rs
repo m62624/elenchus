@@ -34,16 +34,30 @@ fn initialize_list_and_call() {
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, // notification → no reply
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nCHECK x\n","format":"json"}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"elenchus_version","arguments":{}}}"#,
     ]);
 
-    assert_eq!(resps.len(), 3, "the notification must not get a reply");
+    assert_eq!(resps.len(), 4, "the notification must not get a reply");
     assert_eq!(resps[0]["result"]["serverInfo"]["name"], "elenchus");
     assert_eq!(resps[0]["result"]["protocolVersion"], "2024-11-05");
+    // Both tools are advertised.
     assert_eq!(resps[1]["result"]["tools"][0]["name"], "elenchus_check");
+    assert_eq!(resps[1]["result"]["tools"][1]["name"], "elenchus_version");
 
     let text = resps[2]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("CONSISTENT"), "got: {text}");
     assert_eq!(resps[2]["result"]["isError"], false);
+
+    // elenchus_version returns the engine version, matching serverInfo.
+    let version = resps[0]["result"]["serverInfo"]["version"]
+        .as_str()
+        .unwrap();
+    let vtext = resps[3]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(resps[3]["result"]["isError"], false);
+    assert!(
+        vtext.contains(version),
+        "version tool `{vtext}` should contain {version}"
+    );
 }
 
 #[test]

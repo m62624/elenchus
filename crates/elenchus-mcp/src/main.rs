@@ -3,8 +3,9 @@
 //!
 //! Transport: stdio, newline-delimited JSON-RPC 2.0 (one message per line).
 //! Hand-rolled with `serde_json` (no MCP SDK). It speaks just enough of the
-//! protocol — `initialize`, `tools/list`, `tools/call`, `ping` — to expose a
-//! single tool, `elenchus_check`, which runs a `.vrf` program through the engine.
+//! protocol — `initialize`, `tools/list`, `tools/call`, `ping` — to expose two
+//! tools: `elenchus_check`, which runs a `.vrf` program through the engine, and
+//! `elenchus_version`, which reports the engine version for skill-version checks.
 
 use std::io::{self, BufRead, Write};
 
@@ -52,7 +53,9 @@ fn handle(req: &Value) -> Option<Value> {
         }),
         "notifications/initialized" => None,
         "ping" => id.map(|id| result(id, json!({}))),
-        "tools/list" => id.map(|id| result(id, json!({ "tools": [tool_def()] }))),
+        "tools/list" => {
+            id.map(|id| result(id, json!({ "tools": [tool_def(), version_tool_def()] })))
+        }
         "tools/call" => id.map(|id| tools_call(id, req.get("params"))),
         // Unknown method: error only for requests (notifications are ignored).
         _ => id.map(|id| error(id, -32601, "method not found")),
@@ -102,11 +105,27 @@ fn tool_def() -> Value {
     })
 }
 
+/// The `elenchus_version` tool: the MCP analog of `elenchus --version`. Lets the
+/// model read the running engine's version (it cannot see `initialize`'s
+/// `serverInfo.version`) and compare it against the skill's declared version.
+fn version_tool_def() -> Value {
+    json!({
+        "name": "elenchus_version",
+        "description": "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \
+    Call this once up front and compare it to the version your skill targets; if they differ, \
+    warn the user about the version skew before relying on the other tools.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
 fn tools_call(id: Value, params: Option<&Value>) -> Value {
     let Some(params) = params else {
         return error(id, -32602, "missing params");
     };
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    if name == "elenchus_version" {
+        return tool_result(id, format!("elenchus {}", env!("CARGO_PKG_VERSION")), false);
+    }
     if name != "elenchus_check" {
         return tool_result(id, format!("unknown tool: {name}"), true);
     }

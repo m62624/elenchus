@@ -311,8 +311,9 @@ on this machine.**
 **Step 0 — detect what's installed.**
 
 - If you can run shell commands → use the **CLI**. Confirm it's there:
-  `elenchus --version` prints a version line if installed; "command not found"
-  means it isn't.
+  `elenchus --version` (or `-V`) prints `elenchus <X.Y.Z>` if installed; `--help`
+  shows it too, and a bare `elenchus` prints usage. "command not found" means it
+  isn't installed.
 - If you have no shell but your available tools include an `elenchus_check` tool →
   use **MCP**.
 - If neither: it isn't installed here. Install it (see the project README —
@@ -336,9 +337,12 @@ anything else, the install is broken — fix that before trusting any result.
 
 **Step 0.6 — version check (don't skip).**
 <!-- skill-version: 0.3.0 -->
-This skill documents elenchus **0.3.0**. You already learned the installed
-version (`elenchus --version`, or the MCP `initialize` response's
-`serverInfo.version`). Compare it to **0.3.0**:
+This skill documents elenchus **0.3.0**. Read the installed version and compare:
+- **CLI**: `elenchus --version` (or `-V`) → `elenchus <X.Y.Z>`.
+- **MCP**: call the `elenchus_version` tool → `elenchus <X.Y.Z>` (the model can't
+  see `initialize`'s `serverInfo.version`, so use this tool).
+
+Compare the reported version to **0.3.0**:
 
 - **Match** → proceed normally.
 - **Mismatch** → STOP and warn the user before relying on any flag or output
