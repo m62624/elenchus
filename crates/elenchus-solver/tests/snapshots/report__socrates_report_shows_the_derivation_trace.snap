@@ -1,0 +1,19 @@
+---
+source: crates/elenchus-solver/tests/report.rs
+expression: "format!(\"{r}\")"
+---
+RESULT: CONFLICT
+  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
+      socrates is mortal
+      socrates is immortal
+      why:
+        socrates is human = TRUE   [FACT socrates.vrf:13]
+        socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:17]  <= socrates is human
+        socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:21]  <= socrates is animal
+        socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:25]  <= socrates is living
+        socrates is immortal = TRUE   [FACT socrates.vrf:14]
+  DERIVED   socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:17]
+  DERIVED   socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:21]
+  DERIVED   socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:25]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 3 derived
+EXIT_CODE: 2

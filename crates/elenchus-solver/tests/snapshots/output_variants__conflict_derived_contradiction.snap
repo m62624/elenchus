@@ -5,5 +5,8 @@ expression: "report(\"FACT x a\\nNOT x b\\nRULE r:\\n    WHEN x a\\n    THEN x b
 RESULT: CONFLICT
   CONFLICT  r (RULE)  [v.vrf:3]
       x b (derived value contradicts a known fact)
+      why:
+        x a = TRUE   [FACT v.vrf:1]
+        x b = FALSE   [NOT v.vrf:2]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

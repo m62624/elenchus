@@ -6,5 +6,8 @@ RESULT: CONFLICT
   CONFLICT  e (EXCLUSIVE)  [v.vrf:3]
       x a
       x b
+      why:
+        x a = TRUE   [FACT v.vrf:1]
+        x b = TRUE   [FACT v.vrf:2]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

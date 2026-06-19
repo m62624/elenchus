@@ -685,6 +685,55 @@ WARNING pool (2 blocked branches):
 So the model sees not just "not enough data," but **precisely where and in which
 chain** it got stuck — and exactly what to add.
 
+### Conflict explainability: the derivation trace and the unsat core
+
+A bare `CONFLICT` is not actionable — "a premise is violated, go find why" puts the
+work back on the reader. Two mechanisms answer *why*:
+
+**1. Derivation trace (forward-pass conflicts).** When a premise fires because some
+atoms were forced TRUE/FALSE, the forward pass already *knows* how each was forced:
+either a `FACT`/`NOT`, or a `RULE` whose antecedent held. Each `Conflict` carries a
+`trace` — the chain of those forcings, supports first, ending at the conflict:
+
+```
+CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
+    socrates is mortal
+    socrates is immortal
+    why:
+      socrates is human  = TRUE   [FACT socrates.vrf:13]
+      socrates is animal = TRUE   from humans_are_animals (RULE) [..:17]  <= socrates is human
+      socrates is living = TRUE   from animals_are_living (RULE) [..:21]  <= socrates is animal
+      socrates is mortal = TRUE   from living_things_are_mortal (RULE) [..:25]  <= socrates is living
+      socrates is immortal = TRUE [FACT socrates.vrf:14]
+```
+
+The chain is exact, deterministic, and needs no SAT machinery — it is read straight
+off the provenance the forward pass recorded. A direct `FACT X` + `NOT X` and the
+`<system>` unsatisfiability conflict have no chain, so their `trace` is empty.
+
+**2. Minimal unsat core (backward-pass conflicts).** Some systems are jointly
+unsatisfiable without any single premise firing in the forward model (the
+contradiction only appears under case-splitting). The backward SAT pass detects
+this; to name *who* is to blame we compute a **1-minimal unsat core** by
+deletion-based minimization: drop each construct (fact / premise / rule) in turn and
+re-solve — if the rest is still UNSAT the construct was not needed. What survives is
+an irreducible set, reported as `unsat_core`:
+
+```
+CONFLICT  - (UNSAT)  [<system>:0]
+    the premises and facts are jointly unsatisfiable
+  CORE  smallest jointly-unsatisfiable set (4):
+        one_ab (ONEOF)   [..:1]
+        a_implies_c (PREMISE) [..:5]
+        b_implies_c (PREMISE) [..:8]
+        x c (NOT)        [..:11]
+```
+
+This costs O(n) SAT calls over the constructs — fine at our scale, and needs no
+proof logging (which the in-crate SAT core deliberately omits). A premise that
+desugared into several clauses is grouped back by origin, so the core blames whole
+premises, not clause shards.
+
 ## Invariants and edge cases
 
 This is what the engine must guarantee ALWAYS. The spec is not considered complete

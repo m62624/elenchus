@@ -80,6 +80,38 @@ pub struct Conflict {
     pub origin: Origin,
     /// Human labels of the atoms participating in the contradiction.
     pub atoms: Vec<String>,
+    /// The derivation chain that forced the participating atoms to the values
+    /// which made the constraint fire — supporting facts first, then each rule
+    /// built on them, ending at the conflict. This is the answer to "CONFLICT,
+    /// but *why*?". Empty for a direct `FACT X` + `NOT X` contradiction and for
+    /// the `<system>` joint-unsatisfiability conflict (neither has a chain).
+    pub trace: Vec<TraceStep>,
+}
+
+/// One link in a [`Conflict`]'s derivation chain: an atom, the value it was
+/// forced to, and why it holds that value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceStep {
+    /// Human label of the atom (`subject predicate [object]`).
+    pub atom: String,
+    /// The confident value the atom was forced to (TRUE or FALSE).
+    pub value: Value,
+    /// Why the atom holds that value.
+    pub reason: TraceReason,
+}
+
+/// Why a [`TraceStep`] atom holds its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TraceReason {
+    /// Asserted directly by a `FACT` / `NOT`.
+    Asserted(Origin),
+    /// Derived by a `RULE` whose antecedent atoms all held.
+    Derived {
+        /// Provenance of the firing rule.
+        origin: Origin,
+        /// Human labels of the antecedent atoms that supported the derivation.
+        from: Vec<String>,
+    },
 }
 
 /// A constraint that could not be checked because a needed atom is UNKNOWN.
@@ -116,6 +148,20 @@ pub struct Report {
     /// When `UNDERDETERMINED`, the label of an atom left free by the constraints
     /// (asserting it would pin the model down).
     pub underdetermined: Option<String>,
+    /// When the system is jointly unsatisfiable but the forward pass found no
+    /// single violated constraint, the minimal set of constructs (facts /
+    /// premises / rules) whose removal restores satisfiability — i.e. the
+    /// smallest group jointly to blame. Empty in every other case.
+    pub unsat_core: Vec<CoreItem>,
+}
+
+/// One construct named in an [`Report::unsat_core`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreItem {
+    /// Provenance of the construct (source, line, kind, premise name if any).
+    pub origin: Origin,
+    /// A human label: the premise/rule name, or the atom for a bare `FACT`/`NOT`.
+    pub label: String,
 }
 
 impl Report {
@@ -145,7 +191,14 @@ impl Report {
             json_origin(&c.origin, &mut s);
             s.push_str(",\"atoms\":");
             json_array(&c.atoms, &mut s);
-            s.push('}');
+            s.push_str(",\"trace\":[");
+            for (j, step) in c.trace.iter().enumerate() {
+                if j > 0 {
+                    s.push(',');
+                }
+                json_trace_step(step, &mut s);
+            }
+            s.push_str("]}");
         }
         s.push_str("],\"warnings\":[");
         for (i, w) in self.warnings.iter().enumerate() {
@@ -174,9 +227,41 @@ impl Report {
             Some(atom) => json_str(atom, &mut s),
             None => s.push_str("null"),
         }
-        s.push('}');
+        s.push_str(",\"unsat_core\":[");
+        for (i, it) in self.unsat_core.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&it.origin, &mut s);
+            s.push_str(",\"label\":");
+            json_str(&it.label, &mut s);
+            s.push('}');
+        }
+        s.push_str("]}");
         s
     }
+}
+
+/// Push one derivation-trace step as a JSON object.
+fn json_trace_step(step: &TraceStep, out: &mut String) {
+    use core::fmt::Write as _;
+    out.push_str("{\"atom\":");
+    json_str(&step.atom, out);
+    let _ = write!(out, ",\"value\":{}", matches!(step.value, Value::True));
+    match &step.reason {
+        TraceReason::Asserted(o) => {
+            out.push_str(",\"how\":\"asserted\",");
+            json_origin_fields(o, out);
+            out.push_str(",\"from\":[]");
+        }
+        TraceReason::Derived { origin, from } => {
+            out.push_str(",\"how\":\"derived\",");
+            json_origin_fields(origin, out);
+            out.push_str(",\"from\":");
+            json_array(from, out);
+        }
+    }
+    out.push('}');
 }
 
 fn status_name(s: Status) -> &'static str {
@@ -307,13 +392,37 @@ fn eval_clause(model: &[V3], clause: &Clause) -> ClauseEval {
     }
 }
 
+/// Why an atom holds its confident value — the forward pass records this so a
+/// conflict can be traced back to the facts and rules that forced it.
+#[derive(Clone)]
+enum AtomReason {
+    /// Set directly by a `FACT` / `NOT`.
+    Asserted(Origin),
+    /// Derived by a firing `RULE` from the listed antecedent atoms.
+    Derived { origin: Origin, from: Vec<AtomId> },
+}
+
+/// An internal conflict before labels and trace are materialized. `atoms` are the
+/// exact display strings; `cause` are the atoms whose forcing chains explain it
+/// (empty when there is no chain to show, e.g. a direct fact contradiction).
+struct RawConflict {
+    origin: Origin,
+    atoms: Vec<String>,
+    cause: Vec<AtomId>,
+}
+
 /// Working state of the forward + backward evaluation, evaluated as a pipeline.
 struct Eval<'a> {
     c: &'a Compiled,
     model: Vec<V3>,
-    conflicts: Vec<Conflict>,
+    /// Per-atom provenance, filled by `seed_facts` and `saturate_rules`; read by
+    /// `build_trace` once the model is final.
+    reason: Vec<Option<AtomReason>>,
+    conflicts: Vec<RawConflict>,
     warnings: Vec<Warning>,
     derived: Vec<Derived>,
+    /// Minimal set of constructs to blame when the backward pass finds UNSAT.
+    unsat_core: Vec<CoreItem>,
 }
 
 impl<'a> Eval<'a> {
@@ -321,9 +430,11 @@ impl<'a> Eval<'a> {
         Eval {
             c,
             model: vec![V3::Unknown; c.atoms.len()],
+            reason: vec![None; c.atoms.len()],
             conflicts: Vec::new(),
             warnings: Vec::new(),
             derived: Vec::new(),
+            unsat_core: Vec::new(),
         }
     }
 
@@ -350,16 +461,24 @@ impl<'a> Eval<'a> {
             match (&t[a], &f[a]) {
                 (Some(o), Some(_)) => {
                     self.model[a] = V3::True;
-                    self.conflicts.push(Conflict {
+                    self.reason[a] = Some(AtomReason::Asserted(o.clone()));
+                    self.conflicts.push(RawConflict {
                         origin: o.clone(),
                         atoms: vec![alloc::format!(
                             "{} (asserted both TRUE and FALSE)",
                             self.label(a as AtomId)
                         )],
+                        cause: Vec::new(),
                     });
                 }
-                (Some(_), None) => self.model[a] = V3::True,
-                (None, Some(_)) => self.model[a] = V3::False,
+                (Some(o), None) => {
+                    self.model[a] = V3::True;
+                    self.reason[a] = Some(AtomReason::Asserted(o.clone()));
+                }
+                (None, Some(o)) => {
+                    self.model[a] = V3::False;
+                    self.reason[a] = Some(AtomReason::Asserted(o.clone()));
+                }
                 (None, None) => {}
             }
         }
@@ -379,6 +498,10 @@ impl<'a> Eval<'a> {
                     match self.model[cl.atom as usize] {
                         V3::Unknown => {
                             self.model[cl.atom as usize] = target;
+                            self.reason[cl.atom as usize] = Some(AtomReason::Derived {
+                                origin: r.origin.clone(),
+                                from: r.antecedent.iter().map(|l| l.atom).collect(),
+                            });
                             changed = true;
                             self.derived.push(Derived {
                                 atom: self.label(cl.atom),
@@ -391,13 +514,22 @@ impl<'a> Eval<'a> {
                             });
                         }
                         v if v == target => {}
-                        _ => self.conflicts.push(Conflict {
-                            origin: r.origin.clone(),
-                            atoms: vec![alloc::format!(
-                                "{} (derived value contradicts a known fact)",
-                                self.label(cl.atom)
-                            )],
-                        }),
+                        _ => {
+                            // The rule wants the opposite of a value the atom already
+                            // holds. Trace both sides: why the antecedent fired (its
+                            // atoms) and how the atom got its existing value.
+                            let mut cause: Vec<AtomId> =
+                                r.antecedent.iter().map(|l| l.atom).collect();
+                            cause.push(cl.atom);
+                            self.conflicts.push(RawConflict {
+                                origin: r.origin.clone(),
+                                atoms: vec![alloc::format!(
+                                    "{} (derived value contradicts a known fact)",
+                                    self.label(cl.atom)
+                                )],
+                                cause,
+                            });
+                        }
                     }
                 }
             }
@@ -412,9 +544,10 @@ impl<'a> Eval<'a> {
         let c = self.c;
         for clause in &c.clauses {
             match eval_clause(&self.model, clause) {
-                ClauseEval::Violated => self.conflicts.push(Conflict {
+                ClauseEval::Violated => self.conflicts.push(RawConflict {
                     origin: clause.origin.clone(),
                     atoms: clause.lits.iter().map(|l| self.label(l.atom)).collect(),
+                    cause: clause.lits.iter().map(|l| l.atom).collect(),
                 }),
                 ClauseEval::Satisfied => {}
                 // Implication premises warn on missing data; list premises treat
@@ -428,6 +561,49 @@ impl<'a> Eval<'a> {
                 ClauseEval::Blocked(_) => {}
             }
         }
+    }
+
+    /// Build the derivation chain that explains why the `causes` atoms hold their
+    /// current values: a post-order walk of the reason graph so each atom's
+    /// supports appear before it (facts first, the conflict atoms last), with
+    /// every atom emitted once. Atoms with no recorded reason (UNKNOWN) are
+    /// skipped — a forced atom always has one.
+    fn build_trace(&self, causes: &[AtomId]) -> Vec<TraceStep> {
+        let mut visited = vec![false; self.c.atoms.len()];
+        let mut out = Vec::new();
+        for &a in causes {
+            self.trace_dfs(a, &mut visited, &mut out);
+        }
+        out
+    }
+
+    fn trace_dfs(&self, a: AtomId, visited: &mut [bool], out: &mut Vec<TraceStep>) {
+        if visited[a as usize] {
+            return;
+        }
+        visited[a as usize] = true;
+        let value = match v3_to_value(self.model[a as usize]) {
+            Some(v) => v,
+            None => return, // UNKNOWN: nothing forced it, nothing to explain
+        };
+        let reason = match &self.reason[a as usize] {
+            Some(AtomReason::Asserted(o)) => TraceReason::Asserted(o.clone()),
+            Some(AtomReason::Derived { origin, from }) => {
+                for &f in from {
+                    self.trace_dfs(f, visited, out); // supports first
+                }
+                TraceReason::Derived {
+                    origin: origin.clone(),
+                    from: from.iter().map(|&f| self.label(f)).collect(),
+                }
+            }
+            None => return,
+        };
+        out.push(TraceStep {
+            atom: self.label(a),
+            value,
+            reason,
+        });
     }
 
     /// Backward pass (model finding), run only when a CHECK requests BIDIRECTIONAL.
@@ -444,7 +620,8 @@ impl<'a> Eval<'a> {
         let found = sat::models(&cnf, &project, 2);
         match found.len() {
             0 if self.conflicts.is_empty() => {
-                self.conflicts.push(Conflict {
+                self.unsat_core = minimal_unsat_core(self.c);
+                self.conflicts.push(RawConflict {
                     origin: Origin {
                         source: String::from("<system>"),
                         line: 0,
@@ -454,6 +631,7 @@ impl<'a> Eval<'a> {
                     atoms: vec![String::from(
                         "the premises and facts are jointly unsatisfiable",
                     )],
+                    cause: Vec::new(),
                 });
                 None
             }
@@ -483,12 +661,24 @@ impl<'a> Eval<'a> {
         } else {
             Status::Consistent
         };
+        // Materialize each raw conflict into its public form, attaching the
+        // derivation chain (reasons are final once the forward pass is done).
+        let conflicts: Vec<Conflict> = self
+            .conflicts
+            .iter()
+            .map(|rc| Conflict {
+                origin: rc.origin.clone(),
+                atoms: rc.atoms.clone(),
+                trace: self.build_trace(&rc.cause),
+            })
+            .collect();
         Report {
             status,
-            conflicts: self.conflicts,
+            conflicts,
             warnings: self.warnings,
             derived: self.derived,
             underdetermined,
+            unsat_core: self.unsat_core,
         }
     }
 }
@@ -556,6 +746,130 @@ fn build_cnf(c: &Compiled) -> (sat::Cnf, Vec<sat::Var>) {
     (cnf, project)
 }
 
+/// Convert a three-valued model entry to a confident [`Value`] (UNKNOWN → `None`).
+fn v3_to_value(v: V3) -> Option<Value> {
+    match v {
+        V3::True => Some(Value::True),
+        V3::False => Some(Value::False),
+        V3::Unknown => None,
+    }
+}
+
+/// A removable source construct (one fact, one premise, or one rule) and the CNF
+/// clauses it contributes — the unit of an unsat-core explanation.
+struct Construct {
+    origin: Origin,
+    label: String,
+    clauses: Vec<Vec<sat::SatLit>>,
+}
+
+/// Two origins refer to the same source construct.
+fn same_origin(a: &Origin, b: &Origin) -> bool {
+    a.source == b.source && a.line == b.line && a.premise == b.premise && a.kind == b.kind
+}
+
+/// Split the program into removable constructs. A premise that desugared into
+/// several clauses (e.g. an `EXCLUSIVE` over n atoms) is grouped back into one
+/// construct by origin, so the core blames whole premises, not clause shards.
+fn constructs(c: &Compiled) -> Vec<Construct> {
+    use sat::SatLit;
+    let mut out: Vec<Construct> = Vec::new();
+
+    for f in &c.facts {
+        let lit = match f.value {
+            Value::True => SatLit::positive(f.atom),
+            Value::False => SatLit::negative(f.atom),
+        };
+        out.push(Construct {
+            origin: f.origin.clone(),
+            label: label(c, f.atom),
+            clauses: vec![vec![lit]],
+        });
+    }
+
+    let mut premises: Vec<Construct> = Vec::new();
+    for clause in &c.clauses {
+        let lits: Vec<SatLit> = clause
+            .lits
+            .iter()
+            .map(|l| SatLit::new(l.atom, l.negated))
+            .collect();
+        match premises
+            .iter_mut()
+            .find(|k| same_origin(&k.origin, &clause.origin))
+        {
+            Some(k) => k.clauses.push(lits),
+            None => premises.push(Construct {
+                label: clause.origin.premise.clone().unwrap_or_default(),
+                origin: clause.origin.clone(),
+                clauses: vec![lits],
+            }),
+        }
+    }
+    out.extend(premises);
+
+    for r in &c.rules {
+        let clauses = r
+            .consequent
+            .iter()
+            .map(|cons| {
+                let mut lits: Vec<SatLit> = r
+                    .antecedent
+                    .iter()
+                    .map(|a| SatLit::new(a.atom, a.negated))
+                    .collect();
+                lits.push(SatLit::new(cons.atom, !cons.negated));
+                lits
+            })
+            .collect();
+        out.push(Construct {
+            label: r.origin.premise.clone().unwrap_or_default(),
+            origin: r.origin.clone(),
+            clauses,
+        });
+    }
+    out
+}
+
+/// Is the program satisfiable using only the constructs marked active?
+fn subset_is_sat(num_vars: usize, all: &[Construct], active: &[bool]) -> bool {
+    let mut cnf = sat::Cnf::new(num_vars);
+    for (k, &keep) in all.iter().zip(active) {
+        if keep {
+            for cl in &k.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// A minimal (1-minimal) unsat core via deletion-based minimization: starting
+/// from the whole (unsatisfiable) program, drop each construct in turn; if the
+/// rest is still unsatisfiable the construct was not needed. What survives is an
+/// irreducible set jointly to blame. Called only when the full system is UNSAT.
+fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
+    let all = constructs(c);
+    let mut active = vec![true; all.len()];
+    for i in 0..all.len() {
+        active[i] = false;
+        if subset_is_sat(c.atoms.len(), &all, &active) {
+            active[i] = true; // removing it restored SAT → it is part of the core
+        }
+    }
+    let mut core: Vec<CoreItem> = all
+        .iter()
+        .zip(&active)
+        .filter(|&(_, &keep)| keep)
+        .map(|(k, _)| CoreItem {
+            origin: k.origin.clone(),
+            label: k.label.clone(),
+        })
+        .collect();
+    core.sort_by_key(|it| key(&it.origin));
+    core
+}
+
 /// Sort key giving conflicts/warnings a stable, source-then-line order.
 fn key(o: &Origin) -> (String, u32) {
     (o.source.clone(), o.line)
@@ -590,6 +904,36 @@ fn premise_tag(o: &Origin) -> String {
     alloc::format!("{} ({})  [{}:{}]", name, o.kind, o.source, o.line)
 }
 
+/// One derivation-trace line for the human report.
+fn trace_line(step: &TraceStep) -> String {
+    let v = match step.value {
+        Value::True => "TRUE",
+        Value::False => "FALSE",
+    };
+    match &step.reason {
+        TraceReason::Asserted(o) => {
+            alloc::format!(
+                "{} = {}   [{} {}:{}]",
+                step.atom,
+                v,
+                o.kind,
+                o.source,
+                o.line
+            )
+        }
+        TraceReason::Derived { origin, from } => alloc::format!(
+            "{} = {}   from {} ({})  [{}:{}]  <= {}",
+            step.atom,
+            v,
+            origin.premise.as_deref().unwrap_or("-"),
+            origin.kind,
+            origin.source,
+            origin.line,
+            from.join(", ")
+        ),
+    }
+}
+
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "RESULT: {}", self.status)?;
@@ -597,6 +941,27 @@ impl fmt::Display for Report {
             writeln!(f, "  CONFLICT  {}", premise_tag(&c.origin))?;
             for a in &c.atoms {
                 writeln!(f, "      {}", a)?;
+            }
+            if !c.trace.is_empty() {
+                writeln!(f, "      why:")?;
+                for step in &c.trace {
+                    writeln!(f, "        {}", trace_line(step))?;
+                }
+            }
+        }
+        if !self.unsat_core.is_empty() {
+            writeln!(
+                f,
+                "  CORE  smallest jointly-unsatisfiable set ({}):",
+                self.unsat_core.len()
+            )?;
+            for it in &self.unsat_core {
+                let name = if it.label.is_empty() { "-" } else { &it.label };
+                writeln!(
+                    f,
+                    "        {} ({})  [{}:{}]",
+                    name, it.origin.kind, it.origin.source, it.origin.line
+                )?;
             }
         }
         for w in &self.warnings {
@@ -800,5 +1165,85 @@ mod tests {
             Some("mortal_xor_immortal")
         );
         assert_eq!(r.derived.len(), 3); // animal, living, mortal
+    }
+
+    // --- conflict explainability: derivation trace + minimal unsat core ------
+
+    #[test]
+    fn forward_conflict_carries_a_trace_of_its_facts() {
+        let r = verify_source(
+            "<t>",
+            "FACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n",
+        )
+        .unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        let t = &r.conflicts[0].trace;
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].atom, "x a");
+        assert_eq!(t[0].value, Value::True);
+        assert!(matches!(t[0].reason, TraceReason::Asserted(_)));
+        assert!(r.unsat_core.is_empty());
+    }
+
+    #[test]
+    fn derivation_chain_is_traced_back_to_the_root_fact() {
+        // human → animal → living → mortal, then mortal XOR immortal (immortal asserted).
+        let src = include_str!("../../../docs/examples/socrates.vrf");
+        let r = verify_source("socrates.vrf", src).unwrap();
+        let t = &r.conflicts[0].trace;
+        // human (fact) + animal, living, mortal (derived) + immortal (fact) = 5 steps,
+        // supports before dependents.
+        assert_eq!(t.len(), 5);
+        assert_eq!(t[0].atom, "socrates is human");
+        assert!(matches!(t[0].reason, TraceReason::Asserted(_)));
+        let mortal = t.iter().find(|s| s.atom == "socrates is mortal").unwrap();
+        match &mortal.reason {
+            TraceReason::Derived { from, .. } => {
+                assert_eq!(from, &vec![String::from("socrates is living")]);
+            }
+            _ => panic!("mortal should be derived, not asserted"),
+        }
+    }
+
+    #[test]
+    fn direct_fact_contradiction_has_no_trace() {
+        let r = verify_source("<t>", "FACT x a\nNOT x a\nCHECK x\n").unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert!(r.conflicts[0].trace.is_empty());
+    }
+
+    #[test]
+    fn jointly_unsatisfiable_reports_a_minimal_core() {
+        // ONEOF(a,b); a→c; b→c; NOT c. Unsat only via case-split, so the forward
+        // pass misses it and the backward pass produces the core.
+        let src = "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nCHECK x BIDIRECTIONAL\n";
+        let r = verify_source("<t>", src).unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.conflicts[0].origin.kind, "UNSAT");
+        assert_eq!(r.unsat_core.len(), 4);
+        let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"one"));
+        assert!(labels.contains(&"x c")); // the bare NOT fact is labelled by its atom
+    }
+
+    #[test]
+    fn unsat_core_excludes_irrelevant_constructs() {
+        // The same unsat cluster, plus an unrelated fact + premise that must not
+        // appear in the (irreducible) core.
+        let src = "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nFACT z here\nPREMISE noise:\n    EXCLUSIVE\n        z here\n        z gone\nCHECK x BIDIRECTIONAL\n";
+        let r = verify_source("<t>", src).unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.unsat_core.len(), 4);
+        let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
+        assert!(!labels.contains(&"noise"));
+        assert!(!labels.iter().any(|l| l.contains("here")));
+    }
+
+    #[test]
+    fn consistent_report_has_empty_core_and_no_trace() {
+        let r = verify_source("<t>", "FACT x a\nCHECK x BIDIRECTIONAL\n").unwrap();
+        assert_eq!(r.status, Status::Consistent);
+        assert!(r.unsat_core.is_empty());
+        assert!(r.conflicts.is_empty());
     }
 }
