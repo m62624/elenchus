@@ -125,6 +125,15 @@ and reuse it everywhere — facts, premises, rules, imports). Mismatches show up
 phantom WARNINGs or, worse, as a check that silently passes because it never
 engaged.
 
+The engine helps you catch this: it emits advisory **`HINT`** lines (JSON:
+`hints`) when two atom names look like the same atom typed two ways — e.g.
+*"possible typo — 'auth is rolled_back' and 'auth is_rolled_back' look like the
+same atom"*. A `HINT` never changes the verdict or exit code; it's a nudge. When
+you see one, decide: if they *should* be one atom, fix the spelling and re-run; if
+they're genuinely different, ignore it. (It only flags case / `_`-vs-space, or a
+single-character slip within the same subject — so distinct atoms like `x a` /
+`x b`, or antonyms like `mortal` / `immortal`, are left alone.)
+
 **WHEN…THEN: why WARNING vs CONFLICT.** For `WHEN A AND B THEN C`:
 
 - any antecedent FALSE → the rule doesn't fire → CONSISTENT (not a warning);
