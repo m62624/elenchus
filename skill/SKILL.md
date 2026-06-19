@@ -371,6 +371,64 @@ CHECK motor
 `CONFLICT` — your local facts violate the imported premise, because both files
 share the atoms `motor uses fast_path` / `slow_path`. (`IMPORT` needs file mode.)
 
+### 8. Capstone — a real "ship to prod?" decision (the payoff)
+
+Everything together on one subject (`rel`, so every atom stays byte-identical):
+`ONEOF` for the stage, an `AND` gate, an `OR` safety requirement, a `RULE` that
+derives an obligation, and a chained gate. You believe the release is ready and
+state what you know:
+
+```vrf
+PREMISE one_stage:                 // a release is in exactly one stage
+    ONEOF
+        rel in_dev
+        rel in_staging
+        rel in_prod
+PREMISE prod_needs_deployable:     // prod requires passing the gate
+    WHEN rel in_prod
+    THEN rel deployable
+PREMISE deploy_gate:               // the gate: every check must pass
+    WHEN rel code_reviewed
+    AND  rel tests_green
+    AND  rel security_scanned
+    THEN rel deployable
+RULE migration_needs_backup:       // a schema migration *implies* a backup is owed
+    WHEN rel has_migration
+    THEN rel needs_backup
+PREMISE backup_gate:               // an owed backup must be verified
+    WHEN rel needs_backup
+    THEN rel backup_verified
+PREMISE prod_needs_safety:         // in prod, need a rollback path OR a feature flag
+    WHEN rel in_prod
+    THEN rel has_rollback
+    OR   rel has_feature_flag
+// --- what you actually know ---
+FACT rel in_prod
+FACT rel code_reviewed
+FACT rel tests_green
+FACT rel security_scanned
+FACT rel deployable
+FACT rel has_migration
+FACT rel has_feature_flag
+CHECK rel
+```
+
+`WARNING` — `blocked by: rel backup_verified`. You thought you were ready, but the
+engine found the gap you didn't account for: `has_migration` makes the `RULE`
+derive `needs_backup`, and `backup_gate` then requires `backup_verified`, which you
+never stated. **This is the payoff** — a missed obligation surfaced mechanically,
+not by luck.
+
+Now make it honest, not green-at-any-cost:
+- If the backup really was verified → add `FACT rel backup_verified` → `CONSISTENT`.
+- If it was **not** → add `NOT rel backup_verified`: now it's a `CONFLICT` whose
+  `why:` prints the chain `has_migration → needs_backup → backup_verified = FALSE`.
+  The correct action is **don't ship**, not delete the premise.
+
+(Drop `FACT rel has_feature_flag` and `prod_needs_safety` surfaces too: in prod
+with neither a rollback nor a flag stated → `WARNING` blocked by both, telling you
+to confirm a safety mechanism.)
+
 ## Run it — do these three steps first, in order (every session)
 
 Before you write a single program, set up and verify the engine. Do **not** skip
