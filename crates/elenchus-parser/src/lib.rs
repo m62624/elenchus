@@ -642,6 +642,10 @@ fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// and `stmt_negation` comes last so a leading `NOT` is only read as a top-level
 /// negation when nothing else matched.
 fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    // Leading indentation is cosmetic everywhere, including on the top-level
+    // keyword line — so a whole program may be written indented (e.g. inside a
+    // host's here-doc) and parse identically.
+    let (input, _) = space0(input)?;
     alt((
         stmt_import,
         stmt_fact,
@@ -961,6 +965,16 @@ mod tests {
         let indented = "PREMISE x:\n        EXCLUSIVE\n  a b\n            a c\n";
         // Spans differ by offset (cosmetic); the parsed structure must be identical.
         assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
+    }
+
+    #[test]
+    fn top_level_statements_may_be_indented() {
+        // Leading indentation on the FACT/PREMISE/CHECK lines themselves is also
+        // cosmetic (so a whole program can be pasted indented inside a here-doc).
+        let flat = "FACT x a\nNOT x b\nCHECK x\n";
+        let indented = "    FACT x a\n        NOT x b\n    CHECK x\n";
+        assert_eq!(atom_shapes(&prog(flat)), atom_shapes(&prog(indented)));
+        assert_eq!(prog(indented).statements.len(), 3);
     }
 
     #[test]
