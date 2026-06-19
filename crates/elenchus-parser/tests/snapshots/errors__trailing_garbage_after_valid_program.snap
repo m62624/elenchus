@@ -2,6 +2,6 @@
 source: crates/elenchus-parser/tests/errors.rs
 expression: "err(\"FACT a b\\nCHECK a\\n??? leftover\\n\")"
 ---
-Syntax Error at line 3, col 1: expected a statement (IMPORT/FACT/NOT/AXIOM/RULE/CHECK)
+Syntax Error at line 3, col 1: expected a statement (IMPORT/FACT/NOT/PREMISE/RULE/CHECK)
   | ??? leftover
   | ^--- here

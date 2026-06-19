@@ -1,12 +1,12 @@
-// A vetted, reusable axiom library — first principles only, no facts.
+// A vetted, reusable premise library — first principles only, no facts.
 // A human curates this once; the model never edits it, only imports it.
 
-AXIOM one_path:
+PREMISE one_path:
     EXCLUSIVE
         Motor uses fast_path
         Motor uses slow_path
 
-AXIOM speed_order:
+PREMISE speed_order:
     WHEN Motor over_200
     THEN Motor over_100
 // if speed > 200 then necessarily > 100 — pure logic, no arithmetic

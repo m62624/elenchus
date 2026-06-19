@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONFLICT","exit_code":2,"conflicts":[{"axiom":null,"kind":"UNSAT","source":"<system>","line":0,"atoms":["the axioms and facts are jointly unsatisfiable"]}],"warnings":[{"axiom":"a_implies_b","kind":"AXIOM","source":"v.vrf","line":1,"blocked_by":["x a","x b"]},{"axiom":"a_implies_not_b","kind":"AXIOM","source":"v.vrf","line":4,"blocked_by":["x a","x b"]},{"axiom":"c_implies_a","kind":"AXIOM","source":"v.vrf","line":11,"blocked_by":["x c","x a"]}],"derived":[],"underdetermined":null}
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":null,"kind":"UNSAT","source":"<system>","line":0,"atoms":["the premises and facts are jointly unsatisfiable"]}],"warnings":[{"premise":"a_implies_b","kind":"PREMISE","source":"v.vrf","line":1,"blocked_by":["x a","x b"]},{"premise":"a_implies_not_b","kind":"PREMISE","source":"v.vrf","line":4,"blocked_by":["x a","x b"]},{"premise":"c_implies_a","kind":"PREMISE","source":"v.vrf","line":11,"blocked_by":["x c","x a"]}],"derived":[],"underdetermined":null}

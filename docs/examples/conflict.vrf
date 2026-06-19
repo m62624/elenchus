@@ -1,9 +1,9 @@
-// Example: an explicit conflict — two facts violate an axiom.
+// Example: an explicit conflict — two facts violate a premise.
 
 FACT Animal.B has flying
 FACT Animal.B has swimming
 
-AXIOM fly_xor_swim:
+PREMISE fly_xor_swim:
     EXCLUSIVE
         Animal.B has flying
         Animal.B has swimming

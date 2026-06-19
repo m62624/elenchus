@@ -17,12 +17,12 @@ Hand-rolled with `serde_json` — no MCP SDK dependency.
 
 | Argument | Type | |
 |----------|------|--|
-| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`, `AXIOM`/`RULE`, `CHECK` |
+| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`, `PREMISE`/`RULE`, `CHECK` |
 | `format` | `"human"` \| `"json"` (optional) | output format, default `"json"` |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.
 Treat anything other than CONSISTENT as *not done*: add the missing facts or
-rethink the axioms, then call again — iterate until CONSISTENT.
+rethink the premises, then call again — iterate until CONSISTENT.
 
 ## Run
 

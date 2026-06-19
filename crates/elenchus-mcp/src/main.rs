@@ -80,16 +80,16 @@ fn tool_result(id: Value, text: String, is_error: bool) -> Value {
 fn tool_def() -> Value {
     json!({
         "name": "elenchus_check",
-        "description": "Check an elenchus `.vrf` program (facts, axioms, rules, checks) for \
+        "description": "Check an elenchus `.vrf` program (facts, premises, rules, checks) for \
     logical consistency. Returns one of CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT with \
     details and an exit code. Treat WARNING, UNDERDETERMINED and CONFLICT as NOT done: add the \
-    missing facts or rethink the axioms, then call again — iterate until the result is CONSISTENT.",
+    missing facts or rethink the premises, then call again — iterate until the result is CONSISTENT.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "program": {
                     "type": "string",
-                    "description": "The .vrf program text: FACT/NOT assertions, AXIOM/RULE first principles, and a CHECK."
+                    "description": "The .vrf program text: FACT/NOT assertions, PREMISE/RULE first principles, and a CHECK."
                 },
                 "format": {
                     "type": "string",

@@ -21,8 +21,8 @@ import resolver.
   kept separate as forward-chaining rules.
 - **Source-agnostic `IMPORT`** via a `Resolver` (`MemoryResolver`, or the
   `std`-gated `FileResolver`): a flat merge into one shared atom universe, so an
-  imported axiom unifies with a local fact by identity.
-- **Content-addressing** (sha256): identical clauses/axioms are deduped
+  imported premise unifies with a local fact by identity.
+- **Content-addressing** (sha256): identical clauses/premises are deduped
   (idempotent — `P ∧ P ≡ P`), import cycles are detected, and a name redefined
   with a different body is an error.
 
@@ -40,7 +40,7 @@ assert_eq!(ir.facts.len(), 1);
 
 // With imports (string-backed; a file is just one backing store):
 let mut r = MemoryResolver::new();
-r.add("physics.vrf", "AXIOM speed_order:\n    WHEN Motor over_200\n    THEN Motor over_100\n");
+r.add("physics.vrf", "PREMISE speed_order:\n    WHEN Motor over_200\n    THEN Motor over_100\n");
 r.add("main.vrf", "IMPORT \"physics.vrf\"\nFACT Motor over_200\nCHECK Motor\n");
 let ir = compile("main.vrf", &r).unwrap();
 assert!(ir.pending_imports.is_empty());

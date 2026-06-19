@@ -9,24 +9,24 @@ const COMPLEX: &str = "\
 FACT Sys ready
 NOT  Sys broken
 
-AXIOM modes:
+PREMISE modes:
     EXCLUSIVE
         Sys mode idle
         Sys mode run
         Sys mode halt
         Sys mode error
 
-AXIOM exactly_one_owner:
+PREMISE exactly_one_owner:
     ONEOF
         Sys owner alice
         Sys owner bob
 
-AXIOM at_least_one_check:
+PREMISE at_least_one_check:
     ATLEAST
         Sys checked unit
         Sys checked integration
 
-AXIOM deploy_gate:
+PREMISE deploy_gate:
     WHEN Sys ready
     AND  Sys checked unit
     AND  NOT Sys broken

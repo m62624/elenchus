@@ -28,14 +28,14 @@ fn consistent_with_derived() {
 #[test]
 fn warning_single() {
     insta::assert_snapshot!(report(
-        "FACT x a\nAXIOM w:\n    WHEN x a\n    THEN x b\nCHECK x\n"
+        "FACT x a\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n"
     ));
 }
 
 #[test]
 fn warning_multiple_with_derived() {
     insta::assert_snapshot!(report(
-        "FACT s ready\nAXIOM need_two:\n    WHEN s ready\n    THEN s checked\n    AND s signed\nRULE mark:\n    WHEN s ready\n    THEN s seen\nCHECK s\n"
+        "FACT s ready\nPREMISE need_two:\n    WHEN s ready\n    THEN s checked\n    AND s signed\nRULE mark:\n    WHEN s ready\n    THEN s seen\nCHECK s\n"
     ));
 }
 
@@ -44,14 +44,14 @@ fn warning_multiple_with_derived() {
 #[test]
 fn conflict_exclusive_violation() {
     insta::assert_snapshot!(report(
-        "FACT x a\nFACT x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n"
+        "FACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n"
     ));
 }
 
 #[test]
 fn conflict_implication_violation() {
     insta::assert_snapshot!(report(
-        "FACT x a\nNOT x b\nAXIOM w:\n    WHEN x a\n    THEN x b\nCHECK x\n"
+        "FACT x a\nNOT x b\nPREMISE w:\n    WHEN x a\n    THEN x b\nCHECK x\n"
     ));
 }
 
@@ -72,17 +72,17 @@ fn conflict_multiple_sorted() {
     // A fact contradiction (line 1) and an EXCLUSIVE violation (line 5) — both
     // reported, ordered by source line.
     insta::assert_snapshot!(report(
-        "FACT y c\nNOT y c\nFACT x a\nFACT x b\nAXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n"
+        "FACT y c\nNOT y c\nFACT x a\nFACT x b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x\n"
     ));
 }
 
 #[test]
 fn conflict_system_unsatisfiable() {
-    // No single clause is violated under the (all-unknown) facts, but the axioms
+    // No single clause is violated under the (all-unknown) facts, but the premises
     // are jointly unsatisfiable — only the backward pass (BIDIRECTIONAL) finds it.
     // a→b, a→¬b force ¬a; ATLEAST(a,c) forces c; c→a then contradicts ¬a.
     insta::assert_snapshot!(report(
-        "AXIOM a_implies_b:\n    WHEN x a\n    THEN x b\nAXIOM a_implies_not_b:\n    WHEN x a\n    THEN NOT x b\nAXIOM atleast_a_c:\n    ATLEAST\n        x a\n        x c\nAXIOM c_implies_a:\n    WHEN x c\n    THEN x a\nCHECK x BIDIRECTIONAL\n"
+        "PREMISE a_implies_b:\n    WHEN x a\n    THEN x b\nPREMISE a_implies_not_b:\n    WHEN x a\n    THEN NOT x b\nPREMISE atleast_a_c:\n    ATLEAST\n        x a\n        x c\nPREMISE c_implies_a:\n    WHEN x c\n    THEN x a\nCHECK x BIDIRECTIONAL\n"
     ));
 }
 
@@ -91,6 +91,6 @@ fn conflict_system_unsatisfiable() {
 #[test]
 fn underdetermined_with_witness_hint() {
     insta::assert_snapshot!(report(
-        "AXIOM e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n"
+        "PREMISE e:\n    EXCLUSIVE\n        x a\n        x b\nCHECK x BIDIRECTIONAL\n"
     ));
 }

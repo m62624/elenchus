@@ -5,7 +5,7 @@
 IMPORT "physics.vrf"
 
 FACT Motor over_200
-NOT  Motor over_100        // contradicts the imported speed_order axiom
+NOT  Motor over_100        // contradicts the imported speed_order premise
 
 CHECK Motor
 

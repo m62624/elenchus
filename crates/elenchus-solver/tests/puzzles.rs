@@ -6,34 +6,34 @@ use elenchus_solver::{Status, verify_source};
 
 /// A 3×3 assignment puzzle: each of alice/bob/carol gets exactly one of
 /// lead/dev/qa, and each role goes to exactly one person — a permutation.
-/// Six ONEOF axioms (~24 clauses), nine atoms, none asserted by default.
+/// Six ONEOF premises (~24 clauses), nine atoms, none asserted by default.
 const ROLES: &str = "\
-AXIOM alice_role:
+PREMISE alice_role:
     ONEOF
         alice is lead
         alice is dev
         alice is qa
-AXIOM bob_role:
+PREMISE bob_role:
     ONEOF
         bob is lead
         bob is dev
         bob is qa
-AXIOM carol_role:
+PREMISE carol_role:
     ONEOF
         carol is lead
         carol is dev
         carol is qa
-AXIOM lead_one:
+PREMISE lead_one:
     ONEOF
         alice is lead
         bob is lead
         carol is lead
-AXIOM dev_one:
+PREMISE dev_one:
     ONEOF
         alice is dev
         bob is dev
         carol is dev
-AXIOM qa_one:
+PREMISE qa_one:
     ONEOF
         alice is qa
         bob is qa
@@ -83,26 +83,26 @@ FACT svc built
 FACT svc unit_tested
 NOT  svc deprecated
 
-AXIOM build_implies_artifact:
+PREMISE build_implies_artifact:
     WHEN svc built
     THEN svc has_artifact
 
-AXIOM tested_chain:
+PREMISE tested_chain:
     WHEN svc unit_tested
     THEN svc integration_tested
 
-AXIOM ready_needs_all:
+PREMISE ready_needs_all:
     WHEN svc has_artifact
     AND  svc integration_tested
     AND  svc security_scanned
     THEN svc release_ready
 
-AXIOM deploy_needs_ready:
+PREMISE deploy_needs_ready:
     WHEN svc release_ready
     AND  NOT svc deprecated
     THEN svc can_deploy
 
-AXIOM exclusive_env:
+PREMISE exclusive_env:
     EXCLUSIVE
         svc env staging
         svc env prod

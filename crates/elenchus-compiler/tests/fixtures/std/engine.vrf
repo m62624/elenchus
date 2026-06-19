@@ -1,7 +1,7 @@
 // Engine domain. Reuses the shared core invariants via a relative import.
 IMPORT "../core/base.vrf"
 
-AXIOM engine_needs_fuel:
+PREMISE engine_needs_fuel:
     WHEN Car engine running
     THEN Car has fuel
 

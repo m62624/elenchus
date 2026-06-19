@@ -8,7 +8,7 @@
 //   and  mortal  EXCLUSIVE  immortal                      (can't be both)
 //
 // Expected result: CONFLICT — the derived `mortal` and the asserted `immortal`
-// violate the exclusivity axiom.
+// violate the exclusivity premise.
 
 FACT socrates is human
 FACT socrates is immortal        // the claim being cross-examined
@@ -26,7 +26,7 @@ RULE living_things_are_mortal:
     WHEN socrates is living
     THEN socrates is mortal
 
-AXIOM mortal_xor_immortal:
+PREMISE mortal_xor_immortal:
     EXCLUSIVE
         socrates is mortal
         socrates is immortal

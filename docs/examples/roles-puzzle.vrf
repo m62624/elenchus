@@ -16,34 +16,34 @@
 // Expected result:  CONSISTENT  (satisfiable AND unique — no UNDERDETERMINED)
 
 // --- each person holds exactly one role ---
-AXIOM alice_one_role:
+PREMISE alice_one_role:
     ONEOF
         alice is lead
         alice is dev
         alice is qa
-AXIOM bob_one_role:
+PREMISE bob_one_role:
     ONEOF
         bob is lead
         bob is dev
         bob is qa
-AXIOM carol_one_role:
+PREMISE carol_one_role:
     ONEOF
         carol is lead
         carol is dev
         carol is qa
 
 // --- each role is held by exactly one person ---
-AXIOM lead_one_person:
+PREMISE lead_one_person:
     ONEOF
         alice is lead
         bob is lead
         carol is lead
-AXIOM dev_one_person:
+PREMISE dev_one_person:
     ONEOF
         alice is dev
         bob is dev
         carol is dev
-AXIOM qa_one_person:
+PREMISE qa_one_person:
     ONEOF
         alice is qa
         bob is qa

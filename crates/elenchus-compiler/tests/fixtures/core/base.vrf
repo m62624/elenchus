@@ -1,5 +1,5 @@
 // Core invariant shared by every domain: a car is in exactly one gear.
-AXIOM exactly_one_gear:
+PREMISE exactly_one_gear:
     ONEOF
         Car gear park
         Car gear drive
