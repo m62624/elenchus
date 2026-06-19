@@ -8,7 +8,7 @@
 
 use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
 use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
-use elenchus_solver::{Status, TraceReason, solve};
+use elenchus_solver::{Status, TraceReason, solve, verify_source};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -395,5 +395,167 @@ proptest! {
                 seen.push(step.atom.clone());
             }
         }
+    }
+}
+
+// --- near-duplicate atom hints: detector must match its spec exactly --------
+// An independent reference implementation of the documented heuristic. The
+// proptest asserts the engine's emitted hints equal this reference over random
+// programs — so the detector has no false positives AND no false negatives
+// relative to its spec (the real false-positive argument lives in the spec
+// itself: signal A is fold-equality, signal B is a tiny same-subject edit in a
+// cased script — see the unit tests for concrete English/Russian/CJK cases).
+
+/// Fold like the solver: join with spaces, lowercase, `_`/whitespace → one space.
+fn ref_fold(s: &str, p: &str, o: Option<&str>) -> Vec<char> {
+    let mut raw = String::new();
+    raw.push_str(s);
+    raw.push(' ');
+    raw.push_str(p);
+    if let Some(o) = o {
+        raw.push(' ');
+        raw.push_str(o);
+    }
+    let mut out: Vec<char> = Vec::new();
+    let mut prev_space = false;
+    for ch in raw.chars() {
+        if ch == '_' || ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.extend(ch.to_lowercase());
+            prev_space = false;
+        }
+    }
+    if out.last() == Some(&' ') {
+        out.pop();
+    }
+    out
+}
+
+fn ref_lev(a: &[char], b: &[char]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        core::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Reference predicate, mirroring the solver's `atoms_look_similar`.
+fn ref_close(a: &(String, String, Option<String>), b: &(String, String, Option<String>)) -> bool {
+    let fa = ref_fold(&a.0, &a.1, a.2.as_deref());
+    let fb = ref_fold(&b.0, &b.1, b.2.as_deref());
+    if fa == fb {
+        return true; // signal A
+    }
+    let cased = |f: &[char]| f.iter().all(|&c| c == ' ' || c.is_lowercase());
+    if !cased(&fa) || !cased(&fb) || a.0 != b.0 || fa.len().abs_diff(fb.len()) > 1 {
+        return false;
+    }
+    let min_len = fa.len().min(fb.len());
+    min_len >= 5 && ref_lev(&fa, &fb) == 1
+}
+
+fn ref_label(a: &(String, String, Option<String>)) -> String {
+    match &a.2 {
+        Some(o) => format!("{} {} {}", a.0, a.1, o),
+        None => format!("{} {}", a.0, a.1),
+    }
+}
+
+/// A random atom drawn from small token pools that deliberately include
+/// near-duplicates (so hints both fire and don't), plus split forms like
+/// (`rolled`, `back`) vs the single token `rolled_back` to exercise signal A.
+fn ref_atom() -> impl Strategy<Value = (String, String, Option<String>)> {
+    let subj = prop::sample::select(vec!["x", "auth"]);
+    let pred = prop::sample::select(vec![
+        "tested",
+        "tsted",
+        "staging",
+        "rolled_back",
+        "rolled",
+        "fuel",
+        "fuels",
+        "lead",
+        "dev",
+        "qa",
+    ]);
+    let obj = prop::sample::select(vec!["", "back", "ready", "qa"]);
+    (subj, pred, obj).prop_map(|(s, p, o)| {
+        let obj = if o.is_empty() {
+            None
+        } else {
+            Some(o.to_string())
+        };
+        (s.to_string(), p.to_string(), obj)
+    })
+}
+
+/// Normalize a hint pair to an unordered (min, max) tuple for set comparison
+/// (the engine's a/b order follows atom-id order, not string order).
+fn pair(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(500))]
+
+    /// The engine's near-duplicate hints equal the independent reference set —
+    /// exactly, with no spurious extras (false positives) and none missing
+    /// (false negatives). Run over hundreds of random multi-atom programs.
+    #[test]
+    fn near_duplicate_hints_match_reference(atoms in prop::collection::vec(ref_atom(), 2..=6)) {
+        // Distinct atoms (the engine dedups identical triples).
+        let mut distinct = atoms.clone();
+        distinct.sort();
+        distinct.dedup();
+
+        // Reference: all distinct unordered pairs the spec calls "close".
+        let mut expected: Vec<(String, String)> = Vec::new();
+        for i in 0..distinct.len() {
+            for j in (i + 1)..distinct.len() {
+                if ref_close(&distinct[i], &distinct[j]) {
+                    expected.push(pair(&ref_label(&distinct[i]), &ref_label(&distinct[j])));
+                }
+            }
+        }
+        expected.sort();
+        expected.dedup();
+
+        // Build a program and run the real engine.
+        let mut src = String::new();
+        for (s, p, o) in &atoms {
+            match o {
+                Some(o) => src.push_str(&format!("FACT {s} {p} {o}\n")),
+                None => src.push_str(&format!("FACT {s} {p}\n")),
+            }
+        }
+        src.push_str("CHECK\n");
+        let report = verify_source("<prop>", &src).unwrap();
+
+        let mut got: Vec<(String, String)> =
+            report.hints.iter().map(|h| pair(&h.a, &h.b)).collect();
+        // No self-pairs and no duplicate unordered pairs.
+        for h in &report.hints {
+            prop_assert_ne!(&h.a, &h.b);
+        }
+        let before = got.len();
+        got.sort();
+        got.dedup();
+        prop_assert_eq!(before, got.len(), "duplicate hint pair emitted");
+
+        prop_assert_eq!(got, expected, "engine hints differ from the reference");
     }
 }

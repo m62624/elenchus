@@ -101,6 +101,27 @@ jobs:
             exit 1
           fi
           echo "OK: SKILL.md documents $MARKER, matching the release."
+      - name: SKILL.md frontmatter must fit Agent Skills limits
+        # Anthropic Agent Skills limits (mirrored by Claude Code and other hosts):
+        # name <= 64 chars, description <= 1024 chars. The description is the only
+        # part loaded for skill *selection*, so a host will reject an over-long one.
+        # The SKILL.md body is uncapped. Ruby is preinstalled on the runner.
+        run: |
+          ruby -ryaml <<'RUBY'
+          content = File.read("skill/SKILL.md")
+          fm = content.split(/^---\s*$/, 3)[1] or abort "::error file=skill/SKILL.md::missing YAML frontmatter"
+          d = YAML.safe_load(fm)
+          name = d["name"].to_s
+          desc = d["description"].to_s
+          errs = []
+          errs << "name is #{name.length} chars (max 64)" if name.length > 64
+          errs << "description is #{desc.length} chars (max 1024)" if desc.length > 1024
+          if errs.any?
+            errs.each { |e| warn "::error file=skill/SKILL.md::#{e}" }
+            exit 1
+          end
+          puts "OK: name #{name.length}/64, description #{desc.length}/1024"
+          RUBY
 
   tag:
     name: Create release tag

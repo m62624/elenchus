@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"UNDERDETERMINED","exit_code":1,"conflicts":[],"warnings":[],"derived":[],"underdetermined":"x b","unsat_core":[]}
+{"status":"UNDERDETERMINED","exit_code":1,"conflicts":[],"warnings":[],"derived":[],"underdetermined":"x b","unsat_core":[],"hints":[]}

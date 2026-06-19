@@ -34,7 +34,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use elenchus_compiler::{AtomId, Clause, Compiled, Lit, Origin, Value};
+use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, Lit, Origin, Value};
 pub use elenchus_compiler::{CompileError, MemoryResolver, Resolver, compile, compile_source};
 
 /// Three-valued truth (Kleene). UNKNOWN is a first-class value, not hidden FALSE.
@@ -153,6 +153,24 @@ pub struct Report {
     /// premises / rules) whose removal restores satisfiability — i.e. the
     /// smallest group jointly to blame. Empty in every other case.
     pub unsat_core: Vec<CoreItem>,
+    /// Advisory near-duplicate atom-name hints (possible typos). Never affects
+    /// [`Report::status`] or [`Report::exit_code`] — purely informational.
+    pub hints: Vec<SimilarAtoms>,
+}
+
+/// An advisory hint that two atom names look like the same atom typed two
+/// different ways (e.g. `is_rolled_back` vs `is rolled_back`). **Purely a
+/// suggestion** — it never changes the verdict, the warning pool, or the exit
+/// code. It exists to catch the silent-typo trap where a misspelling creates a
+/// new UNKNOWN atom that quietly never links to the rest of the program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimilarAtoms {
+    /// One atom's human label (`subject predicate [object]`).
+    pub a: String,
+    /// The other atom's human label.
+    pub b: String,
+    /// Why the pair was flagged (a short, fixed explanation).
+    pub reason: &'static str,
 }
 
 /// One construct named in an [`Report::unsat_core`].
@@ -235,6 +253,19 @@ impl Report {
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
             json_str(&it.label, &mut s);
+            s.push('}');
+        }
+        s.push_str("],\"hints\":[");
+        for (i, h) in self.hints.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str("{\"a\":");
+            json_str(&h.a, &mut s);
+            s.push_str(",\"b\":");
+            json_str(&h.b, &mut s);
+            s.push_str(",\"reason\":");
+            json_str(h.reason, &mut s);
             s.push('}');
         }
         s.push_str("]}");
@@ -679,6 +710,7 @@ impl<'a> Eval<'a> {
             derived: self.derived,
             underdetermined,
             unsat_core: self.unsat_core,
+            hints: Vec::new(), // filled by `solve` (advisory, post-verdict)
         }
     }
 }
@@ -690,7 +722,144 @@ pub fn solve(c: &Compiled) -> Report {
     e.seed_facts();
     e.saturate_rules();
     e.check_premises();
-    e.finish()
+    let mut report = e.finish();
+    // Advisory only: surface likely atom-name typos. Computed after the verdict
+    // so it can never influence status/exit code.
+    report.hints = similar_atom_pairs(c);
+    report
+}
+
+// --- near-duplicate atom detection (advisory typo hints) -------------------
+
+/// Detect pairs of distinct atoms whose names look like the same atom typed two
+/// ways. Two deliberately conservative signals (keep false positives minimal):
+///
+/// - **A — fold-equal:** identical after lowercasing and treating `_`/whitespace
+///   as one separator (`Has_fuel`/`has_fuel`, `is_rolled_back`/`is rolled_back`).
+///   Distinct atoms that fold to the same string are almost always one typo.
+/// - **B — near edit:** *same subject*, an *alphabetic (cased)* script, and a
+///   Levenshtein distance of exactly 1 over the folded form (names ≥ 5 chars).
+///   Distance 1 only — distance 2 flags real antonyms (mortal/immortal) far too
+///   often. Edit distance is a typo signal only where a word spans many
+///   characters; in caseless scripts (CJK / kana / hangul) one character is a
+///   whole word, so a one-character change is normally a *different* word — those
+///   are skipped by the "cased letters only" test (no hard-coded Unicode ranges).
+///
+/// Signal A is fully script-agnostic; signal B is the script-sensitive one.
+/// `O(n²)` over the (typically small) atom set, with a length-difference quick
+/// reject. Deterministic: atoms are already canonically sorted in `Compiled`.
+fn similar_atom_pairs(c: &Compiled) -> Vec<SimilarAtoms> {
+    let folded: Vec<Vec<char>> = c.atoms.iter().map(fold_atom).collect();
+    let cased: Vec<bool> = folded.iter().map(|f| is_cased_alphabetic(f)).collect();
+    let mut out = Vec::new();
+    for i in 0..c.atoms.len() {
+        for j in (i + 1)..c.atoms.len() {
+            if let Some(reason) = atoms_look_similar(
+                &c.atoms[i],
+                &folded[i],
+                cased[i],
+                &c.atoms[j],
+                &folded[j],
+                cased[j],
+            ) {
+                out.push(SimilarAtoms {
+                    a: label(c, i as AtomId),
+                    b: label(c, j as AtomId),
+                    reason,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Fold an atom to its comparison form: `subject predicate [object]` lowercased,
+/// every `_`/whitespace run collapsed to a single space. So `_` vs space vs case
+/// can never distinguish two names.
+fn fold_atom(k: &AtomKey) -> Vec<char> {
+    let mut raw = String::new();
+    raw.push_str(&k.subject);
+    raw.push(' ');
+    raw.push_str(&k.predicate);
+    if let Some(o) = &k.object {
+        raw.push(' ');
+        raw.push_str(o);
+    }
+    let mut out: Vec<char> = Vec::new();
+    let mut prev_space = false;
+    for ch in raw.chars() {
+        if ch == '_' || ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            for lc in ch.to_lowercase() {
+                out.push(lc);
+            }
+            prev_space = false;
+        }
+    }
+    if out.last() == Some(&' ') {
+        out.pop();
+    }
+    out
+}
+
+/// Whether every character of a folded name is a space or a *cased* letter — the
+/// script-agnostic gate for edit-distance (signal B). Cased scripts (Latin,
+/// Cyrillic, Greek, …) span many characters per word, so a one-character edit is
+/// a plausible typo. Caseless scripts (CJK / kana / hangul, where one character
+/// is a whole word) and digits report `is_lowercase() == false` after folding, so
+/// they fall out here without enumerating any Unicode ranges.
+fn is_cased_alphabetic(folded: &[char]) -> bool {
+    folded.iter().all(|&c| c == ' ' || c.is_lowercase())
+}
+
+/// The two-signal similarity test (see [`similar_atom_pairs`]). Returns the
+/// reason string when the pair looks like a typo, else `None`.
+fn atoms_look_similar(
+    ka: &AtomKey,
+    fa: &[char],
+    cased_a: bool,
+    kb: &AtomKey,
+    fb: &[char],
+    cased_b: bool,
+) -> Option<&'static str> {
+    // A — same folded form (the AtomKeys differ, so the raw spelling differs).
+    if fa == fb {
+        return Some("same name up to case, '_', or spaces");
+    }
+    // B — same subject, an alphabetic (cased) script, a single-character slip.
+    // Only distance 1: distance 2 flags real antonyms (mortal/immortal) and word
+    // pairs far too often — genuine typos are almost always a one-character edit,
+    // and the underscore/case case is already covered by signal A.
+    if !cased_a || !cased_b || ka.subject != kb.subject {
+        return None;
+    }
+    if fa.len().abs_diff(fb.len()) > 1 {
+        return None; // edit distance >= length difference, so it can't be 1
+    }
+    let min_len = fa.len().min(fb.len());
+    if min_len >= 5 && levenshtein(fa, fb) == 1 {
+        return Some("looks like a one-character typo of each other");
+    }
+    None
+}
+
+/// Plain Levenshtein edit distance over char slices (rolling two-row DP).
+fn levenshtein(a: &[char], b: &[char]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        core::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 /// Encode the premises (`Impossible` clauses), rules (as implications), and
@@ -1027,6 +1196,13 @@ impl fmt::Display for Report {
                 premise_tag(&d.origin)
             )?;
         }
+        for h in &self.hints {
+            writeln!(
+                f,
+                "  HINT      possible typo — '{}' and '{}' look like the same atom ({})",
+                h.a, h.b, h.reason
+            )?;
+        }
         let underdetermined = usize::from(self.status == Status::Underdetermined);
         writeln!(
             f,
@@ -1287,5 +1463,82 @@ mod tests {
         assert_eq!(r.status, Status::Consistent);
         assert!(r.unsat_core.is_empty());
         assert!(r.conflicts.is_empty());
+    }
+
+    // --- near-duplicate atom hints (advisory typo detector) ----------------
+
+    #[test]
+    fn hint_flags_underscore_vs_space_and_is_advisory_only() {
+        // The real trap: `is rolled_back` (obj) vs `is_rolled_back` (pred) are
+        // DIFFERENT atoms — no contradiction, so the verdict stays CONSISTENT —
+        // but the hint warns they were probably meant to be one atom.
+        let r = verify_source(
+            "<t>",
+            "FACT auth is rolled_back\nNOT auth is_rolled_back\nCHECK\n",
+        )
+        .unwrap();
+        assert_eq!(
+            r.status,
+            Status::Consistent,
+            "hint must not change the verdict"
+        );
+        assert_eq!(r.exit_code(), 0, "hint must not change the exit code");
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+        assert!(r.hints[0].reason.contains('_') || r.hints[0].reason.contains("case"));
+    }
+
+    #[test]
+    fn hint_flags_case_only_difference() {
+        let r = verify_source("<t>", "FACT Engine has_fuel\nNOT Engine Has_fuel\nCHECK\n").unwrap();
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+    }
+
+    #[test]
+    fn hint_flags_single_char_typo_same_subject() {
+        // alphabetic, same subject, edit distance 1, len >= 5 → signal B.
+        let r = verify_source("<t>", "FACT svc deployed\nNOT svc deployd\nCHECK\n").unwrap();
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+    }
+
+    #[test]
+    fn no_hint_for_short_distinct_atoms() {
+        // `x a` vs `x b`: distance 1 but intentionally different — must NOT flag.
+        let r = verify_source("<t>", "FACT x a\nNOT x b\nCHECK\n").unwrap();
+        assert!(r.hints.is_empty(), "{:?}", r.hints);
+    }
+
+    #[test]
+    fn no_hint_for_distinct_words() {
+        let r = verify_source("<t>", "FACT p is lead\nNOT p is dev\nNOT p is qa\nCHECK\n").unwrap();
+        assert!(r.hints.is_empty(), "{:?}", r.hints);
+    }
+
+    #[test]
+    fn russian_case_typo_is_flagged() {
+        // Signal A is script-agnostic: lowercasing works for Cyrillic too.
+        let r = verify_source("<t>", "FACT кот спит\nNOT Кот спит\nCHECK\n").unwrap();
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+    }
+
+    #[test]
+    fn russian_single_char_typo_is_flagged() {
+        let r = verify_source("<t>", "FACT кот пушистый\nNOT кот пушстый\nCHECK\n").unwrap();
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+    }
+
+    #[test]
+    fn cjk_one_char_difference_is_not_flagged() {
+        // Caseless script: a one-character change is a different word, not a typo,
+        // so the edit-distance signal is skipped (only exact fold-equality fires).
+        let r = verify_source("<t>", "FACT a 是黑\nNOT a 是白\nCHECK\n").unwrap();
+        assert!(r.hints.is_empty(), "{:?}", r.hints);
+    }
+
+    #[test]
+    fn cjk_underscore_vs_space_is_flagged() {
+        // Signal A still applies to any script: `a 猫_黑` (pred) vs `a 猫 黑`
+        // (pred+obj) fold to the same name.
+        let r = verify_source("<t>", "FACT a 猫_黑\nNOT a 猫 黑\nCHECK\n").unwrap();
+        assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 }
