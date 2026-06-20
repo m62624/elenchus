@@ -15,7 +15,7 @@ Hand-rolled with `serde_json` — no MCP SDK dependency.
 
 Both give an LLM the same elenchus output. Pick based on your setup:
 
-- **CLI (`elenchus`)** — works wherever you can run shell commands. No MCP
+- **CLI (`elenchus-cli`)** — works wherever you can run shell commands. No MCP
   configuration needed. If your harness supports shell tools, **use the CLI** —
   it's simpler to set up and works in every environment (Claude Code, CI, terminal).
 - **MCP (`elenchus-mcp`)** — useful when your harness natively supports MCP and

@@ -123,9 +123,9 @@
                         <Component Id='binary0' Guid='*'>
                             <File
                                 Id='exe0'
-                                Name='elenchus.exe'
+                                Name='elenchus-cli.exe'
                                 DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\elenchus.exe'
+                                Source='$(var.CargoTargetBinDir)\elenchus-cli.exe'
                                 KeyPath='yes'/>
                         </Component>
                     </Directory>

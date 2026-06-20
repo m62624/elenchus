@@ -5,7 +5,7 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-The `elenchus` command-line interface — check a `.vrf` program (file, inline
+The `elenchus-cli` command-line interface — check a `.vrf` program (file, inline
 text, or stdin) and print the verdict. A thin `std` wrapper over the engine
 crates (`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
 
@@ -17,15 +17,15 @@ harness that supports shell tools.
 ## Usage
 
 ```console
-$ elenchus path/to/program.vrf          # check a file (IMPORTs resolve relative to it)
-$ elenchus --text "FACT x a
-CHECK x"                                  # inline program
-$ cat program.vrf | elenchus -          # stdin
-$ elenchus program.vrf --format json    # machine-readable output
+$ elenchus-cli path/to/program.vrf          # check a file (IMPORTs resolve relative to it)
+$ elenchus-cli --text "FACT x a
+CHECK x"                                      # inline program
+$ cat program.vrf | elenchus-cli -          # stdin
+$ elenchus-cli program.vrf --format json    # machine-readable output
 ```
 
 One input, three ways: a positional `<file>`, inline `--text`, or explicit stdin
-with `-`. Running `elenchus` with no input prints help instead of waiting on
+with `-`. Running `elenchus-cli` with no input prints help instead of waiting on
 stdin. `--text` and a file are mutually exclusive. **`IMPORT` resolves only for
 the file form** — `--text` and stdin are treated as a single source, so a program
 using `IMPORT` must be passed as a file.

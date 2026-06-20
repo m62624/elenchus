@@ -66,7 +66,7 @@ The engine derives `mortal` through the chain, then catches that it can't coexis
 with the asserted `immortal`:
 
 ```console
-$ elenchus socrates.vrf
+$ elenchus-cli socrates.vrf
 RESULT: CONFLICT
   CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
       socrates is mortal
@@ -92,7 +92,7 @@ the service is external — a contradiction the engine catches immediately.
 **Step 1 — first run, conflict detected:**
 
 ```console
-$ elenchus service.vrf
+$ elenchus-cli service.vrf
 RESULT: CONFLICT
   CONFLICT  external_requires_auth (PREMISE)  [service.vrf:9]
       service.api is external
@@ -105,7 +105,7 @@ EXIT_CODE: 2
 **Step 2 — fix: remove the wrong fact, re-run:**
 
 ```console
-$ elenchus service.vrf
+$ elenchus-cli service.vrf
 RESULT: CONSISTENT
 SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 0
@@ -114,7 +114,7 @@ EXIT_CODE: 0
 **Step 3 — add a new claim, check again:**
 
 ```console
-$ elenchus service.vrf
+$ elenchus-cli service.vrf
 RESULT: UNDERDETERMINED
   UNDERDETERMINED  service.api is cached
 SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 1 derived
@@ -186,8 +186,8 @@ prebuilt binary instead of compiling. It reads the release's cargo-dist
 manifest, so it just works on every OS/arch above — no extra config:
 
 ```console
-$ cargo binstall elenchus-cli     # the `elenchus` CLI
-$ cargo binstall elenchus-mcp     # the `elenchus-mcp` server
+$ cargo binstall elenchus-cli     # the `elenchus-cli` binary
+$ cargo binstall elenchus-mcp     # the `elenchus-mcp` binary
 ```
 
 ### From source
@@ -196,8 +196,8 @@ Needs a Rust toolchain; compiles locally and works on any platform Rust targets.
 Both crates are published to crates.io, so you can build straight from there:
 
 ```console
-$ cargo install elenchus-cli     # the `elenchus` CLI
-$ cargo install elenchus-mcp     # the `elenchus-mcp` server
+$ cargo install elenchus-cli     # the `elenchus-cli` binary
+$ cargo install elenchus-mcp     # the `elenchus-mcp` binary
 ```
 
 …or from a local checkout of this repo:
@@ -213,7 +213,7 @@ $ cargo install --path crates/elenchus-mcp
 own install tracking, so plain `cargo uninstall` works):
 
 ```console
-$ cargo uninstall elenchus-cli      # removes the `elenchus` binary
+$ cargo uninstall elenchus-cli      # removes the `elenchus-cli` binary
 $ cargo uninstall elenchus-mcp
 ```
 
@@ -229,13 +229,13 @@ cargo didn't track them), and a receipt is written per app.
 
 ```console
 # Linux / macOS
-$ rm -f  ~/.cargo/bin/elenchus ~/.cargo/bin/elenchus-mcp
+$ rm -f  ~/.cargo/bin/elenchus-cli ~/.cargo/bin/elenchus-mcp
 $ rm -rf ~/.config/elenchus-cli ~/.config/elenchus-mcp     # install receipts
 ```
 
 ```powershell
 # Windows (PowerShell)
-> Remove-Item "$env:USERPROFILE\.cargo\bin\elenchus.exe","$env:USERPROFILE\.cargo\bin\elenchus-mcp.exe" -ErrorAction SilentlyContinue
+> Remove-Item "$env:USERPROFILE\.cargo\bin\elenchus-cli.exe","$env:USERPROFILE\.cargo\bin\elenchus-mcp.exe" -ErrorAction SilentlyContinue
 > Remove-Item "$env:LOCALAPPDATA\elenchus-cli","$env:LOCALAPPDATA\elenchus-mcp" -Recurse -ErrorAction SilentlyContinue
 ```
 
@@ -251,7 +251,7 @@ prune that line from your shell profile if nothing else uses it.
 Both let an LLM run elenchus; the output is the same either way. The difference
 is setup cost:
 
-- **CLI** — `elenchus <file>` or `elenchus --text "…"` from the shell. Works in
+- **CLI** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from the shell. Works in
   every harness that can run shell commands (Claude Code, any CI pipeline,
   terminal). No extra configuration. **Recommended: if your harness supports
   shell commands, use the CLI.**
@@ -260,13 +260,13 @@ is setup cost:
   harness doesn't expose a shell at all. More moving parts to set up.
 
 The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both — it works
-identically whether the agent calls `elenchus` via the CLI or via the MCP tool.
+identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.
 
 ### CLI
 
-One input three ways: a positional `elenchus <file.vrf>`, inline
+One input three ways: a positional `elenchus-cli <file.vrf>`, inline
 `--text "<program>"`, or explicit stdin with `-`; `--text` and a file are
-mutually exclusive. Running `elenchus` with no input prints help instead of
+mutually exclusive. Running `elenchus-cli` with no input prints help instead of
 waiting on stdin. `--format json` for tooling; exit code is the verdict (CI gate).
 Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
 source. See [`crates/elenchus-cli`](crates/elenchus-cli).
