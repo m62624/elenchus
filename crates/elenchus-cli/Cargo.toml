@@ -22,7 +22,7 @@ license = false
 eula = false
 
 [[bin]]
-name = "elenchus"
+name = "elenchus-cli"
 path = "src/main.rs"
 
 [dependencies]

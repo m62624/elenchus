@@ -480,10 +480,10 @@ later result untrustworthy.
 
 You have exactly one of two ways in. Detect which:
 
-- **Shell available →** use the **CLI** (the `elenchus` binary).
-  - `elenchus program.vrf` — check a file (the only mode where `IMPORT` resolves).
-  - `elenchus --text "FACT x a\nCHECK x"` — inline (newlines required between lines).
-  - `cat program.vrf | elenchus` — stdin. `--format json` for machine output.
+- **Shell available →** use the **CLI** (the `elenchus-cli` binary).
+  - `elenchus-cli program.vrf` — check a file (the only mode where `IMPORT` resolves).
+  - `elenchus-cli --text "FACT x a\nCHECK x"` — inline (newlines required between lines).
+  - `cat program.vrf | elenchus-cli` — stdin. `--format json` for machine output.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
   (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). The
@@ -497,7 +497,7 @@ You have exactly one of two ways in. Detect which:
 Prove at least one transport actually runs before trusting anything. Run the
 known-CONFLICT program and confirm the result:
 
-- **CLI:** `elenchus --text "FACT x a\nNOT x a\nCHECK x"` → expect **CONFLICT**, exit **2**.
+- **CLI:** `elenchus-cli --text "FACT x a\nNOT x a\nCHECK x"` → expect **CONFLICT**, exit **2**.
 - **MCP:** `elenchus_check` with `{"program":"FACT x a\nNOT x a\nCHECK x"}` → `status` == `"CONFLICT"`.
 
 Any other answer means the install is broken — fix that before continuing.
@@ -513,7 +513,7 @@ elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 
 <!-- skill-version: 0.5.0 -->
 
-- **CLI:** `elenchus --version` (or `-V`) → `elenchus x.y.z`.
+- **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
   `initialize`'s `serverInfo.version`, so use this tool).
 

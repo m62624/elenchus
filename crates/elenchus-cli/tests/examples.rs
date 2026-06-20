@@ -7,7 +7,7 @@ use std::process::Command;
 
 fn run_file(name: &str) -> i32 {
     let path = format!("{}/../../docs/examples/{name}", env!("CARGO_MANIFEST_DIR"));
-    Command::new(env!("CARGO_BIN_EXE_elenchus"))
+    Command::new(env!("CARGO_BIN_EXE_elenchus-cli"))
         .arg(path)
         .output()
         .expect("run elenchus")
@@ -17,7 +17,7 @@ fn run_file(name: &str) -> i32 {
 }
 
 fn run_text(program: &str) -> i32 {
-    Command::new(env!("CARGO_BIN_EXE_elenchus"))
+    Command::new(env!("CARGO_BIN_EXE_elenchus-cli"))
         .args(["--text", program])
         .output()
         .expect("run elenchus")

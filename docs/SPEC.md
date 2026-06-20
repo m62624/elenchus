@@ -856,8 +856,8 @@ tests. For helping a model plan and write code, the boolean checks are enough.
 
 ## Integration (plan)
 
-1. Standalone Rust CLI: `elenchus check file.vrf`
-2. JSON output: `elenchus check file.vrf --format json`
+1. Standalone Rust CLI: `elenchus-cli file.vrf`
+2. JSON output: `elenchus-cli file.vrf --format json`
 3. An npm wrapper → a `planner_verify` tool in pi-code-planner
 4. Insertion point in the state machine: an `execution/contract_check` step
    or a new `verify_reasoning` step between discovery and planning

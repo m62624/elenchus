@@ -4,14 +4,14 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn elenchus(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_elenchus"))
+    Command::new(env!("CARGO_BIN_EXE_elenchus-cli"))
         .args(args)
         .output()
         .expect("run elenchus")
 }
 
 fn elenchus_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_elenchus"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_elenchus-cli"))
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
