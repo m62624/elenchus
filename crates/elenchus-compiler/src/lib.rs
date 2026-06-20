@@ -13,10 +13,22 @@
 //!   redefined with a different body is a `PremiseRedefinition` error.
 //!
 //! The actual reasoning (3-valued forward chaining, SAT, all-SAT, the WARNING
-//! pool, the four results) belongs to the future `elenchus-solver` crate.
+//! pool, the four results) lives in `elenchus-solver`. `IMPORT` resolution is a
+//! source-agnostic [`Resolver`] that flat-merges another source into the shared
+//! atom universe ([`compile`] resolves imports; [`compile_source`] leaves them
+//! pending).
 //!
-//! `IMPORT` resolution (a source-agnostic `Resolver`, flat-merge into the shared
-//! atom universe) lands next; for now imports are recorded as pending.
+//! # Example
+//!
+//! ```
+//! use elenchus_compiler::compile_source;
+//!
+//! // `ASSUME` lowers to a *soft* fact: the same atom universe as a `FACT`, but
+//! // one the solver may retract. Here `x a` is asserted both ways (hard + soft).
+//! let ir = compile_source("demo.vrf", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+//! assert_eq!(ir.facts.len(), 2);
+//! assert!(ir.facts.iter().any(|f| f.soft)); // the ASSUME is the soft one
+//! ```
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
 #![warn(missing_docs)]

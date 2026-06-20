@@ -314,7 +314,9 @@ guesses can't all be true at once, the engine names the smallest set of
 hypotheses to drop. The verdict is still `CONFLICT` (exit 2), but the fix is
 "drop or flip one guess", not "a fact is wrong":
 ```
-  RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):
+  RETRACT  your FACTs and PREMISEs are fine.
+      But these ASSUME guesses cannot all be true together.
+      Remove or flip ONE of them, then check again:
       ASSUME rel in_prod   [program.vrf:6]
       ASSUME NOT rel has_rollback   [program.vrf:7]
       ASSUME NOT rel has_feature_flag   [program.vrf:8]

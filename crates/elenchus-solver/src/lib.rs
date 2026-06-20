@@ -18,6 +18,22 @@
 //! core ([`sat`], replicating varisat's algorithm) to count models — 0 means the
 //! system is jointly unsatisfiable (a CONFLICT the forward pass may miss), ≥2
 //! means an alternative model exists (`UNDERDETERMINED`).
+//!
+//! # Example
+//!
+//! ```
+//! use elenchus_solver::{Status, verify_source};
+//!
+//! // `A has flying` fires the premise, but `A has wing` was never stated — so
+//! // the engine cannot confirm the rule and reports WARNING (not CONFLICT).
+//! let report = verify_source(
+//!     "demo.vrf",
+//!     "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
+//! )
+//! .unwrap();
+//! assert_eq!(report.status, Status::Warning); // `A has wing` is UNKNOWN
+//! println!("{report}"); // the full human report, ready to show a model
+//! ```
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
 #![warn(missing_docs)]
@@ -1298,11 +1314,16 @@ impl fmt::Display for Report {
         // and suppress the raw conflict / CORE pools (they would only echo the
         // ASSUME clause). The verdict is still CONFLICT (exit code 2).
         if !self.retract.is_empty() {
+            // Spell out what is wrong and why — this report is the debugger a
+            // small model reads. The commitments are sound; the hypotheses are
+            // the only dial to turn, so say so explicitly before listing them.
+            emit!(out, SECTION, "RETRACT  your FACTs and PREMISEs are fine.")?;
             emit!(
                 out,
-                SECTION,
-                "RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):"
+                ITEM,
+                "But these ASSUME guesses cannot all be true together."
             )?;
+            emit!(out, ITEM, "Remove or flip ONE of them, then check again:")?;
             for it in &self.retract {
                 emit!(
                     out,

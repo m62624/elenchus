@@ -48,9 +48,9 @@ Example session (each line is one JSON-RPC message):
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"elenchus","version":"0.1.0"}}}
+← {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"elenchus","version":"0.6.0"}}}
 → {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nNOT x a\nCHECK x\n"}}}
-← {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"status\":\"CONFLICT\",...}"}],"isError":false}}
+← {"id":2,"jsonrpc":"2.0","result":{"content":[{"text":"{\"status\":\"CONFLICT\", …}","type":"text"}],"isError":false}}
 ```
 
 ## License

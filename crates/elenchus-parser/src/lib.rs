@@ -10,6 +10,17 @@
 //! - keywords are ALWAYS CAPS (ASCII); identifiers are content (case-sensitive,
 //!   verbatim, any-script letters — e.g. `условие`, `名前`);
 //! - block boundaries (PREMISE/RULE bodies) are found by keywords, never by indent.
+//!
+//! # Example
+//!
+//! ```
+//! use elenchus_parser::{Statement, parse};
+//!
+//! // One statement per line; the result is a flat list of `Statement`s.
+//! let program = parse("FACT socrates is human\nCHECK socrates\n").unwrap();
+//! assert_eq!(program.statements.len(), 2);
+//! assert!(matches!(program.statements[0], Statement::Fact(_)));
+//! ```
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
 #![warn(missing_docs)]
