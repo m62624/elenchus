@@ -9,6 +9,11 @@ The `elenchus` command-line interface — check a `.vrf` program (file, inline
 text, or stdin) and print the verdict. A thin `std` wrapper over the engine
 crates (`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
 
+The **skill** ([`skill/SKILL.md`](../../skill/SKILL.md)) teaches an LLM agent how
+to use elenchus end-to-end — when to reach for it, the DSL, worked examples, and
+the iterate-to-CONSISTENT workflow. It's adapted for the CLI and works in any
+harness that supports shell tools.
+
 ## Usage
 
 ```console
