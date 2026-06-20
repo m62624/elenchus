@@ -323,13 +323,13 @@ prune that line from your shell profile if nothing else uses it.
 Both let an LLM run elenchus; the output is the same either way. The difference
 is setup cost:
 
-- **CLI** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from the shell. Works in
-  every harness that can run shell commands (Claude Code, any CI pipeline,
-  terminal). No extra configuration. **Recommended: if your harness supports
-  shell commands, use the CLI.**
-- **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC. Useful when your harness
-  natively supports MCP and you'd rather not configure a shell tool, or when the
-  harness doesn't expose a shell at all. More moving parts to set up.
+- **CLI (`elenchus-cli`)** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from
+  the shell. Works in every harness that can run shell commands (Claude Code, any
+  CI pipeline, terminal). **Recommended: it needs no extra configuration, so if your
+  harness can run shell commands, use the CLI.**
+- **MCP server (`elenchus-mcp`)** — speaks stdio JSON-RPC. Worth the extra setup only
+  when your harness natively supports MCP and you'd rather not (or can't) run a
+  shell. Same output, more to configure.
 
 The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both — it works
 identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.
