@@ -153,6 +153,14 @@ pub struct Report {
     /// premises / rules) whose removal restores satisfiability — i.e. the
     /// smallest group jointly to blame. Empty in every other case.
     pub unsat_core: Vec<CoreItem>,
+    /// When `ASSUME` hypotheses are what break an otherwise-consistent program,
+    /// the minimal set of assumptions that cannot all hold *together with the
+    /// (consistent) facts, premises and rules* — dropping any one restores
+    /// consistency. Only ever lists `ASSUME` constructs: facts and premises are
+    /// never blamed. Empty whenever the facts/premises are themselves to blame
+    /// (a hard contradiction) or there is no conflict at all. The verdict stays
+    /// `CONFLICT` (exit code 2); this field only says *which dial to turn*.
+    pub retract: Vec<CoreItem>,
     /// Advisory near-duplicate atom-name hints (possible typos). Never affects
     /// [`Report::status`] or [`Report::exit_code`] — purely informational.
     pub hints: Vec<SimilarAtoms>,
@@ -247,6 +255,16 @@ impl Report {
         }
         s.push_str(",\"unsat_core\":[");
         for (i, it) in self.unsat_core.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&it.origin, &mut s);
+            s.push_str(",\"label\":");
+            json_str(&it.label, &mut s);
+            s.push('}');
+        }
+        s.push_str("],\"retract\":[");
+        for (i, it) in self.retract.iter().enumerate() {
             if i > 0 {
                 s.push(',');
             }
@@ -710,7 +728,8 @@ impl<'a> Eval<'a> {
             derived: self.derived,
             underdetermined,
             unsat_core: self.unsat_core,
-            hints: Vec::new(), // filled by `solve` (advisory, post-verdict)
+            retract: Vec::new(), // filled by `solve` when assumptions are to blame
+            hints: Vec::new(),   // filled by `solve` (advisory, post-verdict)
         }
     }
 }
@@ -723,10 +742,87 @@ pub fn solve(c: &Compiled) -> Report {
     e.saturate_rules();
     e.check_premises();
     let mut report = e.finish();
+    // If the program is a CONFLICT but the facts/premises are consistent on their
+    // own, the `ASSUME` hypotheses are what break it: name which to retract. The
+    // verdict stays CONFLICT — this only adds the "drop one of these" hint and,
+    // when it applies, supersedes the raw conflict/unsat-core pools (which would
+    // otherwise point at the assumption clause itself).
+    if report.status == Status::Conflict {
+        let retract = retract_assumptions(c);
+        if !retract.is_empty() {
+            report.unsat_core = Vec::new();
+            report.retract = retract;
+        }
+    }
     // Advisory only: surface likely atom-name typos. Computed after the verdict
     // so it can never influence status/exit code.
     report.hints = similar_atom_pairs(c);
     report
+}
+
+/// The minimal set of `ASSUME` hypotheses to retract so an
+/// otherwise-consistent program stops contradicting itself.
+///
+/// Returns empty unless **all three** hold: there is at least one soft fact; the
+/// hard program (facts + premises + rules, no assumptions) is satisfiable on its
+/// own; and the full program (with assumptions) is unsatisfiable. In that case
+/// the assumptions are the cause, and we deletion-minimize **over the soft facts
+/// only** — every hard construct stays active, so a `FACT`/`PREMISE` can never be
+/// blamed. What survives is an irreducible set of assumptions that cannot all
+/// hold together; dropping any one restores consistency.
+///
+/// Reuses the same CNF / SAT machinery as [`minimal_unsat_core`]
+/// ([`constructs`], [`subset_is_sat`]); the only difference is that hard
+/// constructs are pinned active. Labels carry polarity (`NOT …`) so a small
+/// model sees exactly what it assumed.
+fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
+    if !c.facts.iter().any(|f| f.soft) {
+        return Vec::new();
+    }
+    let all = constructs(c);
+    // The first `c.facts.len()` constructs mirror `c.facts` 1:1 (see `constructs`).
+    let is_soft: Vec<bool> = (0..all.len())
+        .map(|i| i < c.facts.len() && c.facts[i].soft)
+        .collect();
+
+    // The hard program (drop every soft construct) must be consistent on its own,
+    // else the facts/premises are to blame and we must not point at assumptions.
+    let hard_only: Vec<bool> = is_soft.iter().map(|&s| !s).collect();
+    if !subset_is_sat(c.atoms.len(), &all, &hard_only) {
+        return Vec::new();
+    }
+    // The full program must actually be UNSAT for there to be anything to drop.
+    let mut active = vec![true; all.len()];
+    if subset_is_sat(c.atoms.len(), &all, &active) {
+        return Vec::new();
+    }
+    // Deletion-minimize over the soft constructs only; hard ones stay pinned.
+    for i in 0..all.len() {
+        if active[i] && is_soft[i] {
+            active[i] = false;
+            if subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true; // still needed for the contradiction
+            }
+        }
+    }
+    let mut core: Vec<CoreItem> = (0..all.len())
+        .filter(|&i| active[i] && is_soft[i])
+        .map(|i| {
+            let f = &c.facts[i];
+            // Show the assumed polarity so `ASSUME NOT x` reads as `NOT x`.
+            let label = if matches!(f.value, Value::False) {
+                alloc::format!("NOT {}", label(c, f.atom))
+            } else {
+                label(c, f.atom)
+            };
+            CoreItem {
+                origin: f.origin.clone(),
+                label,
+            }
+        })
+        .collect();
+    core.sort_by_key(|it| key(&it.origin));
+    core
 }
 
 // --- near-duplicate atom detection (advisory typo hints) -------------------
@@ -1148,7 +1244,33 @@ fn trace_line(step: &TraceStep) -> String {
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "RESULT: {}", self.status)?;
+        if !self.retract.is_empty() {
+            // A pure assumption clash. Lead with the one action a small model
+            // needs and skip the raw conflict pool (which would only echo the
+            // ASSUME clause). The verdict is still CONFLICT (exit code 2).
+            writeln!(
+                f,
+                "  RETRACT   Your FACTs and PREMISEs are fine. But these ASSUME"
+            )?;
+            writeln!(
+                f,
+                "            guesses cannot all be true together. Remove or flip"
+            )?;
+            writeln!(f, "            ONE of them, then check again:")?;
+            for it in &self.retract {
+                writeln!(
+                    f,
+                    "        ASSUME {}   [{}:{}]",
+                    it.label, it.origin.source, it.origin.line
+                )?;
+            }
+        }
         for c in &self.conflicts {
+            // When assumptions are the cause, the RETRACT block above already
+            // explains it better — don't also dump the raw conflict pool.
+            if !self.retract.is_empty() {
+                break;
+            }
             writeln!(f, "  CONFLICT  {}", premise_tag(&c.origin))?;
             for a in &c.atoms {
                 writeln!(f, "      {}", a)?;
@@ -1531,6 +1653,98 @@ mod tests {
         assert_eq!(r.status, Status::Consistent);
         assert!(r.unsat_core.is_empty());
         assert!(r.conflicts.is_empty());
+    }
+
+    // --- ASSUME: soft (retractable) hypotheses -----------------------------
+
+    #[test]
+    fn compatible_assumptions_behave_like_facts() {
+        // ASSUME that does not clash with anything → ordinary CONSISTENT, and the
+        // assumption participates like a fact (no retract, no conflict).
+        let r = verify_source("<t>", "ASSUME rel in_prod\nFACT rel reviewed\nCHECK rel\n").unwrap();
+        assert_eq!(r.status, Status::Consistent);
+        assert!(r.retract.is_empty());
+        assert!(r.conflicts.is_empty());
+    }
+
+    #[test]
+    fn assume_drives_a_rule_like_a_fact() {
+        // A soft assumption fires forward chaining just like a hard fact.
+        let r = verify_source(
+            "<t>",
+            "ASSUME A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\nCHECK A\n",
+        )
+        .unwrap();
+        assert_eq!(r.status, Status::Consistent);
+        assert_eq!(r.derived.len(), 1);
+        assert_eq!(r.derived[0].atom, "A needs oxygen");
+    }
+
+    #[test]
+    fn clashing_assumptions_yield_conflict_with_a_retract_set() {
+        // in_prod needs a rollback OR a feature flag; assuming in_prod plus
+        // neither makes the premise unsatisfiable — but only via the guesses.
+        let src = r#"
+        FACT rel reviewed
+        PREMISE prod_needs_safety:
+            WHEN rel in_prod
+            THEN rel has_rollback
+            OR   rel has_feature_flag
+        ASSUME rel in_prod
+        ASSUME NOT rel has_rollback
+        ASSUME NOT rel has_feature_flag
+        CHECK rel
+        "#;
+        let r = verify_source("<t>", src).unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.exit_code(), 2);
+        // All three guesses are jointly to blame: dropping any one fixes it.
+        assert_eq!(r.retract.len(), 3, "{:?}", r.retract);
+        let labels: Vec<&str> = r.retract.iter().map(|it| it.label.as_str()).collect();
+        assert!(labels.contains(&"rel in_prod"));
+        assert!(labels.contains(&"NOT rel has_rollback"));
+        assert!(labels.contains(&"NOT rel has_feature_flag"));
+        // Every retract item is an ASSUME — a FACT/PREMISE is never blamed.
+        assert!(r.retract.iter().all(|it| it.origin.kind == "ASSUME"));
+        // The human report leads with RETRACT and hides the raw conflict pool.
+        let shown = alloc::format!("{r}");
+        assert!(shown.contains("RETRACT"), "{shown}");
+        assert!(!shown.contains("CONFLICT  "), "{shown}");
+    }
+
+    #[test]
+    fn assume_vs_fact_retracts_only_the_assumption() {
+        // FACT x a is ground truth; ASSUME NOT x a is the only removable thing.
+        let r = verify_source("<t>", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.retract.len(), 1);
+        assert_eq!(r.retract[0].label, "NOT x a");
+        assert_eq!(r.retract[0].origin.kind, "ASSUME");
+    }
+
+    #[test]
+    fn hard_conflict_is_not_blamed_on_assumptions() {
+        // The FACTs themselves contradict; an unrelated ASSUME must NOT appear in
+        // a retract set (the hard program is already broken).
+        let r = verify_source("<t>", "FACT x a\nNOT x a\nASSUME y b\nCHECK x\n").unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert!(r.retract.is_empty(), "{:?}", r.retract);
+    }
+
+    #[test]
+    fn two_assumptions_directly_contradict() {
+        let r = verify_source("<t>", "ASSUME x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.retract.len(), 2, "{:?}", r.retract);
+    }
+
+    #[test]
+    fn assume_retract_is_in_json() {
+        let r = verify_source("<t>", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        let j = r.to_json();
+        assert!(j.contains("\"retract\":["), "{j}");
+        assert!(j.contains("\"kind\":\"ASSUME\""), "{j}");
+        assert!(j.contains("NOT x a"), "{j}");
     }
 
     // --- near-duplicate atom hints (advisory typo detector) ----------------

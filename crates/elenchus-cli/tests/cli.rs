@@ -220,6 +220,38 @@ fn antecedent_or_fires_on_any_disjunct() {
 }
 
 #[test]
+fn clashing_assumptions_exit_2_and_print_retract() {
+    // Facts/premises are consistent; the ASSUME guesses can't all hold. The CLI
+    // exits 2 (CONFLICT) and the human report leads with a RETRACT block naming
+    // the assumptions — clear enough for a small model to act on.
+    let out = elenchus(&[
+        "--text",
+        r#"
+        FACT rel reviewed
+        PREMISE prod_needs_safety:
+            WHEN rel in_prod
+            THEN rel has_rollback
+            OR   rel has_feature_flag
+        ASSUME rel in_prod
+        ASSUME NOT rel has_rollback
+        ASSUME NOT rel has_feature_flag
+        CHECK rel
+        "#,
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("RETRACT"), "{stdout}");
+    assert!(stdout.contains("ASSUME rel in_prod"), "{stdout}");
+}
+
+#[test]
+fn compatible_assumption_exits_0() {
+    let out = elenchus(&["--text", "ASSUME x a\nFACT y b\nCHECK\n"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CONSISTENT"));
+}
+
+#[test]
 fn file_with_imports_is_resolved() {
     // import-demo.vrf imports physics.vrf relative to itself — a deliberate conflict.
     let path = format!(

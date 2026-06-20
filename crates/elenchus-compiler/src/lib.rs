@@ -121,6 +121,11 @@ pub struct Fact {
     pub value: Value,
     /// Where it came from (for the report).
     pub origin: Origin,
+    /// `true` for an `ASSUME` (a *soft*, retractable hypothesis). A soft fact
+    /// behaves like a normal fact in the forward pass, but when the assumptions
+    /// cannot all hold the solver may drop it (and only it) to explain the
+    /// contradiction — a `FACT`/`NOT` is never retractable.
+    pub soft: bool,
 }
 
 /// An `Impossible` clause: the listed literals cannot all hold simultaneously.
@@ -222,6 +227,7 @@ struct RawFact {
     key: AtomKey,
     value: Value,
     origin: Origin,
+    soft: bool,
 }
 
 /// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
@@ -324,8 +330,23 @@ impl Compiler {
             Statement::Import(path) => {
                 self.pending_imports.push(path.data.to_string());
             }
-            Statement::Fact(a) => self.add_fact(source, a, Value::True, "FACT"),
-            Statement::Negation(a) => self.add_fact(source, a, Value::False, "NOT"),
+            Statement::Fact(a) => self.add_fact(source, a, Value::True, "FACT", false),
+            Statement::Negation(a) => self.add_fact(source, a, Value::False, "NOT", false),
+            Statement::Assume(l) => {
+                let value = if l.data.negated {
+                    Value::False
+                } else {
+                    Value::True
+                };
+                // A soft assertion shares the FACT accumulator; the atom is the
+                // literal's atom, the polarity its `NOT`, and `soft` marks it
+                // retractable. The span is the whole `ASSUME` line.
+                let located = elenchus_parser::Located {
+                    data: l.data.atom.clone(),
+                    span: l.span,
+                };
+                self.add_fact(source, &located, value, "ASSUME", true);
+            }
             Statement::Check {
                 subject,
                 bidirectional,
@@ -361,6 +382,7 @@ impl Compiler {
         a: &elenchus_parser::Located<Atom>,
         value: Value,
         kind: &'static str,
+        soft: bool,
     ) {
         let key = AtomKey::from_atom(&a.data);
         self.intern(&key);
@@ -383,6 +405,7 @@ impl Compiler {
                 premise: None,
                 kind,
             },
+            soft,
         });
     }
 
@@ -597,6 +620,7 @@ impl Compiler {
                 atom: id_of[&f.key],
                 value: f.value,
                 origin: f.origin,
+                soft: f.soft,
             })
             .collect();
         let clauses = self

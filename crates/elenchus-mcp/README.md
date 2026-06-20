@@ -31,7 +31,7 @@ works identically whether the agent calls elenchus via CLI or via the MCP tool.
 
 | Argument | Type | |
 |----------|------|--|
-| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`, `PREMISE`/`RULE`, `CHECK` |
+| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`/`ASSUME`, `PREMISE`/`RULE`, `CHECK` |
 | `format` | `"human"` \| `"json"` (optional) | output format, default `"json"` |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.

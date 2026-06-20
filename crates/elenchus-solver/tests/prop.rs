@@ -202,11 +202,13 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
                 atom: i as AtomId,
                 value: Value::True,
                 origin: origin(),
+                soft: false,
             }),
             2 => Some(Fact {
                 atom: i as AtomId,
                 value: Value::False,
                 origin: origin(),
+                soft: false,
             }),
             _ => None,
         })

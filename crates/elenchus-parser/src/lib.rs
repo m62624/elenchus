@@ -130,6 +130,11 @@ pub enum Statement<'a> {
     Fact(Located<'a, Atom<'a>>),
     /// `NOT <atom>` — a FALSE assertion.
     Negation(Located<'a, Atom<'a>>),
+    /// `ASSUME [NOT] <atom>` — a *soft* (retractable) assertion. Same shape as a
+    /// `FACT`/`NOT`, but it is a hypothesis, not a commitment: when the
+    /// assumptions cannot all hold the solver names which to drop, and it never
+    /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
+    Assume(Located<'a, Literal<'a>>),
     /// `PREMISE <name>: ...` — a checked first principle.
     Premise {
         /// The premise's label (a per-source name, not a global identifier).
@@ -166,6 +171,7 @@ pub const RESERVED: &[&str] = &[
     "IMPORT",
     "FACT",
     "NOT",
+    "ASSUME",
     "PREMISE",
     "RULE",
     "CHECK",
@@ -562,6 +568,20 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Fact(a)))
 }
 
+/// `ASSUME [NOT] <atom>` — a soft (retractable) assertion. Accepts a leading
+/// `NOT` (like a `WHEN`/`THEN` literal), so `ASSUME NOT x a` is FALSE-by-default.
+fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag("ASSUME"), space1).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "ASSUME expects an atom: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the ASSUME atom")?;
+    Ok((input, Statement::Assume(lit)))
+}
+
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
 /// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
@@ -649,6 +669,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     alt((
         stmt_import,
         stmt_fact,
+        stmt_assume,
         stmt_premise,
         stmt_rule,
         stmt_check,
@@ -678,7 +699,7 @@ pub fn parse(src: &str) -> Result<Program<'_>, ParseError<'_>> {
                     source: src,
                     span: rest,
                     message: String::from(
-                        "expected a statement (IMPORT/FACT/NOT/PREMISE/RULE/CHECK)",
+                        "expected a statement (IMPORT/FACT/NOT/ASSUME/PREMISE/RULE/CHECK)",
                     ),
                 });
             }
@@ -780,6 +801,38 @@ mod tests {
             }
             other => panic!("expected fact, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parses_assume_positive_and_negated() {
+        let p = prog(
+            r#"
+        ASSUME rel in_prod
+        ASSUME NOT rel has_rollback
+        "#,
+        );
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[0] {
+            Statement::Assume(l) => {
+                assert!(!l.data.negated);
+                assert_eq!(l.data.atom.subject, "rel");
+                assert_eq!(l.data.atom.predicate, "in_prod");
+                assert_eq!(l.data.atom.object, None);
+            }
+            other => panic!("expected assume, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Assume(l) => {
+                assert!(l.data.negated);
+                assert_eq!(l.data.atom.predicate, "has_rollback");
+            }
+            other => panic!("expected negated assume, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn assume_is_a_reserved_word() {
+        assert!(parse("FACT ASSUME has x\n").is_err());
     }
 
     #[test]

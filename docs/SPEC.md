@@ -293,16 +293,67 @@ RULE  ...  WHEN A THEN B   — DERIVES.  A=TRUE → ADDS fact B
 
 One **checks**, the other **produces** a new fact. This distinction is important to keep in mind.
 
+## `ASSUME` — soft, retractable hypotheses
+
+`FACT`/`NOT` are commitments; `ASSUME` is a **hypothesis**. Syntactically it is a
+fact that accepts a leading `NOT` (`ASSUME x a`, `ASSUME NOT x a`); semantically it
+is a *soft* assertion the engine is allowed to drop. This lets a small model
+explore "what if?" — propose a guess, and let the engine do the backtracking.
+
+During evaluation a soft fact behaves **exactly like a confident fact**: it seeds
+the model, fires `RULE`s, and can satisfy or violate a `PREMISE`. The difference
+shows only when the system is contradictory. Then the engine splits the blame:
+
+```
+hard = FACT/NOT + PREMISE + RULE          (commitments)
+soft = ASSUME                             (hypotheses)
+```
+
+- If **hard alone is unsatisfiable**, the contradiction is in the commitments. The
+  verdict is the usual `CONFLICT`; assumptions are not blamed (no retract set).
+- If **hard is satisfiable but hard + soft is not**, the hypotheses are the cause.
+  The engine computes the **minimal set of `ASSUME`s to retract** — an irreducible
+  group that cannot all hold *together with every fact and premise* — by
+  deletion-minimization over the soft constructs only (hard constructs stay
+  pinned, so a `FACT`/`PREMISE` is **never** named). Dropping (or flipping) any one
+  restores consistency.
+
+The verdict stays **`CONFLICT`** (exit code 2) — a contradiction is a
+contradiction — but the report carries a `retract` list instead of (and
+superseding) the raw conflict pool, and names only hypotheses:
+
+```
+RESULT: CONFLICT
+  RETRACT   Your FACTs and PREMISEs are fine. But these ASSUME
+            guesses cannot all be true together. Remove or flip
+            ONE of them, then check again:
+        ASSUME rel in_prod              [..:6]
+        ASSUME NOT rel has_rollback     [..:7]
+        ASSUME NOT rel has_feature_flag [..:8]
+EXIT_CODE: 2
+```
+
+In JSON this is the `retract` array; every item is tagged `"kind":"ASSUME"`, so a
+caller can distinguish "drop a hypothesis" from "a commitment is wrong"
+programmatically without a new status or exit code. Like a direct conflict, an
+assumption clash that only emerges under case-splitting needs `BIDIRECTIONAL`;
+clashes visible in the forward pass (the common case) are caught without it.
+
+This is the engine's first **abductive** step: instead of only saying "no", it
+points at exactly which hypothesis to revise — the foundation for later having the
+engine *propose* the missing hypothesis itself.
+
 ## DSL: keywords
 
-**v1 — a purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
-`RULE`, `CHECK`), plus a few words for the body of constraints and rules, plus
-`IMPORT` for reuse.
+**A purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
+`RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses, plus a few
+words for the body of constraints and rules, plus `IMPORT` for reuse.
 
 | Word | Meaning | Kind |
 |---|---|---|
 | `FACT` | a TRUE assertion | premise (unchecked) |
 | `NOT` | a FALSE assertion | premise (unchecked) |
+| `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
@@ -434,11 +485,12 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = import | fact | negation | premise | rule | check ;
+statement   = import | fact | negation | assume | premise | rule | check ;
 
 import      = "IMPORT" , string , NEWLINE ;
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
+assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
 premise       = "PREMISE" , name , ":" , NEWLINE , ( list_body | impl_body ) ;
@@ -479,7 +531,7 @@ identifier (list atoms), and ends at the first line with a top-level word
 (`IMPORT`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
-Reserved words (always CAPS, in full): `IMPORT FACT NOT PREMISE RULE CHECK
+Reserved words (always CAPS, in full): `IMPORT FACT NOT ASSUME PREMISE RULE CHECK
 BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST`. An identifier may not
 coincide with a reserved word.
 

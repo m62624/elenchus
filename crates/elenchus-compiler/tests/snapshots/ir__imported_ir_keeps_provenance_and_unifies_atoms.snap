@@ -39,6 +39,7 @@ Compiled {
                 premise: None,
                 kind: "FACT",
             },
+            soft: false,
         },
         Fact {
             atom: 0,
@@ -49,6 +50,7 @@ Compiled {
                 premise: None,
                 kind: "NOT",
             },
+            soft: false,
         },
     ],
     clauses: [

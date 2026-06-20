@@ -79,9 +79,11 @@ EXIT_CODE: 2
 ```
 
 The DSL: `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false);
-`PREMISE` states a checked first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`,
-or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
-(optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar.
+`ASSUME` adds a soft, retractable hypothesis (on a clash the engine says which to
+drop, never blaming a fact); `PREMISE` states a checked first principle
+(`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, or `WHEN … THEN`); `RULE` derives facts;
+`IMPORT` reuses a library; `CHECK` (optionally `BIDIRECTIONAL`) runs it. See
+SPEC.md for the grammar.
 
 ### Multi-step example — iterate to CONSISTENT
 
