@@ -183,6 +183,30 @@ fn max_errors_caps_the_block_count() {
 }
 
 #[test]
+fn all_syntax_errors_shown_by_default() {
+    // No --max-errors → every block is rendered, no footer.
+    let out = elenchus(&[
+        "--text",
+        "FACT lonely\nNOT lonely2\nFACT also bad words here\n",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 3 syntax errors"),
+        "stderr = {stderr}"
+    );
+    assert_eq!(
+        stderr.matches("problem :").count(),
+        3,
+        "all three blocks shown: {stderr}"
+    );
+    assert!(
+        !stderr.contains("showing"),
+        "no footer when all shown: {stderr}"
+    );
+}
+
+#[test]
 fn consequent_or_is_satisfied_by_one_disjunct() {
     // gateway prod ⇒ (auth staging ∨ api staging); auth staging holds ⇒ CONSISTENT.
     // (Would be CONFLICT if OR were wrongly treated as AND.)

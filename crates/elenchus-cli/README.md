@@ -22,6 +22,7 @@ $ elenchus-cli --text "FACT x a
 CHECK x"                                      # inline program
 $ cat program.vrf | elenchus-cli -          # stdin
 $ elenchus-cli program.vrf --format json    # machine-readable output
+$ elenchus-cli broken.vrf --max-errors 5    # cap a flood of syntax errors
 ```
 
 One input, three ways: a positional `<file>`, inline `--text`, or explicit stdin
@@ -55,6 +56,33 @@ JSON (`--format json`) — one line, for tooling and agents:
 
 ```json
 {"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[]}
+```
+
+### Syntax errors
+
+A malformed program exits `2` and prints one block per error — the line number,
+the offending line, a caret, the problem, and that keyword's correct syntax with
+a real example. **Every** error is collected in one pass (the parser recovers and
+keeps going); `--max-errors N` shows the first `N` with a `(showing N of TOTAL)`
+footer so a large broken file does not flood the output.
+
+```text
+$ elenchus-cli broken.vrf
+RESULT: 2 syntax errors in broken.vrf
+
+[1/2] line 1, col 6
+   | FACT lonely
+   |      ^^^^^^
+   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human
+
+[2/2] line 4, col 9
+   |     THEN
+   |         ^
+   problem : THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
+   syntax  : THEN <literal>
+   example : THEN motor uses fast_path
 ```
 
 ## License

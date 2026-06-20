@@ -214,21 +214,14 @@ fn unknown_keyword_has_no_card() {
 #[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
+    // A trailing newline is not required: `eol` accepts EOF too.
     for kw in [
         "FACT", "NOT", "ASSUME", "IMPORT", "CHECK", "PREMISE", "RULE",
     ] {
         let example = syntax_for(kw).unwrap().example();
-        let with_nl = alloc_line(example);
         assert!(
-            parse(example).is_ok() || parse(&with_nl).is_ok(),
+            parse(example).is_ok(),
             "{kw} card example must parse:\n{example}"
         );
     }
-}
-
-/// `example` with a trailing newline (some grammars want a line terminator).
-fn alloc_line(example: &str) -> String {
-    let mut s = String::from(example);
-    s.push('\n');
-    s
 }

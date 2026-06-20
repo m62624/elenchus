@@ -543,6 +543,11 @@ You have exactly one of two ways in. Detect which:
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
   (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). The
   server also has `elenchus_version` and `elenchus_about`.
+- **On a syntax error** (either transport) you get a per-error diagnostic block
+  instead of a verdict — line number, a caret, the problem, and that keyword's
+  correct syntax with an example. Every error is shown in one pass; fix the
+  listed lines and re-run. To cap a flood, pass `--max-errors N` (CLI) or the
+  `max_errors` argument (MCP).
 - **Neither →** elenchus is **not installed here**. Stop and send the user to
   **https://github.com/m62624/elenchus** to install it (how depends on their
   CLI/harness). Do **not** fabricate verdicts — if you can't run it, say so.
@@ -566,7 +571,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.6.0 -->
+<!-- skill-version: 0.7.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

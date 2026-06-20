@@ -135,6 +135,26 @@ fn multi_error_block_stays_valid_json_and_respects_max_errors() {
 }
 
 #[test]
+fn all_syntax_errors_shown_when_no_max_errors() {
+    // Without max_errors every block comes back, no footer.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\nNOT also_lonely\nFACT a b c d\n"}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("RESULT: 3 syntax errors"), "got: {text}");
+    assert_eq!(
+        text.matches("problem :").count(),
+        3,
+        "all three blocks: {text}"
+    );
+    assert!(
+        !text.contains("showing"),
+        "no footer when all shown: {text}"
+    );
+}
+
+#[test]
 fn unknown_method_yields_jsonrpc_error() {
     let resps = roundtrip(&[r#"{"jsonrpc":"2.0","id":7,"method":"does/not/exist"}"#]);
     assert_eq!(resps[0]["error"]["code"], -32601);
