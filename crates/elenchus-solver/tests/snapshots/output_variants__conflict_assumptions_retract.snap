@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        FACT rel reviewed\n        PREMISE prod_needs_safety:\n            WHEN rel in_prod\n            THEN rel has_rollback\n            OR   rel has_feature_flag\n        ASSUME rel in_prod\n        ASSUME NOT rel has_rollback\n        ASSUME NOT rel has_feature_flag\n        CHECK rel\n        \"#)"
+---
+RESULT: CONFLICT
+  RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):
+      ASSUME rel in_prod   [v.vrf:7]
+      ASSUME NOT rel has_rollback   [v.vrf:8]
+      ASSUME NOT rel has_feature_flag   [v.vrf:9]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

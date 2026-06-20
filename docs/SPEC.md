@@ -324,12 +324,10 @@ superseding) the raw conflict pool, and names only hypotheses:
 
 ```
 RESULT: CONFLICT
-  RETRACT   Your FACTs and PREMISEs are fine. But these ASSUME
-            guesses cannot all be true together. Remove or flip
-            ONE of them, then check again:
-        ASSUME rel in_prod              [..:6]
-        ASSUME NOT rel has_rollback     [..:7]
-        ASSUME NOT rel has_feature_flag [..:8]
+  RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):
+      ASSUME rel in_prod   [program.vrf:6]
+      ASSUME NOT rel has_rollback   [program.vrf:7]
+      ASSUME NOT rel has_feature_flag   [program.vrf:8]
 EXIT_CODE: 2
 ```
 

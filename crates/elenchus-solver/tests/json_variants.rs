@@ -123,6 +123,24 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         CHECK x BIDIRECTIONAL
         "#,
         ),
+        (
+            "conflict_assumptions_retract",
+            r#"
+        FACT rel reviewed
+        PREMISE prod_needs_safety:
+            WHEN rel in_prod
+            THEN rel has_rollback
+            OR   rel has_feature_flag
+        ASSUME rel in_prod
+        ASSUME NOT rel has_rollback
+        ASSUME NOT rel has_feature_flag
+        CHECK rel
+        "#,
+        ),
+        (
+            "conflict_assume_vs_fact_retract",
+            "FACT x a\nASSUME NOT x a\nCHECK x\n",
+        ),
     ]
 }
 
@@ -144,7 +162,14 @@ fn json_is_valid_and_stable_for_every_variant() {
             value.get("exit_code").and_then(|v| v.as_i64()).is_some(),
             "{name}: exit_code"
         );
-        for key in ["conflicts", "warnings", "derived"] {
+        for key in [
+            "conflicts",
+            "warnings",
+            "derived",
+            "unsat_core",
+            "retract",
+            "hints",
+        ] {
             assert!(
                 value.get(key).and_then(|v| v.as_array()).is_some(),
                 "{name}: {key} array"

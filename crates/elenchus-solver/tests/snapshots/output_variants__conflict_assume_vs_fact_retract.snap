@@ -1,0 +1,9 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT x a\\nASSUME NOT x a\\nCHECK x\\n\")"
+---
+RESULT: CONFLICT
+  RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):
+      ASSUME NOT x a   [v.vrf:2]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

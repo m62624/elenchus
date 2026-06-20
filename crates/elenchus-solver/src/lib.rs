@@ -1241,100 +1241,157 @@ fn trace_line(step: &TraceStep) -> String {
     }
 }
 
+/// Indentation levels for the human report. This module is the **single** place
+/// leading whitespace is defined: every line is emitted through
+/// [`ReportWriter::line`] with one of these as the `indent` argument, so no
+/// format string ever carries leading spaces. To restyle the report, change a
+/// number here — not spaces scattered across `write!` calls.
+mod indent {
+    /// `RESULT:` / `SUMMARY:` / `EXIT_CODE:` — flush left.
+    pub const ROOT: usize = 0;
+    /// A section header: `CONFLICT` / `WARNING` / `CORE` / `RETRACT` / `DERIVED`
+    /// / `HINT` / `UNDERDETERMINED`.
+    pub const SECTION: usize = 2;
+    /// A line belonging to a section (conflict atoms, `blocked by:`, an `ASSUME`).
+    pub const ITEM: usize = 6;
+    /// A line nested under an item (a `why:` trace step, a `CORE` member).
+    pub const NESTED: usize = 8;
+}
+
+/// The human report's one output primitive. It owns the indentation rule so
+/// callers pass a semantic [`indent`] level and the text — never raw spaces.
+struct ReportWriter<'a, 'b> {
+    f: &'a mut fmt::Formatter<'b>,
+}
+
+impl ReportWriter<'_, '_> {
+    /// Write `indent` leading spaces, the formatted text, then a newline.
+    fn line(&mut self, indent: usize, args: fmt::Arguments<'_>) -> fmt::Result {
+        write!(self.f, "{:width$}{}", "", args, width = indent)?;
+        self.f.write_str("\n")
+    }
+
+    /// Like [`line`](Self::line) but without the trailing newline — for the final
+    /// `EXIT_CODE` line, so the report ends exactly as it always has.
+    fn tail(&mut self, indent: usize, args: fmt::Arguments<'_>) -> fmt::Result {
+        write!(self.f, "{:width$}{}", "", args, width = indent)
+    }
+}
+
+/// `emit!(out, LEVEL, "fmt", args…)` — one indented report line. A thin wrapper
+/// over [`ReportWriter::line`] so call sites read `emit!(out, SECTION, …)` with
+/// the indent as an explicit parameter and zero leading spaces in the string.
+macro_rules! emit {
+    ($out:expr, $indent:expr, $($arg:tt)*) => {
+        $out.line($indent, format_args!($($arg)*))
+    };
+}
+
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "RESULT: {}", self.status)?;
+        use indent::{ITEM, NESTED, ROOT, SECTION};
+        let mut out = ReportWriter { f };
+
+        emit!(out, ROOT, "RESULT: {}", self.status)?;
+
+        // A pure assumption clash: lead with the one action a small model needs
+        // and suppress the raw conflict / CORE pools (they would only echo the
+        // ASSUME clause). The verdict is still CONFLICT (exit code 2).
         if !self.retract.is_empty() {
-            // A pure assumption clash. Lead with the one action a small model
-            // needs and skip the raw conflict pool (which would only echo the
-            // ASSUME clause). The verdict is still CONFLICT (exit code 2).
-            writeln!(
-                f,
-                "  RETRACT   Your FACTs and PREMISEs are fine. But these ASSUME"
+            emit!(
+                out,
+                SECTION,
+                "RETRACT  drop or flip ONE of these ASSUME guesses (your FACTs/PREMISEs are fine):"
             )?;
-            writeln!(
-                f,
-                "            guesses cannot all be true together. Remove or flip"
-            )?;
-            writeln!(f, "            ONE of them, then check again:")?;
             for it in &self.retract {
-                writeln!(
-                    f,
-                    "        ASSUME {}   [{}:{}]",
-                    it.label, it.origin.source, it.origin.line
+                emit!(
+                    out,
+                    ITEM,
+                    "ASSUME {}   [{}:{}]",
+                    it.label,
+                    it.origin.source,
+                    it.origin.line
                 )?;
             }
-        }
-        for c in &self.conflicts {
-            // When assumptions are the cause, the RETRACT block above already
-            // explains it better — don't also dump the raw conflict pool.
-            if !self.retract.is_empty() {
-                break;
+        } else {
+            for c in &self.conflicts {
+                emit!(out, SECTION, "CONFLICT  {}", premise_tag(&c.origin))?;
+                for a in &c.atoms {
+                    emit!(out, ITEM, "{}", a)?;
+                }
+                if !c.trace.is_empty() {
+                    emit!(out, ITEM, "why:")?;
+                    for step in &c.trace {
+                        emit!(out, NESTED, "{}", trace_line(step))?;
+                    }
+                }
             }
-            writeln!(f, "  CONFLICT  {}", premise_tag(&c.origin))?;
-            for a in &c.atoms {
-                writeln!(f, "      {}", a)?;
-            }
-            if !c.trace.is_empty() {
-                writeln!(f, "      why:")?;
-                for step in &c.trace {
-                    writeln!(f, "        {}", trace_line(step))?;
+            if !self.unsat_core.is_empty() {
+                emit!(
+                    out,
+                    SECTION,
+                    "CORE  smallest jointly-unsatisfiable set ({}):",
+                    self.unsat_core.len()
+                )?;
+                for it in &self.unsat_core {
+                    let name = if it.label.is_empty() { "-" } else { &it.label };
+                    emit!(
+                        out,
+                        NESTED,
+                        "{} ({})  [{}:{}]",
+                        name,
+                        it.origin.kind,
+                        it.origin.source,
+                        it.origin.line
+                    )?;
                 }
             }
         }
-        if !self.unsat_core.is_empty() {
-            writeln!(
-                f,
-                "  CORE  smallest jointly-unsatisfiable set ({}):",
-                self.unsat_core.len()
-            )?;
-            for it in &self.unsat_core {
-                let name = if it.label.is_empty() { "-" } else { &it.label };
-                writeln!(
-                    f,
-                    "        {} ({})  [{}:{}]",
-                    name, it.origin.kind, it.origin.source, it.origin.line
-                )?;
-            }
-        }
+
         for w in &self.warnings {
-            writeln!(f, "  WARNING   {}", premise_tag(&w.origin))?;
-            writeln!(f, "      blocked by: {}", w.blocked_by.join(", "))?;
+            emit!(out, SECTION, "WARNING   {}", premise_tag(&w.origin))?;
+            emit!(out, ITEM, "blocked by: {}", w.blocked_by.join(", "))?;
         }
         if let Some(atom) = &self.underdetermined {
-            writeln!(f, "  UNDERDETERMINED  an alternative model exists")?;
-            writeln!(f, "      pin it down: add  FACT {atom}  or  NOT {atom}")?;
+            emit!(out, SECTION, "UNDERDETERMINED  an alternative model exists")?;
+            emit!(out, ITEM, "pin it down: add  FACT {atom}  or  NOT {atom}")?;
         }
         for d in &self.derived {
             let v = match d.value {
                 Value::True => "TRUE",
                 Value::False => "FALSE",
             };
-            writeln!(
-                f,
-                "  DERIVED   {} = {}   from {}",
+            emit!(
+                out,
+                SECTION,
+                "DERIVED   {} = {}   from {}",
                 d.atom,
                 v,
                 premise_tag(&d.origin)
             )?;
         }
         for h in &self.hints {
-            writeln!(
-                f,
-                "  HINT      possible typo — '{}' and '{}' look like the same atom ({})",
-                h.a, h.b, h.reason
+            emit!(
+                out,
+                SECTION,
+                "HINT      possible typo — '{}' and '{}' look like the same atom ({})",
+                h.a,
+                h.b,
+                h.reason
             )?;
         }
+
         let underdetermined = usize::from(self.status == Status::Underdetermined);
-        writeln!(
-            f,
+        emit!(
+            out,
+            ROOT,
             "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived",
             self.conflicts.len(),
             underdetermined,
             self.warnings.len(),
             self.derived.len()
         )?;
-        write!(f, "EXIT_CODE: {}", self.exit_code())
+        out.tail(ROOT, format_args!("EXIT_CODE: {}", self.exit_code()))
     }
 }
 

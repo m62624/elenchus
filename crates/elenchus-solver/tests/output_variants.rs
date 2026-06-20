@@ -155,6 +155,35 @@ fn conflict_system_unsatisfiable() {
     ));
 }
 
+// --- CONFLICT via ASSUME (RETRACT) -----------------------------------------
+
+#[test]
+fn conflict_assumptions_retract() {
+    // FACT + PREMISE are consistent; the three ASSUME guesses can't all hold.
+    // The report leads with a RETRACT block (no raw conflict pool) naming only
+    // the assumptions — this snapshot locks that layout.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT rel reviewed
+        PREMISE prod_needs_safety:
+            WHEN rel in_prod
+            THEN rel has_rollback
+            OR   rel has_feature_flag
+        ASSUME rel in_prod
+        ASSUME NOT rel has_rollback
+        ASSUME NOT rel has_feature_flag
+        CHECK rel
+        "#
+    ));
+}
+
+#[test]
+fn conflict_assume_vs_fact_retract() {
+    // A hard FACT and a soft ASSUME collide: only the ASSUME is retractable, so
+    // the RETRACT set names it (with its `NOT` polarity) and never the FACT.
+    insta::assert_snapshot!(report("FACT x a\nASSUME NOT x a\nCHECK x\n"));
+}
+
 // --- UNDERDETERMINED -------------------------------------------------------
 
 #[test]
