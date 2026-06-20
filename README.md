@@ -163,15 +163,18 @@ $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/relea
 $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.sh | sh
 ```
 
-### Windows `.msi` (managed install/uninstall)
+### Windows `.msi`
 
-Each binary also ships a `.msi` (`elenchus-cli-*.msi`, `elenchus-mcp-*.msi`) on the
-Releases page. Double-click to install; it registers the app in **"Add or remove
-programs"**, so upgrades and uninstalls go through the normal Windows UI — the
-friendlier choice over the PowerShell script.
+Download `elenchus-cli-*.msi` or `elenchus-mcp-*.msi` from the
+[Releases page](https://github.com/m62624/elenchus/releases). Double-click to
+install; it registers the app in **"Add or remove programs"**, so upgrades and
+uninstalls go through the normal Windows UI.
+
+### Windows PowerShell script (alternative to `.msi`)
+
+If you prefer a script over a GUI installer:
 
 ```powershell
-# Windows  (PowerShell — alternative to .msi)
 > powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.ps1 | iex"
 > powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
 ```
