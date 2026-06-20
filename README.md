@@ -71,6 +71,12 @@ RESULT: CONFLICT
   CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:29]
       socrates is mortal
       socrates is immortal
+      why:
+        socrates is human = TRUE   [FACT socrates.vrf:13]
+        socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:17]  <= socrates is human
+        socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:21]  <= socrates is animal
+        socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:25]  <= socrates is living
+        socrates is immortal = TRUE   [FACT socrates.vrf:14]
   DERIVED   socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:17]
   DERIVED   socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:21]
   DERIVED   socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:25]
@@ -79,50 +85,116 @@ EXIT_CODE: 2
 ```
 
 The DSL: `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false);
-`PREMISE` states a checked first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`,
-or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
-(optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar.
+`ASSUME` adds a soft, retractable hypothesis (on a clash the engine says which to
+drop, never blaming a fact); `PREMISE` states a checked first principle
+(`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, or `WHEN … THEN`); `RULE` derives facts;
+`IMPORT` reuses a library; `CHECK` (optionally `BIDIRECTIONAL`) runs it. See
+SPEC.md for the grammar.
 
 ### Multi-step example — iterate to CONSISTENT
 
 The real workflow: start with a broken program, read the conflict, fix it, re-run.
-Here the model asserts `api.auth` is optional but a rule says it is mandatory when
-the service is external — a contradiction the engine catches immediately.
+The model believes auth is optional, but a rule says an external service *must*
+authenticate — a contradiction the engine catches and explains.
 
-**Step 1 — first run, conflict detected:**
+```vrf
+// service.vrf
+FACT service.api is external
+FACT api.auth is optional
+
+RULE auth_rule:                       // external ⇒ auth is required
+    WHEN service.api is external
+    THEN api.auth is required
+
+PREMISE auth_state:                   // auth can't be both optional and required
+    EXCLUSIVE
+        api.auth is required
+        api.auth is optional
+
+CHECK service.api
+```
+
+**Step 1 — first run, conflict detected.** The `why:` trace gives the exact chain:
+`external` forces `required` through the rule, which collides with the asserted
+`optional`.
 
 ```console
 $ elenchus-cli service.vrf
 RESULT: CONFLICT
-  CONFLICT  external_requires_auth (PREMISE)  [service.vrf:9]
-      service.api is external
+  CONFLICT  auth_state (EXCLUSIVE)  [service.vrf:10]
+      api.auth is required
       api.auth is optional
+      why:
+        service.api is external = TRUE   [FACT service.vrf:3]
+        api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:6]  <= service.api is external
+        api.auth is optional = TRUE   [FACT service.vrf:4]
   DERIVED   api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:6]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 2
 ```
 
-**Step 2 — fix: remove the wrong fact, re-run:**
+**Step 2 — fix: drop the wrong `FACT api.auth is optional`, re-run.** The rule
+still derives `required`, and now nothing contradicts it (line numbers shift up
+because the fact was removed):
 
 ```console
 $ elenchus-cli service.vrf
 RESULT: CONSISTENT
+  DERIVED   api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:3]
 SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 0
 ```
 
-**Step 3 — add a new claim, check again:**
+**Step 3 — add an undecided cache choice and ask `CHECK … BIDIRECTIONAL`.** It is
+satisfiable but no longer unique — `cached` vs `uncached` is left open, and the
+backward pass says so and suggests how to pin it:
 
 ```console
 $ elenchus-cli service.vrf
 RESULT: UNDERDETERMINED
-  UNDERDETERMINED  service.api is cached
+  UNDERDETERMINED  an alternative model exists
+      pin it down: add  FACT service.api is uncached  or  NOT service.api is uncached
+  DERIVED   api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:3]
 SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 1
 ```
 
 UNDERDETERMINED means satisfiable but not fully pinned — add the missing fact and
 re-run until CONSISTENT.
+
+### Trying a hypothesis — `ASSUME`
+
+Sometimes you want to *test* a guess without committing to it. `ASSUME` is a soft
+fact: it takes part in the check like a `FACT`, but if the guesses can't all hold,
+the engine tells you which to drop — and never blames a real `FACT`/`PREMISE`.
+
+```vrf
+FACT service.api is external
+RULE auth_rule:
+    WHEN service.api is external
+    THEN api.auth is required
+PREMISE auth_state:
+    EXCLUSIVE
+        api.auth is required
+        api.auth is optional
+ASSUME api.auth is optional           // what if we made auth optional here?
+CHECK service.api
+```
+
+```console
+$ elenchus-cli service.vrf
+RESULT: CONFLICT
+  RETRACT  your FACTs and PREMISEs are fine.
+      But these ASSUME guesses cannot all be true together.
+      Remove or flip ONE of them, then check again:
+      ASSUME api.auth is optional   [service.vrf:9]
+  DERIVED   api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:2]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 2
+```
+
+The verdict stays CONFLICT, but the fix is "drop the hypothesis", not "a fact is
+wrong" — the engine did the backtracking for you.
 
 ## Install
 
@@ -251,13 +323,13 @@ prune that line from your shell profile if nothing else uses it.
 Both let an LLM run elenchus; the output is the same either way. The difference
 is setup cost:
 
-- **CLI** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from the shell. Works in
-  every harness that can run shell commands (Claude Code, any CI pipeline,
-  terminal). No extra configuration. **Recommended: if your harness supports
-  shell commands, use the CLI.**
-- **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC. Useful when your harness
-  natively supports MCP and you'd rather not configure a shell tool, or when the
-  harness doesn't expose a shell at all. More moving parts to set up.
+- **CLI (`elenchus-cli`)** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from
+  the shell. Works in every harness that can run shell commands (Claude Code, any
+  CI pipeline, terminal). **Recommended: it needs no extra configuration, so if your
+  harness can run shell commands, use the CLI.**
+- **MCP server (`elenchus-mcp`)** — speaks stdio JSON-RPC. Worth the extra setup only
+  when your harness natively supports MCP and you'd rather not (or can't) run a
+  shell. Same output, more to configure.
 
 The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both — it works
 identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.

@@ -84,6 +84,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 |---------|-------|------------------|
 | `FACT` | statement | assert an atom TRUE |
 | `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
+| `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
 | `CHECK` | statement | run the engine (optionally for one subject) |
@@ -113,6 +114,21 @@ an atom optionally prefixed with `NOT`.
 ```vrf
 FACT socrates is human
 NOT  socrates is robot
+```
+
+### `ASSUME` — a soft, retractable hypothesis
+- **Syntax:** `ASSUME <subject> <predicate> [<object>]` · `ASSUME NOT <subject> <predicate> [<object>]`
+- **Why:** a **what-if**. While checking it behaves exactly like a `FACT`/`NOT` (it
+  fires rules and premises), but it is a *guess, not a commitment*. If your guesses
+  can't all hold together with the facts and premises, the engine **keeps the
+  facts/premises** and tells you **which assumptions to drop** (a `RETRACT` list) —
+  it never blames a real fact. Use it to explore "could this be true?" without
+  rewriting the program. **A `FACT` is never retracted; an `ASSUME` is.** Next move
+  on a `RETRACT`: drop or flip one listed `ASSUME`, then re-check.
+```vrf
+FACT  rel reviewed
+ASSUME rel in_prod            // try it on — what if this ships to prod?
+ASSUME NOT rel has_rollback
 ```
 
 ### `PREMISE` — a checked first principle
@@ -293,6 +309,22 @@ single premise is visibly violated), the smallest set jointly to blame:
 ```
 Revisit exactly those four principles — one of them is wrong.
 
+**`RETRACT`** — when your `FACT`s and `PREMISE`s are consistent but your `ASSUME`
+guesses can't all be true at once, the engine names the smallest set of
+hypotheses to drop. The verdict is still `CONFLICT` (exit 2), but the fix is
+"drop or flip one guess", not "a fact is wrong":
+```
+  RETRACT  your FACTs and PREMISEs are fine.
+      But these ASSUME guesses cannot all be true together.
+      Remove or flip ONE of them, then check again:
+      ASSUME rel in_prod   [program.vrf:6]
+      ASSUME NOT rel has_rollback   [program.vrf:7]
+      ASSUME NOT rel has_feature_flag   [program.vrf:8]
+```
+Drop (or flip) any one of those `ASSUME` lines and re-check. A `FACT`/`PREMISE`
+is never listed here — only your hypotheses (JSON: `retract`, each item tagged
+`"kind":"ASSUME"`).
+
 **`HINT`** — advisory possible-typo nudge; **never changes the verdict**:
 ```
   HINT      possible typo — 'auth is rolled_back' and 'auth is_rolled_back' look like the same atom (...)
@@ -306,7 +338,8 @@ Always branch on `status`; the rest mirrors the human report:
                   "atoms":["s mortal (derived value contradicts a known fact)"],
                   "trace":[ {"atom":"s human","value":true,"how":"asserted","kind":"FACT","from":[]},
                             {"atom":"s mortal","value":false,"how":"asserted","kind":"NOT","from":[]} ] } ],
-  "warnings":[], "derived":[], "underdetermined":null, "unsat_core":[], "hints":[] }
+  "warnings":[], "derived":[], "underdetermined":null, "unsat_core":[],
+  "retract":[], "hints":[] }
 ```
 
 **exit code** = the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED, 2 =
@@ -470,6 +503,28 @@ Now make it honest, not green-at-any-cost:
 with neither a rollback nor a flag stated → `WARNING` blocked by both, telling you
 to confirm a safety mechanism.)
 
+### 9. Explore a hypothesis without committing — `ASSUME`
+
+Same safety gate, but now you're *trying something on*: "what if this ships to
+prod with no rollback and no feature flag — does it hold?" State the real
+facts/premises, then guess with `ASSUME`:
+```vrf
+FACT  rel reviewed
+PREMISE prod_needs_safety:        // in prod: need a rollback OR a feature flag
+    WHEN rel in_prod
+    THEN rel has_rollback
+    OR   rel has_feature_flag
+ASSUME rel in_prod
+ASSUME NOT rel has_rollback
+ASSUME NOT rel has_feature_flag
+CHECK rel
+```
+`CONFLICT` with a `RETRACT` list of all three guesses: with no rollback and no
+flag, `rel in_prod` cannot satisfy `prod_needs_safety`. Your `FACT` and the
+premise were never in question — only the hypotheses. Drop or flip any one (e.g.
+`ASSUME rel has_feature_flag`) → `CONSISTENT`. That is the engine doing the
+backtracking for you: it tells you exactly which guess to revise.
+
 ## Run it — do these three steps first, in order (every session)
 
 Before you write a single program, set up and verify the engine. Do **not** skip
@@ -511,7 +566,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.5.0 -->
+<!-- skill-version: 0.6.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

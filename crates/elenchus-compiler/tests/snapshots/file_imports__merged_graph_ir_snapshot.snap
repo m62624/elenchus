@@ -64,6 +64,7 @@ Compiled {
                 premise: None,
                 kind: "FACT",
             },
+            soft: false,
         },
         Fact {
             atom: 3,
@@ -74,6 +75,7 @@ Compiled {
                 premise: None,
                 kind: "FACT",
             },
+            soft: false,
         },
         Fact {
             atom: 6,
@@ -84,6 +86,7 @@ Compiled {
                 premise: None,
                 kind: "FACT",
             },
+            soft: false,
         },
         Fact {
             atom: 0,
@@ -94,6 +97,7 @@ Compiled {
                 premise: None,
                 kind: "FACT",
             },
+            soft: false,
         },
     ],
     clauses: [

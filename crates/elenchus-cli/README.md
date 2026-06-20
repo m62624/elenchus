@@ -40,12 +40,13 @@ Exit code doubles as a CI gate:
 
 ## Output
 
-Human (default):
+Human (default) — e.g. a gate whose consequent has not been stated yet:
 
 ```text
+$ elenchus-cli ready.vrf
 RESULT: WARNING
-  WARNING   wings_need_bone (PREMISE)  [creature.vrf:15]
-      blocked by: Creature.A has wing
+  WARNING   ready (PREMISE)  [ready.vrf:2]
+      blocked by: svc tested
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1
 ```
@@ -53,7 +54,7 @@ EXIT_CODE: 1
 JSON (`--format json`) — one line, for tooling and agents:
 
 ```json
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[]}
 ```
 
 ## License

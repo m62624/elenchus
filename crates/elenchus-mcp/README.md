@@ -11,19 +11,21 @@ the [elenchus](https://github.com/m62624/elenchus) consistency checker to AI age
 Transport: **stdio, newline-delimited JSON-RPC 2.0** (one message per line).
 Hand-rolled with `serde_json` — no MCP SDK dependency.
 
-## CLI or MCP?
+## CLI or MCP — which one?
 
-Both give an LLM the same elenchus output. Pick based on your setup:
+Both let an LLM run elenchus; the output is the same either way. The difference
+is setup cost:
 
-- **CLI (`elenchus-cli`)** — works wherever you can run shell commands. No MCP
-  configuration needed. If your harness supports shell tools, **use the CLI** —
-  it's simpler to set up and works in every environment (Claude Code, CI, terminal).
-- **MCP (`elenchus-mcp`)** — useful when your harness natively supports MCP and
-  doesn't expose a shell, or when you'd rather wire up a single MCP server instead
-  of a shell tool.
+- **CLI (`elenchus-cli`)** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from
+  the shell. Works in every harness that can run shell commands (Claude Code, any
+  CI pipeline, terminal). **Recommended: it needs no extra configuration, so if your
+  harness can run shell commands, use the CLI.**
+- **MCP server (`elenchus-mcp`)** — speaks stdio JSON-RPC. Worth the extra setup only
+  when your harness natively supports MCP and you'd rather not (or can't) run a
+  shell. Same output, more to configure.
 
 The **skill** ([`skill/SKILL.md`](../../skill/SKILL.md)) is adapted for both — it
-works identically whether the agent calls elenchus via CLI or via the MCP tool.
+works identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.
 
 ## Tool
 
@@ -31,7 +33,7 @@ works identically whether the agent calls elenchus via CLI or via the MCP tool.
 
 | Argument | Type | |
 |----------|------|--|
-| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`, `PREMISE`/`RULE`, `CHECK` |
+| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`/`ASSUME`, `PREMISE`/`RULE`, `CHECK` |
 | `format` | `"human"` \| `"json"` (optional) | output format, default `"json"` |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.
@@ -48,9 +50,9 @@ Example session (each line is one JSON-RPC message):
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"elenchus","version":"0.1.0"}}}
+← {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"elenchus","version":"0.6.0"}}}
 → {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nNOT x a\nCHECK x\n"}}}
-← {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"status\":\"CONFLICT\",...}"}],"isError":false}}
+← {"id":2,"jsonrpc":"2.0","result":{"content":[{"text":"{\"status\":\"CONFLICT\", …}","type":"text"}],"isError":false}}
 ```
 
 ## License
