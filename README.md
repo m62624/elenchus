@@ -83,6 +83,47 @@ The DSL: `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false
 or `WHEN … THEN`); `RULE` derives facts; `IMPORT` reuses a library; `CHECK`
 (optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar.
 
+### Multi-step example — iterate to CONSISTENT
+
+The real workflow: start with a broken program, read the conflict, fix it, re-run.
+Here the model asserts `api.auth` is optional but a rule says it is mandatory when
+the service is external — a contradiction the engine catches immediately.
+
+**Step 1 — first run, conflict detected:**
+
+```console
+$ elenchus service.vrf
+RESULT: CONFLICT
+  CONFLICT  external_requires_auth (PREMISE)  [service.vrf:9]
+      service.api is external
+      api.auth is optional
+  DERIVED   api.auth is required = TRUE   from auth_rule (RULE)  [service.vrf:6]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 2
+```
+
+**Step 2 — fix: remove the wrong fact, re-run:**
+
+```console
+$ elenchus service.vrf
+RESULT: CONSISTENT
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 0
+```
+
+**Step 3 — add a new claim, check again:**
+
+```console
+$ elenchus service.vrf
+RESULT: UNDERDETERMINED
+  UNDERDETERMINED  service.api is cached
+SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 1
+```
+
+UNDERDETERMINED means satisfiable but not fully pinned — add the missing fact and
+re-run until CONSISTENT.
+
 ## Install
 
 Two binaries — the `elenchus` CLI (crate `elenchus-cli`) and the `elenchus-mcp`
@@ -94,22 +135,11 @@ install the *same* binaries. Quick guide:
 
 | If you… | Use |
 |---|---|
-| have `cargo` and want the simplest cross-platform install | **`cargo binstall`** |
 | are on macOS / Linux with Homebrew | **Homebrew** |
 | don't want a Rust toolchain | **installer script**, or the Windows **`.msi`** |
 | want managed install/uninstall on Windows | **`.msi`** |
+| have `cargo` and want a cross-platform install | **`cargo binstall`** |
 | want to compile it yourself | **from source** |
-
-### `cargo binstall` (recommended)
-
-[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the
-prebuilt binary instead of compiling. It reads the release's cargo-dist
-manifest, so it just works on every OS/arch above — no extra config:
-
-```console
-$ cargo binstall elenchus-cli     # the `elenchus` CLI
-$ cargo binstall elenchus-mcp     # the `elenchus-mcp` server
-```
 
 ### Homebrew (macOS / Linux)
 
@@ -133,18 +163,29 @@ $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/relea
 $ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.sh | sh
 ```
 
-```powershell
-# Windows  (PowerShell)
-> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.ps1 | iex"
-> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
-```
-
 ### Windows `.msi` (managed install/uninstall)
 
 Each binary also ships a `.msi` (`elenchus-cli-*.msi`, `elenchus-mcp-*.msi`) on the
 Releases page. Double-click to install; it registers the app in **"Add or remove
 programs"**, so upgrades and uninstalls go through the normal Windows UI — the
 friendlier choice over the PowerShell script.
+
+```powershell
+# Windows  (PowerShell — alternative to .msi)
+> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-cli-installer.ps1 | iex"
+> powershell -ExecutionPolicy Bypass -c "irm https://github.com/m62624/elenchus/releases/latest/download/elenchus-mcp-installer.ps1 | iex"
+```
+
+### `cargo binstall`
+
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the
+prebuilt binary instead of compiling. It reads the release's cargo-dist
+manifest, so it just works on every OS/arch above — no extra config:
+
+```console
+$ cargo binstall elenchus-cli     # the `elenchus` CLI
+$ cargo binstall elenchus-mcp     # the `elenchus-mcp` server
+```
 
 ### From source
 
@@ -202,16 +243,35 @@ prune that line from your shell profile if nothing else uses it.
 
 ## Use it
 
-- **CLI** — one input three ways: a positional `elenchus <file.vrf>`, inline
-  `--text "<program>"`, or explicit stdin with `-`; `--text` and a file are
-  mutually exclusive. Running `elenchus` with no input prints help instead of
-  waiting on stdin. `--format json` for tooling; exit code is the verdict (CI gate).
-  Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
-  source. See [`crates/elenchus-cli`](crates/elenchus-cli).
-- **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool,
-  `elenchus_check`, for AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
-- **Skill** — [`skill/SKILL.md`](skill/SKILL.md): when to reach for elenchus, the
-  DSL, worked examples, a self-check, and the iterate-to-CONSISTENT workflow.
+### CLI or MCP — which one?
+
+Both let an LLM run elenchus; the output is the same either way. The difference
+is setup cost:
+
+- **CLI** — `elenchus <file>` or `elenchus --text "…"` from the shell. Works in
+  every harness that can run shell commands (Claude Code, any CI pipeline,
+  terminal). No extra configuration. **Recommended: if your harness supports
+  shell commands, use the CLI.**
+- **MCP server** — `elenchus-mcp` speaks stdio JSON-RPC. Useful when your harness
+  natively supports MCP and you'd rather not configure a shell tool, or when the
+  harness doesn't expose a shell at all. More moving parts to set up.
+
+The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both — it works
+identically whether the agent calls `elenchus` via the CLI or via the MCP tool.
+
+### CLI
+
+One input three ways: a positional `elenchus <file.vrf>`, inline
+`--text "<program>"`, or explicit stdin with `-`; `--text` and a file are
+mutually exclusive. Running `elenchus` with no input prints help instead of
+waiting on stdin. `--format json` for tooling; exit code is the verdict (CI gate).
+Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
+source. See [`crates/elenchus-cli`](crates/elenchus-cli).
+
+### MCP server
+
+`elenchus-mcp` speaks stdio JSON-RPC and exposes one tool, `elenchus_check`, for
+AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
 
 ### Using the skill
 
