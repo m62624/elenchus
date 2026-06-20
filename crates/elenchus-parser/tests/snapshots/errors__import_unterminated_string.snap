@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"IMPORT \\\"physics.vrf\\n\")"
+---
+RESULT: 1 syntax error
+
+[1/1] line 1, col 8
+   | IMPORT "physics.vrf
+   |        ^^^^^^^^^^^^
+   problem : IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
+   syntax  : IMPORT "<path>"
+   example : IMPORT "physics.vrf"

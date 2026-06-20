@@ -1,12 +1,12 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-expression: "err(\"FACT lonely\\n\")"
+expression: "err(\"FACT a b c d\\n\")"
 ---
 RESULT: 1 syntax error
 
-[1/1] line 1, col 6
-   | FACT lonely
-   |      ^^^^^^
-   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+[1/1] line 1, col 11
+   | FACT a b c d
+   |           ^^
+   problem : unexpected text after the FACT atom
    syntax  : FACT <Subject> <predicate> [<object>]
    example : FACT socrates is human

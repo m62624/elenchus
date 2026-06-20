@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(r#\"\n        RULE r\n            WHEN x a\n            THEN x b\n        \"#)"
+---
+RESULT: 1 syntax error
+
+[1/1] line 2, col 15
+   |         RULE r
+   |               ^
+   problem : expected ':' after the rule name

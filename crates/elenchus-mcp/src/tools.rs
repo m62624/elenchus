@@ -2,7 +2,7 @@
 //! `elenchus_about` — their schema definitions and the `tools/call` executor.
 //! Descriptions come from [`crate::messages`]; envelopes from [`crate::rpc`].
 
-use elenchus_solver::verify_source;
+use elenchus_solver::{CompileError, verify_source};
 use serde_json::{Value, json};
 
 use crate::{messages, rpc};
@@ -25,6 +25,11 @@ fn check_def() -> Value {
                     "type": "string",
                     "enum": ["human", "json"],
                     "description": messages::CHECK_ARG_FORMAT
+                },
+                "max_errors": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": messages::CHECK_ARG_MAX_ERRORS
                 }
             },
             "required": ["program"]
@@ -82,6 +87,10 @@ fn check(id: Value, args: Option<&Value>) -> Value {
         .and_then(|a| a.get("format"))
         .and_then(Value::as_str)
         .unwrap_or("json");
+    let max_errors = args
+        .and_then(|a| a.get("max_errors"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
 
     match verify_source("<mcp>", program) {
         Ok(report) => {
@@ -92,6 +101,13 @@ fn check(id: Value, args: Option<&Value>) -> Value {
             };
             rpc::tool_result(id, text, false)
         }
-        Err(e) => rpc::tool_result(id, e.to_string(), true),
+        // Syntax errors get the full diagnostic blocks (capped by `max_errors`).
+        // `rpc::tool_result` carries the whole multi-line block as one JSON
+        // string, which serde_json escapes — the wire stays valid JSON.
+        Err(CompileError::Parse(diag)) => {
+            let limit = (max_errors > 0).then_some(max_errors);
+            rpc::tool_result(id, diag.render(limit), true)
+        }
+        Err(other) => rpc::tool_result(id, other.to_string(), true),
     }
 }

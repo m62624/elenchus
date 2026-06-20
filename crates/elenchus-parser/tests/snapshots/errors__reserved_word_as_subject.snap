@@ -2,6 +2,11 @@
 source: crates/elenchus-parser/tests/errors.rs
 expression: "err(\"FACT WHEN has flying\\n\")"
 ---
-Syntax Error at line 1, col 6: FACT expects an atom: <Subject> <predicate> [<object>]
-  | FACT WHEN has flying
-  |      ^--- here
+RESULT: 1 syntax error
+
+[1/1] line 1, col 6
+   | FACT WHEN has flying
+   |      ^^^^^^^^^^^^^^^
+   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human

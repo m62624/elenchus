@@ -44,6 +44,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
+/// Re-exported so downstream crates can name the syntax diagnostics carried by
+/// [`CompileError::Parse`] (and render them with a custom error limit).
+pub use elenchus_parser::Diagnostics;
 use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -191,14 +194,11 @@ pub struct Compiled {
 /// Anything that can go wrong while compiling (and resolving imports).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CompileError {
-    /// A source failed to parse; carries the file label and the parser message.
-    #[error("parse error in {file}: {message}")]
-    Parse {
-        /// The source label that failed to parse.
-        file: String,
-        /// The parser's error message.
-        message: String,
-    },
+    /// A source failed to parse; carries the full syntax diagnostics (every
+    /// error, each as a caret block with the keyword's correct syntax). The
+    /// source label is already inside the [`Diagnostics`] header.
+    #[error("{0}")]
+    Parse(elenchus_parser::Diagnostics),
     /// A name was reused with a different body *within the same source*.
     #[error("'{name}' redefined with a different body")]
     PremiseRedefinition {
@@ -286,9 +286,9 @@ impl Compiler {
     /// Parse one source and accumulate its statements. `source` is a label used
     /// in provenance (e.g. a file name or `"<root>"`).
     pub fn add_source(&mut self, source: &str, src: &str) -> Result<(), CompileError> {
-        let program = elenchus_parser::parse(src).map_err(|e| CompileError::Parse {
-            file: source.to_string(),
-            message: e.message,
+        let program = elenchus_parser::parse(src).map_err(|mut diag| {
+            diag.set_file(source);
+            CompileError::Parse(diag)
         })?;
         for stmt in &program.statements {
             self.add_statement(source, stmt)?;
@@ -316,9 +316,9 @@ impl Compiler {
         }
         stack.push(hash.clone());
 
-        let program = elenchus_parser::parse(&content).map_err(|e| CompileError::Parse {
-            file: path.to_string(),
-            message: e.message,
+        let program = elenchus_parser::parse(&content).map_err(|mut diag| {
+            diag.set_file(path);
+            CompileError::Parse(diag)
         })?;
         for stmt in &program.statements {
             if let Statement::Import(p) = stmt {

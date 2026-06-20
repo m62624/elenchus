@@ -1,0 +1,317 @@
+// ============================================================
+// Extension plan: numeric predicates in elenchus
+// ============================================================
+// This file encodes ALL requirements, constraints, and design
+// decisions as logical facts and premises. The goal is to
+// verify CONSISTENCY before writing any code.
+// ============================================================
+
+// --- 1. CURRENT STATE (what exists now) ---
+
+FACT elenchus is boolean_sat
+FACT elenchus uses three_valued_logic
+FACT elenchus has atoms
+FACT elenchus has impossible_clauses
+FACT elenchus has forward_chaining
+FACT elenchus has backward_sat_pass
+FACT elenchus has_assume_with_retract
+FACT elenchus has_import_with_unification
+FACT elenchus has_no_numbers
+FACT elenchus has_no_arithmetic
+FACT elenchus has_no_quantifiers
+FACT elenchus has_no_nested_structures
+FACT elenchus has_no_typed_variables
+FACT elenchus has_no_smt
+FACT elenchus uses_four_verdicts
+FACT elenchus_has_consistent
+FACT elenchus_has_warning
+FACT elenchus_has_conflict
+FACT elenchus_has_underdetermined
+
+// DSL keywords that exist
+FACT has_keyword_fact
+FACT has_keyword_not
+FACT has_keyword_assume
+FACT has_keyword_premise
+FACT has_keyword_rule
+FACT has_keyword_check
+FACT has_keyword_bidirectional
+FACT has_keyword_when
+FACT has_keyword_and
+FACT has_keyword_or
+FACT has_keyword_then
+FACT has_keyword_exclusive
+FACT has_keyword_forbids
+FACT has_keyword_oneof
+FACT has_keyword_atleast
+FACT has_keyword_import
+FACT has_keyword_comment
+
+// List operators
+FACT has_list_op_exclusive
+FACT has_list_op_forbids
+FACT has_list_op_oneof
+FACT has_list_op_atleast
+
+// --- 2. PROBLEM (why extension is needed) ---
+
+FACT model_forgets_ordering_relationships
+FACT model_loses_connection_to_reality
+FACT model_must_binaryize_numbers_manually
+FACT model_must_write_premises_for_ordering
+FACT model_can_forget_one_ordering_premise
+FACT current_workaround_is_implicit
+FACT current_workaround_requires_explicit_premise
+
+// --- 3. GOAL (what we want to achieve) ---
+
+FACT goal_add_numeric_predicates
+FACT goal_help_model_write_in_domain_terms
+FACT goal_stay_sat_not_smt
+FACT goal_no_breaking_changes
+FACT goal_no_new_complex_keywords
+FACT goal_no_quantifiers
+FACT goal_no_nested_structures
+FACT goal_no_typed_variables
+FACT goal_no_smt_complexity
+FACT goal_advisory_only_for_auto_detection
+FACT goal_hints_for_near_missing_ordering
+FACT goal_integers_only_no_floats
+
+// --- 4. DESIGN CONSTRAINTS (what must hold) ---
+
+// 4a. Numeric predicates as sugar, not new logic
+PREMISE numeric_as_sugar:
+    WHEN goal_add_numeric_predicates
+    THEN numeric_predicates_are_sugar_not_new_logic
+
+PREMISE stay_boolean:
+    WHEN goal_add_numeric_predicates
+    THEN engine_remains_boolean
+
+PREMISE stay_sat:
+    WHEN engine_remains_boolean
+    THEN engine_is_sat_not_smt
+
+// 4b. Backward compatibility
+PREMISE no_breaking_change:
+    WHEN goal_add_numeric_predicates
+    THEN existing_syntax_stays_unchanged
+
+PREMISE no_new_keywords:
+    WHEN goal_add_numeric_predicates
+    THEN no_new_capital_keywords_are_added
+
+PREMISE no_new_logic:
+    WHEN goal_add_numeric_predicates
+    THEN solver_logic_stays_unchanged
+
+// 4c. What numbers become
+PREMISE numbers_are_labels:
+    WHEN goal_add_numeric_predicates
+    THEN numbers_are_labels_on_atoms_not_arithmetic
+
+PREMISE numbers_not_computed:
+    WHEN numbers_are_labels_on_atoms_not_arithmetic
+    THEN engine_does_no_numeric_computation
+
+// 4d. Syntax extension
+PREMISE parser_extension:
+    WHEN goal_add_numeric_predicates
+    THEN parser_understands_numeric_literals
+
+PREMISE parser_no_ast_change:
+    WHEN parser_understands_numeric_literals
+    THEN ast_structure_stays_same
+
+// 4e. Advisory only
+PREMISE advisory_auto_detection:
+    WHEN goal_advisory_only_for_auto_detection
+    THEN auto_detection_does_not_change_verdict
+
+PREMISE advisory_hints:
+    WHEN goal_hints_for_near_missing_ordering
+    THEN hints_are_advisory_only
+
+// 4f. Integers only
+PREMISE integers_only:
+    WHEN goal_integers_only_no_floats
+    THEN float_numbers_are_rejected
+
+// 5. OPERATIONAL CONSTRAINTS (how it works) ---
+
+// 5a. Numeric comparison operators
+FACT supported_operators_are_gt
+FACT supported_operators_are_lt
+FACT supported_operators_are_eq
+FACT supported_operators_are_gte
+FACT supported_operators_are_lte
+
+// 5b. Atoms with numeric content
+FACT numeric_atom_has_subject
+FACT numeric_atom_has_predicate
+FACT numeric_atom_has_numeric_object
+
+// 5c. Engine sees atoms, not numbers
+FACT engine_sees_atoms_not_numbers
+FACT engine_does_not_know_numeric_values
+
+// 5d. Ordering detection
+FACT engine_can_detect_ordering_relationships
+FACT engine_can_suggest_missing_ordering
+FACT engine_cannot_enforce_ordering_without_premise
+
+// 5e. Near-missing detection
+FACT engine_can_detect_near_duplicate_atoms
+FACT engine_can_detect_near_missing_ordering
+
+// --- 6. IMPLICATIONS (what follows from the above) ---
+
+PREMISE impl_no_smt:
+    WHEN engine_is_sat_not_smt
+    THEN engine_does_no_arithmetic_proofs
+
+PREMISE impl_no_complexity:
+    WHEN no_new_capital_keywords_are_added
+    THEN model uses same mental model
+
+PREMISE impl_same_dsl:
+    WHEN no_new_capital_keywords_are_added
+    THEN dsl keywords stay the same
+
+PREMISE impl_stay_simple:
+    WHEN solver_logic_stays_unchanged
+    THEN engine complexity does not increase
+
+PREMISE impl_no_breaking:
+    WHEN existing_syntax_stays_unchanged
+    THEN current programs still work
+
+PREMISE impl_domain_terms:
+    WHEN numbers_are_labels_on_atoms_not_arithmetic
+    THEN model writes in domain terms
+
+// --- 7. NEGATIVES (what we explicitly reject) ---
+
+FACT rejected_quantifiers
+FACT rejected_nested_parentheses
+FACT rejected_typed_variables
+FACT rejected_arithmetic_operations
+FACT rejected_float_numbers
+FACT rejected_smt_solvers
+FACT rejected_complex_syntax
+
+// --- 8. RISK FACTORS (things that could go wrong) ---
+
+FACT risk_model_writes_speed_ge_100_and_speed_gt_99
+FACT risk_model_forgets_ordering_premise
+FACT risk_model_writes_speed_ge_100_and_speed_le_50
+FACT risk_model_writes_float_number
+
+// Risk mitigation
+PREMISE mitigate_risk1:
+    WHEN risk_model_writes_speed_ge_100_and_speed_gt_99
+    THEN engine provides hints for near duplicate
+
+PREMISE mitigate_risk2:
+    WHEN risk_model_forgets_ordering_premise
+    THEN engine provides advisory ordering detection
+
+PREMISE mitigate_risk3:
+    WHEN risk_model_writes_speed_ge_100_and_speed_le_50
+    THEN engine finds conflict via exclusive check
+
+PREMISE mitigate_risk4:
+    WHEN risk_model_writes_float_number
+    THEN parser rejects float as syntax error
+
+// --- 9. COMPARISON (current vs extended) ---
+
+// Current state
+FACT current_is_pure_boolean
+FACT current_has_no_numbers_in_syntax
+FACT current_has_no_numeric_comparators
+FACT current_has_no_auto_ordering
+
+// Extended state
+FACT extended_has_numeric_literals_in_object_position
+FACT extended_has_numeric_comparison_operators
+FACT extended_has_auto_ordering_detection
+FACT extended_has_advisory_hints
+
+// Transition
+PREMISE transition_is_additive:
+    WHEN extended_has_numeric_literals_in_object_position
+    THEN transition is additive not replacing
+
+PREMISE transition_is_compatible:
+    WHEN transition_is_additive_not_replacing
+    THEN extended is backward compatible
+
+// --- 10. FINAL ASSERTIONS ---
+
+FACT final_is_sat
+FACT final_is_not_smt
+FACT final_is_backward_compatible
+FACT final_is_simple_for_model
+FACT final_helps_with_ordering
+FACT final_has_advisory_detection
+FACT final_has_hinting
+
+// ============================================================
+// PREMISES — the logical constraints that must all hold
+// ============================================================
+
+PREMISE no_smt_complexity:
+    WHEN goal_add_numeric_predicates
+    THEN engine_is_sat_not_smt
+    AND  engine_does_no_arithmetic_proofs
+
+PREMISE no_breaking_changes:
+    WHEN goal_add_numeric_predicates
+    THEN existing_syntax_stays_unchanged
+    AND  current_programs_still_work
+
+PREMISE no_new_keywords:
+    WHEN goal_add_numeric_predicates
+    THEN no_new_capital_keywords_are_added
+    AND  dsl_keywords_stay_the_same
+
+PREMISE simple_for_model:
+    WHEN no_new_capital_keywords_are_added
+    AND  solver_logic_stays_unchanged
+    AND  model_writes_in_domain_terms
+    THEN model uses same mental model
+
+PREMISE stays_boolean:
+    WHEN numbers_are_labels_on_atoms_not_arithmetic
+    AND  engine_does_not_know_numeric_values
+    AND  engine_does_no_numeric_computation
+    THEN engine_remains_boolean
+
+PREMISE advisory_only:
+    WHEN auto_detection_does_not_change_verdict
+    AND  hints_are_advisory_only
+    THEN advisory_detection_is_safe
+
+PREMISE backward_compatible:
+    WHEN existing_syntax_stays_unchanged
+    AND  current_programs_still_work
+    AND  extended_is_backward_compatible
+    THEN no_regression_for_existing_users
+
+PREMISE risk_mitigation:
+    WHEN engine_provides_hints_for_near_duplicate
+    AND  engine_provides_advisory_ordering_detection
+    AND  parser_rejects_float_as_syntax_error
+    THEN risks are managed
+
+PREMISE consistency_check:
+    WHEN engine_is_sat_not_smt
+    AND  model_uses_same_mental_model
+    AND  no_regression_for_existing_users
+    AND  advisory_detection_is_safe
+    AND  risks_are_managed
+    THEN extension_plan_is_consistent
+
+CHECK BIDIRECTIONAL

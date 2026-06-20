@@ -2,4 +2,11 @@
 source: crates/elenchus-compiler/tests/errors.rs
 expression: "format!(\"{e}\")"
 ---
-parse error in main.vrf: FACT expects an atom: <Subject> <predicate> [<object>]
+RESULT: 1 syntax error in main.vrf
+
+[1/1] line 1, col 6
+   | FACT lonely
+   |      ^^^^^^
+   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human

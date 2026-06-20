@@ -154,7 +154,32 @@ fn help_points_agents_at_the_skill() {
 fn parse_error_exits_2_with_message() {
     let out = elenchus(&["--text", "FACT lonely\n"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("elenchus:"));
+    // A syntax error prints the diagnostic block (header + caret + card), not a
+    // bare `elenchus:` one-liner.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 1 syntax error"),
+        "stderr = {stderr}"
+    );
+    assert!(stderr.contains("FACT expects an atom"), "stderr = {stderr}");
+}
+
+#[test]
+fn max_errors_caps_the_block_count() {
+    // Three broken lines; --max-errors 1 shows one block and summarises the rest.
+    let out = elenchus(&[
+        "--text",
+        "FACT lonely\nNOT lonely2\nFACT also bad words here\n",
+        "--max-errors",
+        "1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 3 syntax errors"),
+        "stderr = {stderr}"
+    );
+    assert!(stderr.contains("(showing 1 of 3"), "stderr = {stderr}");
 }
 
 #[test]

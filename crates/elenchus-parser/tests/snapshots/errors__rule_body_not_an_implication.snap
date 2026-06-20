@@ -2,6 +2,11 @@
 source: crates/elenchus-parser/tests/errors.rs
 expression: "err(r#\"\n        RULE r:\n            EXCLUSIVE\n                x a\n                x b\n        \"#)"
 ---
-Syntax Error at line 3, col 1: a rule body must be WHEN ... THEN
-  |             EXCLUSIVE
-  | ^--- here
+RESULT: 1 syntax error
+
+[1/1] line 3, col 1
+   |             EXCLUSIVE
+   | ^^^^^^^^^^^^^^^^^^^^^
+   problem : a rule body must be WHEN ... THEN
+   syntax  : WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])
+   example : WHEN motor over_100

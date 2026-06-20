@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, ValueEnum};
 use elenchus_compiler::FileResolver;
-use elenchus_solver::{Report, verify, verify_source};
+use elenchus_solver::{CompileError, Report, verify, verify_source};
 
 #[derive(Parser)]
 #[command(
@@ -42,6 +42,12 @@ struct Cli {
     /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
+
+    /// On a syntax error, show at most this many error blocks (0 = all). The
+    /// rest are summarised as a `(showing N of TOTAL)` footer so a large broken
+    /// file does not flood the output.
+    #[arg(long, default_value_t = 0)]
+    max_errors: usize,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -65,7 +71,7 @@ fn main() -> ExitCode {
     let report = match build_report(&cli) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("elenchus: {e}");
+            print_error(&e, cli.max_errors);
             return ExitCode::from(2);
         }
     };
@@ -76,9 +82,29 @@ fn main() -> ExitCode {
     ExitCode::from(report.exit_code() as u8)
 }
 
-fn build_report(cli: &Cli) -> Result<Report, String> {
+/// A failure before a verdict could be produced: either a compile/parse error
+/// (which we render specially) or plain I/O / usage text.
+enum CliError {
+    Compile(CompileError),
+    Other(String),
+}
+
+/// Print a pre-verdict error to stderr. Syntax errors get the full diagnostic
+/// blocks (capped by `--max-errors`); everything else stays a one-liner.
+fn print_error(e: &CliError, max_errors: usize) {
+    match e {
+        CliError::Compile(CompileError::Parse(diag)) => {
+            let limit = (max_errors > 0).then_some(max_errors);
+            eprintln!("{}", diag.render(limit));
+        }
+        CliError::Compile(other) => eprintln!("elenchus: {other}"),
+        CliError::Other(msg) => eprintln!("elenchus: {msg}"),
+    }
+}
+
+fn build_report(cli: &Cli) -> Result<Report, CliError> {
     if let Some(text) = &cli.text {
-        return verify_source("<text>", text).map_err(|e| e.to_string());
+        return verify_source("<text>", text).map_err(CliError::Compile);
     }
     match cli.file.as_deref() {
         Some(path) => {
@@ -87,13 +113,15 @@ fn build_report(cli: &Cli) -> Result<Report, String> {
                 let mut buf = String::new();
                 std::io::stdin()
                     .read_to_string(&mut buf)
-                    .map_err(|e| format!("reading stdin: {e}"))?;
-                verify_source("<stdin>", &buf).map_err(|e| e.to_string())
+                    .map_err(|e| CliError::Other(format!("reading stdin: {e}")))?;
+                verify_source("<stdin>", &buf).map_err(CliError::Compile)
             } else {
                 // A real file: resolve IMPORTs relative to it.
-                verify(path, &FileResolver).map_err(|e| e.to_string())
+                verify(path, &FileResolver).map_err(CliError::Compile)
             }
         }
-        None => Err("no input provided; pass a file, --text, or - for stdin".to_string()),
+        None => Err(CliError::Other(
+            "no input provided; pass a file, --text, or - for stdin".to_string(),
+        )),
     }
 }

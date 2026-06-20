@@ -1,0 +1,166 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(include_str!(\"fixtures/showcase.vrf\"))"
+---
+RESULT: 21 syntax errors
+
+[1/21] line 12, col 6
+   | FACT lonely
+   |      ^^^^^^
+   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human
+
+[2/21] line 13, col 5
+   | NOT lonely
+   |     ^^^^^^
+   problem : NOT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : NOT <Subject> <predicate> [<object>]
+   example : NOT socrates is immortal
+
+[3/21] line 14, col 8
+   | ASSUME lonely
+   |        ^^^^^^
+   problem : ASSUME expects an atom: [NOT] <Subject> <predicate> [<object>]
+   syntax  : ASSUME [NOT] <Subject> <predicate> [<object>]
+   example : ASSUME release is_ready
+
+[4/21] line 15, col 30
+   | FACT subject predicate object extra
+   |                              ^^^^^^
+   problem : unexpected text after the FACT atom
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human
+
+[5/21] line 19, col 8
+   | IMPORT physics.vrf
+   |        ^^^^^^^^^^^
+   problem : IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
+   syntax  : IMPORT "<path>"
+   example : IMPORT "physics.vrf"
+
+[6/21] line 20, col 8
+   | IMPORT "physics.vrf
+   |        ^^^^^^^^^^^^
+   problem : IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
+   syntax  : IMPORT "<path>"
+   example : IMPORT "physics.vrf"
+
+[7/21] line 24, col 26
+   | PREMISE missing_the_colon
+   |                          ^
+   problem : expected ':' after the premise name
+
+[8/21] line 25, col 27
+   | PREMISE has_trailing_junk: nonsense after the colon
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+   problem : unexpected text after 'PREMISE <name>:'
+   syntax  : PREMISE <name>:  then a list body or a WHEN ... THEN implication
+   example : PREMISE wings:
+                 WHEN bird has feathers
+                 THEN bird can_fly
+
+[9/21] line 27, col 1
+   | 
+   | ^
+   problem : a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN
+   syntax  : EXCLUSIVE  then one atom per line (>= 2 atoms)
+   example : EXCLUSIVE
+                 light is on
+                 light is off
+
+[10/21] line 30, col 23
+   | RULE missing_the_colon
+   |                       ^
+   problem : expected ':' after the rule name
+
+[11/21] line 31, col 24
+   | RULE has_trailing_junk: nonsense after the colon
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^
+   problem : unexpected text after 'RULE <name>:'
+   syntax  : RULE <name>:  then a WHEN ... THEN implication
+   example : RULE mortal:
+                 WHEN x is human
+                 THEN x is mortal
+
+[12/21] line 36, col 10
+   |     WHEN halfatom
+   |          ^^^^^^^^
+   problem : WHEN expects a literal: [NOT] <Subject> <predicate> [<object>]
+   syntax  : WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])
+   example : WHEN motor over_100
+
+[13/21] line 40, col 1
+   | PREMISE then_without_literal:
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   problem : expected THEN to complete the WHEN ... THEN implication
+   syntax  : THEN <literal>
+   example : THEN motor uses fast_path
+
+[14/21] line 48, col 5
+   |     AND
+   |     ^^^
+   problem : expected THEN to complete the WHEN ... THEN implication
+   syntax  : THEN <literal>
+   example : THEN motor uses fast_path
+
+[15/21] line 53, col 8
+   |     OR x hotfixed
+   |        ^^^^^^^^^^
+   problem : don't mix AND and OR in one WHEN group — split it into separate premises
+   syntax  : AND <literal>
+   example : AND motor is reviewed
+
+[16/21] line 61, col 1
+   | 
+   | ^
+   problem : a list premise needs at least two atoms
+
+[17/21] line 65, col 1
+   |     this is not a body
+   | ^^^^^^^^^^^^^^^^^^^^^^
+   problem : a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN
+   syntax  : EXCLUSIVE  then one atom per line (>= 2 atoms)
+   example : EXCLUSIVE
+                 light is on
+                 light is off
+
+[18/21] line 70, col 1
+   |     ONEOF
+   | ^^^^^^^^^
+   problem : a rule body must be WHEN ... THEN
+   syntax  : WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])
+   example : WHEN motor over_100
+
+[19/21] line 76, col 6
+   | FACT WHEN has surprise
+   |      ^^^^^^^^^^^^^^^^^
+   problem : FACT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : FACT <Subject> <predicate> [<object>]
+   example : FACT socrates is human
+
+[20/21] line 82, col 1
+   | %%% this line starts no keyword
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   problem : expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+   expected one of these statements:
+       FACT <Subject> <predicate> [<object>]
+       NOT <Subject> <predicate> [<object>]
+       ASSUME [NOT] <Subject> <predicate> [<object>]
+       PREMISE <name>:  then a list body or a WHEN ... THEN implication
+       RULE <name>:  then a WHEN ... THEN implication
+       CHECK [<subject>] [BIDIRECTIONAL]
+       IMPORT "<path>"
+
+[21/21] line 84, col 1
+   | 123 numbers cannot start a statement
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   problem : expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+   expected one of these statements:
+       FACT <Subject> <predicate> [<object>]
+       NOT <Subject> <predicate> [<object>]
+       ASSUME [NOT] <Subject> <predicate> [<object>]
+       PREMISE <name>:  then a list body or a WHEN ... THEN implication
+       RULE <name>:  then a WHEN ... THEN implication
+       CHECK [<subject>] [BIDIRECTIONAL]
+       IMPORT "<path>"

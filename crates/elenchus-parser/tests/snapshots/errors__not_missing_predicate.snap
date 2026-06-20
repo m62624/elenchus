@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"NOT lonely\\n\")"
+---
+RESULT: 1 syntax error
+
+[1/1] line 1, col 5
+   | NOT lonely
+   |     ^^^^^^
+   problem : NOT expects an atom: <Subject> <predicate> [<object>]
+   syntax  : NOT <Subject> <predicate> [<object>]
+   example : NOT socrates is immortal

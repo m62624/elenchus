@@ -22,6 +22,10 @@ pub const CHECK_ARG_PROGRAM: &str =
 /// `elenchus_check` — description of the optional `format` argument.
 pub const CHECK_ARG_FORMAT: &str = "Output format. Default \"json\".";
 
+/// `elenchus_check` — description of the optional `max_errors` argument.
+pub const CHECK_ARG_MAX_ERRORS: &str = "On a syntax error, show at most this many error blocks \
+(0 or omitted = all). Only affects parse-error output; the verdict output is unaffected.";
+
 /// `elenchus_version` tool description — the MCP analog of `elenchus --version`.
 pub const VERSION_TOOL: &str = "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \
 Call this once up front and compare it to the version your skill targets; if they differ, \

@@ -108,6 +108,30 @@ fn parse_error_is_a_tool_error() {
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\n"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], true);
+    // The full diagnostic block (not a one-liner) arrives in the text field.
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("FACT expects an atom"), "got: {text}");
+}
+
+#[test]
+fn multi_error_block_stays_valid_json_and_respects_max_errors() {
+    // Three syntax errors. The whole multi-line block — newlines, quotes, `|`,
+    // `^` carets — must arrive as ONE JSON string. `roundtrip` parses each reply
+    // with serde_json, so if the wire were broken it would already have panicked;
+    // reaching the asserts proves the JSON stayed valid.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\nNOT also_lonely\nFACT a b c d\n","max_errors":2}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("RESULT: 3 syntax errors"), "got: {text}");
+    assert!(text.contains('^'), "block should carry a caret: {text}");
+    assert!(
+        text.contains("(showing 2 of 3"),
+        "max_errors should cap: {text}"
+    );
+    // Exactly two blocks rendered (the cap), each with its `problem :` line.
+    assert_eq!(text.matches("problem :").count(), 2, "got: {text}");
 }
 
 #[test]
