@@ -224,6 +224,27 @@ pub struct Compiled {
     /// Imports seen but not yet resolved (only populated by [`compile_source`];
     /// [`compile`] resolves them, leaving this empty).
     pub pending_imports: Vec<String>,
+    /// Advisory: imports that a file makes but never references (no `domain.atom`
+    /// from that file uses the imported domain). Structural, per-file, and inert —
+    /// it never affects the solve. Only populated by [`compile`] (an unresolved
+    /// import in [`compile_source`] cannot be classified). See [`UnusedImport`].
+    pub unused_imports: Vec<UnusedImport>,
+}
+
+/// An advisory record: a file `IMPORT`s a domain it never references. Such an
+/// import is inert — no `domain.atom` in that file mentions it, so removing it
+/// would not change the result. It is almost always a leftover or a forgotten
+/// `domain.` prefix. **Purely informational** — it never changes the verdict.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct UnusedImport {
+    /// The source that declared the unused `IMPORT`.
+    pub file: String,
+    /// The imported domain that is never referenced from `file`.
+    pub domain: String,
+    /// The local alias, if the import used `AS <alias>`.
+    pub alias: Option<String>,
+    /// 1-based line of the `IMPORT` statement in `file`.
+    pub line: u32,
 }
 
 /// Anything that can go wrong while compiling (and resolving imports).
@@ -725,6 +746,7 @@ impl Compiler {
             rules,
             checks: self.checks,
             pending_imports: self.pending_imports,
+            unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
         }
     }
 }
@@ -840,21 +862,34 @@ struct ResolvedFile {
 /// files may reuse a name, and the report qualifies them by source. A name reused
 /// with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
-    let files = resolve_graph(root, resolver)?;
+    let (files, unused_imports) = resolve_graph(root, resolver)?;
     let mut c = Compiler::new();
     for file in &files {
         c.add_resolved(file)?;
     }
-    Ok(c.finalize())
+    let mut compiled = c.finalize();
+    compiled.unused_imports = unused_imports;
+    Ok(compiled)
+}
+
+/// One `IMPORT` edge: the optional local alias, the resolved child path, and the
+/// `IMPORT` line (for the unused-import advisory).
+struct ImportEdge {
+    alias: Option<String>,
+    child_path: String,
+    line: u32,
 }
 
 /// A discovered source during graph resolution: its first-seen path, raw text,
-/// declared domain, and import edges `(local alias?, resolved child path)`.
+/// declared domain, import edges, and the set of domain prefixes its atoms use
+/// (`None` = its own domain; `Some(p)` = a `p.` prefix) — used to flag imports
+/// that the file never references.
 struct DiscoveredFile {
     path: String,
     content: String,
     domain: String,
-    edges: Vec<(Option<String>, String)>,
+    edges: Vec<ImportEdge>,
+    used_prefixes: BTreeSet<Option<String>>,
 }
 
 /// Resolve the whole import graph reachable from `root` into a flat list of
@@ -864,7 +899,10 @@ struct DiscoveredFile {
 /// frames) — no native recursion, so depth is unbounded without risking a stack
 /// overflow. Memoized by content hash (a diamond/repeat is visited once); a hash
 /// re-encountered while still on the active path is a [`CompileError::CircularImport`].
-fn resolve_graph<R: Resolver>(root: &str, resolver: &R) -> Result<Vec<ResolvedFile>, CompileError> {
+fn resolve_graph<R: Resolver>(
+    root: &str,
+    resolver: &R,
+) -> Result<(Vec<ResolvedFile>, Vec<UnusedImport>), CompileError> {
     /// One unit of pending work on the traversal stack.
     enum Step {
         /// Visit a file at this resolved path (load, parse, enqueue its imports).
@@ -901,17 +939,23 @@ fn resolve_graph<R: Resolver>(root: &str, resolver: &R) -> Result<Vec<ResolvedFi
                 })?;
                 let domain = extract_domain(&program, &path)?;
                 let mut edges = Vec::new();
+                let mut used_prefixes = BTreeSet::new();
                 for stmt in &program.statements {
                     if let Statement::Import { path: p, alias } = stmt {
-                        let child = resolver.resolve(&path, p.data);
-                        edges.push((alias.as_ref().map(|a| a.data.to_string()), child));
+                        edges.push(ImportEdge {
+                            alias: alias.as_ref().map(|a| a.data.to_string()),
+                            child_path: resolver.resolve(&path, p.data),
+                            line: p.span.location_line(),
+                        });
+                    } else {
+                        collect_prefixes(stmt, &mut used_prefixes);
                     }
                 }
                 drop(program); // release the borrow on `content` before moving it
                 active.insert(hash.clone());
                 work.push(Step::Exit(hash.clone()));
-                for (_, child) in edges.iter().rev() {
-                    work.push(Step::Enter(child.clone()));
+                for e in edges.iter().rev() {
+                    work.push(Step::Enter(e.child_path.clone()));
                 }
                 discovered.insert(
                     hash,
@@ -920,6 +964,7 @@ fn resolve_graph<R: Resolver>(root: &str, resolver: &R) -> Result<Vec<ResolvedFi
                         content,
                         domain,
                         edges,
+                        used_prefixes,
                     },
                 );
             }
@@ -927,33 +972,104 @@ fn resolve_graph<R: Resolver>(root: &str, resolver: &R) -> Result<Vec<ResolvedFi
     }
 
     // Build each file's domain context now that every domain is known.
+    // Look up every file's domain (small strings) so we can then *move* each
+    // file's (potentially large) content out of `discovered` instead of cloning.
+    let domain_of: BTreeMap<&str, &str> = discovered
+        .iter()
+        .map(|(h, f)| (h.as_str(), f.domain.as_str()))
+        .collect();
+
     let mut out = Vec::with_capacity(order.len());
+    let mut unused: Vec<UnusedImport> = Vec::new();
     for hash in &order {
         let file = &discovered[hash];
         let mut aliases = BTreeMap::new();
         aliases.insert(file.domain.clone(), file.domain.clone());
-        for (alias, child_path) in &file.edges {
-            let child_domain = &discovered[&path_hash[child_path]].domain;
-            let bind = alias.clone().unwrap_or_else(|| child_domain.clone());
+        for edge in &file.edges {
+            let child_domain = domain_of[path_hash[&edge.child_path].as_str()];
+            let bind = edge
+                .alias
+                .clone()
+                .unwrap_or_else(|| child_domain.to_string());
             match aliases.get(&bind) {
                 Some(existing) if existing != child_domain => {
                     return Err(CompileError::DomainAliasClash { alias: bind });
                 }
                 _ => {
-                    aliases.insert(bind, child_domain.clone());
+                    aliases.insert(bind, child_domain.to_string());
                 }
             }
         }
-        out.push(ResolvedFile {
-            path: file.path.clone(),
-            content: file.content.clone(),
-            ctx: DomainCtx {
-                current: file.domain.clone(),
-                aliases,
-            },
-        });
+
+        // The domains this file actually references (each used prefix resolved
+        // against its own domain / imports). An imported domain absent from this
+        // set is an unused import.
+        let referenced: BTreeSet<&str> = file
+            .used_prefixes
+            .iter()
+            .filter_map(|p| match p {
+                None => Some(file.domain.as_str()),
+                Some(name) => aliases.get(name).map(|d| d.as_str()),
+            })
+            .collect();
+        for edge in &file.edges {
+            let child_domain = domain_of[path_hash[&edge.child_path].as_str()];
+            if !referenced.contains(child_domain) {
+                unused.push(UnusedImport {
+                    file: file.path.clone(),
+                    domain: child_domain.to_string(),
+                    alias: edge.alias.clone(),
+                    line: edge.line,
+                });
+            }
+        }
+
+        let ctx = DomainCtx {
+            current: file.domain.clone(),
+            aliases,
+        };
+        out.push((hash.clone(), ctx));
     }
-    Ok(out)
+    unused.sort();
+
+    // Now move content/path out of `discovered` (no large clones) and pair with
+    // the contexts built above.
+    let files = out
+        .into_iter()
+        .map(|(hash, ctx)| {
+            let file = discovered.remove(&hash).expect("hash was discovered");
+            ResolvedFile {
+                path: file.path,
+                content: file.content,
+                ctx,
+            }
+        })
+        .collect();
+    Ok((files, unused))
+}
+
+/// Collect the domain prefixes used by a statement's atoms into `out` (`None` for
+/// a bare atom, `Some(p)` for a `p.`-qualified one) — feeds the unused-import lint.
+fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
+    let mut add = |a: &Atom| {
+        out.insert(a.domain.map(|d| d.to_string()));
+    };
+    match stmt {
+        Statement::Fact(a) | Statement::Negation(a) => add(&a.data),
+        Statement::Assume(l) => add(&l.data.atom),
+        Statement::Premise { body, .. } | Statement::Rule { body, .. } => match body {
+            Body::List { atoms, .. } => atoms.iter().for_each(|a| add(&a.data)),
+            Body::Impl {
+                antecedent,
+                consequent,
+                ..
+            } => antecedent
+                .iter()
+                .chain(consequent)
+                .for_each(|l| add(&l.data.atom)),
+        },
+        Statement::Domain(_) | Statement::Import { .. } | Statement::Check { .. } => {}
+    }
 }
 
 /// The single `DOMAIN` a source declares, or an error if it has none or several.
@@ -1666,6 +1782,61 @@ mod tests {
         r.add("main.vrf", "DOMAIN main\nIMPORT \"ghost.vrf\"\n");
         let err = compile("main.vrf", &r).unwrap_err();
         assert!(matches!(err, CompileError::ImportNotFound(_)));
+    }
+
+    #[test]
+    fn unused_import_is_flagged() {
+        // main imports physics but never writes a `physics.` atom → unused.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT x a\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.unused_imports.len(), 1);
+        assert_eq!(c.unused_imports[0].domain, "physics");
+        assert_eq!(c.unused_imports[0].file, "main.vrf");
+        assert_eq!(c.unused_imports[0].alias, None);
+    }
+
+    #[test]
+    fn referenced_import_is_not_unused() {
+        // The same import, but now a `physics.` atom uses it → not flagged.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT physics.Motor over_200\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
+    }
+
+    #[test]
+    fn unused_import_records_its_alias() {
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\" AS phys\nFACT x a\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.unused_imports.len(), 1);
+        assert_eq!(c.unused_imports[0].alias.as_deref(), Some("phys"));
+    }
+
+    #[test]
+    fn import_referenced_only_inside_a_premise_is_used() {
+        // The reference can be anywhere — here inside a premise body, not a fact.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nPREMISE p:\n    WHEN physics.Motor over_100\n    THEN x ok\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
     }
 
     #[test]

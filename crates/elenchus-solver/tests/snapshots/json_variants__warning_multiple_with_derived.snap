@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":"need_two","kind":"PREMISE","source":"v.vrf","line":4,"blocked_by":["d.s checked"]},{"premise":"need_two","kind":"PREMISE","source":"v.vrf","line":4,"blocked_by":["d.s signed"]}],"derived":[{"premise":"mark","kind":"RULE","source":"v.vrf","line":8,"atom":"d.s seen","value":true}],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[]}
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":"need_two","kind":"PREMISE","source":"v.vrf","line":4,"blocked_by":["d.s checked"]},{"premise":"need_two","kind":"PREMISE","source":"v.vrf","line":4,"blocked_by":["d.s signed"]}],"derived":[{"premise":"mark","kind":"RULE","source":"v.vrf","line":8,"atom":"d.s seen","value":true}],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[]}

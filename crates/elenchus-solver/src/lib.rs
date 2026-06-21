@@ -54,7 +54,9 @@ use core::fmt;
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
 pub use elenchus_compiler::Diagnostics;
 use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, Lit, Origin, Value};
-pub use elenchus_compiler::{CompileError, MemoryResolver, Resolver, compile, compile_source};
+pub use elenchus_compiler::{
+    CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
+};
 
 /// Three-valued truth (Kleene). UNKNOWN is a first-class value, not hidden FALSE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +190,11 @@ pub struct Report {
     /// derive anything — it has no effect on the verdict. Never affects
     /// [`Report::status`] or [`Report::exit_code`] — purely informational.
     pub orphans: Vec<OrphanFact>,
+    /// Advisory "unused import" lints: a file `IMPORT`s a domain it never
+    /// references (no `domain.atom` from that file uses it), so the import is
+    /// inert. Never affects [`Report::status`] or [`Report::exit_code`] — purely
+    /// informational. (Carried through from compilation; see [`UnusedImport`].)
+    pub unused_imports: Vec<UnusedImport>,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two
@@ -335,6 +342,23 @@ impl Report {
             s.push_str(",\"atom\":");
             json_str(&o.atom, &mut s);
             let _ = write!(s, ",\"value\":{}", matches!(o.value, Value::True));
+            s.push('}');
+        }
+        s.push_str("],\"unused_imports\":[");
+        for (i, u) in self.unused_imports.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str("{\"file\":");
+            json_str(&u.file, &mut s);
+            s.push_str(",\"domain\":");
+            json_str(&u.domain, &mut s);
+            s.push_str(",\"alias\":");
+            match &u.alias {
+                Some(a) => json_str(a, &mut s),
+                None => s.push_str("null"),
+            }
+            let _ = write!(s, ",\"line\":{}", u.line);
             s.push('}');
         }
         s.push_str("]}");
@@ -784,6 +808,7 @@ impl<'a> Eval<'a> {
             retract: Vec::new(), // filled by `solve` when assumptions are to blame
             hints: Vec::new(),   // filled by `solve` (advisory, post-verdict)
             orphans: Vec::new(), // filled by `solve` (advisory, post-verdict)
+            unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
         }
     }
 }
@@ -814,6 +839,9 @@ pub fn solve(c: &Compiled) -> Report {
     // Advisory only: surface logically-inert assertions (orphan facts). Also
     // post-verdict, so it can never influence status/exit code.
     report.orphans = orphan_facts(c);
+    // Advisory only: imports a file never references (computed at compile time,
+    // carried through the IR). Never influences status/exit code.
+    report.unused_imports = c.unused_imports.clone();
     report
 }
 
@@ -1494,6 +1522,20 @@ impl fmt::Display for Report {
                 surface
             )?;
         }
+        for u in &self.unused_imports {
+            let via = match &u.alias {
+                Some(a) => alloc::format!("{} AS {}", u.domain, a),
+                None => u.domain.clone(),
+            };
+            emit!(
+                out,
+                SECTION,
+                "UNUSED IMPORT  {} — imported in {}:{} but never referenced (no effect on the result)",
+                via,
+                u.file,
+                u.line
+            )?;
+        }
 
         let underdetermined = usize::from(self.status == Status::Underdetermined);
         emit!(
@@ -2036,6 +2078,30 @@ mod tests {
         assert!(j.contains("\"orphans\":["), "{j}");
         assert!(j.contains("\"atom\":\"t.x a\""), "{j}");
         assert!(j.contains("\"kind\":\"FACT\""), "{j}");
+    }
+
+    #[test]
+    fn unused_import_is_advisory_only_in_the_report() {
+        // main imports physics but never references it. The advisory shows up but
+        // the verdict stays CONSISTENT (exit 0) — it is purely informational.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT x a\nCHECK\n",
+        );
+        let rep = verify("main.vrf", &r).unwrap();
+        assert_eq!(rep.status, Status::Consistent);
+        assert_eq!(rep.exit_code(), 0);
+        assert_eq!(rep.unused_imports.len(), 1);
+        assert_eq!(rep.unused_imports[0].domain, "physics");
+        let text = alloc::format!("{rep}");
+        assert!(text.contains("UNUSED IMPORT  physics"), "{text}");
+        assert!(
+            rep.to_json().contains("\"unused_imports\":[{"),
+            "{}",
+            rep.to_json()
+        );
     }
 
     #[test]

@@ -234,6 +234,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         rules: Vec::new(),
         checks: Vec::new(),
         pending_imports: Vec::new(),
+        unused_imports: Vec::new(),
     }
 }
 

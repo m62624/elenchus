@@ -367,6 +367,15 @@ typo'd atom name (so the constraint you meant never links up) or a leftover line
 Fix the spelling so it joins the atom you meant, wire it into a premise/rule, or
 delete the line.
 
+**`UNUSED IMPORT`** — advisory: a file `IMPORT`s a domain it never references (no
+`domain.atom` from that file uses it), so the import is inert. **Never changes the
+verdict or exit code** (JSON: `unused_imports`). Usually a leftover import or a
+forgotten `domain.` prefix:
+```
+  UNUSED IMPORT  physics — imported in plan.vrf:2 but never referenced (no effect on the result)
+```
+Reference it (`FACT physics.…`) or drop the `IMPORT` line.
+
 **JSON** (`--format json` / MCP) carries the same data for programmatic reading.
 Always branch on `status`; the rest mirrors the human report:
 ```json
@@ -376,7 +385,7 @@ Always branch on `status`; the rest mirrors the human report:
                   "trace":[ {"atom":"s human","value":true,"how":"asserted","kind":"FACT","from":[]},
                             {"atom":"s mortal","value":false,"how":"asserted","kind":"NOT","from":[]} ] } ],
   "warnings":[], "derived":[], "underdetermined":null, "unsat_core":[],
-  "retract":[], "hints":[], "orphans":[] }
+  "retract":[], "hints":[], "orphans":[], "unused_imports":[] }
 ```
 
 **exit code** = the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED, 2 =

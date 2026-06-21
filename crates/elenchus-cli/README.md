@@ -56,7 +56,7 @@ EXIT_CODE: 1
 JSON (`--format json`) — one line, for tooling and agents:
 
 ```json
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[]}
 ```
 
 ### Syntax errors

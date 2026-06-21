@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":"w","kind":"PREMISE","source":"v.vrf","line":5,"atoms":["d.x a","d.x b"],"trace":[{"atom":"d.x a","value":true,"how":"asserted","premise":null,"kind":"FACT","source":"v.vrf","line":3,"from":[]},{"atom":"d.x b","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":4,"from":[]}]}],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[]}
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":"w","kind":"PREMISE","source":"v.vrf","line":5,"atoms":["d.x a","d.x b"],"trace":[{"atom":"d.x a","value":true,"how":"asserted","premise":null,"kind":"FACT","source":"v.vrf","line":3,"from":[]},{"atom":"d.x b","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":4,"from":[]}]}],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[]}
