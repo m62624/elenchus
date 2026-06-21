@@ -41,8 +41,6 @@ pub const ABOUT_TOOL: &str = "elenchus checks whether a set of facts and first p
 logically consistent (a small three-valued SAT checker). You are calling it over MCP, so \
 you are an AI agent: you'll get markedly better results with the matching `elenchus` skill \
 loaded — it carries the verdict loop (iterate until CONSISTENT), the DSL, and worked \
-examples this server expects. The skill is attached to every release; pull the one matching \
-the engine version (call `elenchus_version`) from \
-https://github.com/m62624/elenchus/releases/download/v<version>/SKILL.md (latest: \
-https://github.com/m62624/elenchus/releases/latest/download/SKILL.md), or ask the user to \
-install it from https://github.com/m62624/elenchus.";
+examples this server expects. The skill is attached to every release; grab the one matching \
+the engine version (call `elenchus_version`) from the releases page, or ask the user to \
+install it: https://github.com/m62624/elenchus/releases";

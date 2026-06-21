@@ -28,10 +28,8 @@ flat no-indent form parse identically.",
     after_help = "FOR AI AGENTS: you'll get markedly better results with the matching \
 `elenchus` skill loaded (it carries the workflow, the verdict loop, and examples this \
 binary expects). Check that you have it and that its version matches `elenchus \
---version`. The skill is attached to every release, so pull the one for your version: \
-https://github.com/m62624/elenchus/releases/download/v<version>/SKILL.md (latest: \
-https://github.com/m62624/elenchus/releases/latest/download/SKILL.md). \
-Project + skill: https://github.com/m62624/elenchus"
+--version`. The skill is attached to every release; grab the one for your version from \
+https://github.com/m62624/elenchus/releases"
 )]
 struct Cli {
     /// A `.vrf` file to check, or `-` to read from stdin.

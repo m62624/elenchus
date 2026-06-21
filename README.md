@@ -356,17 +356,11 @@ AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
 ### Using the skill
 
 The skill is a single self-contained file, [`skill/SKILL.md`](skill/SKILL.md).
-It is **version-matched to the engine** and attached to every release, so pull the
-one that matches your installed binary (`elenchus-cli --version`):
+It is **version-matched to the engine** and attached to every release, so grab the
+one that matches your installed binary (`elenchus-cli --version`) from the
+[Releases page](https://github.com/m62624/elenchus/releases).
 
-```console
-$ V=v0.7.0   # the version you installed
-$ curl -LsSf "https://github.com/m62624/elenchus/releases/download/$V/SKILL.md" -o SKILL.md
-# or always-latest:
-$ curl -LsSf https://github.com/m62624/elenchus/releases/latest/download/SKILL.md -o SKILL.md
-```
-
-(The repo copy tracks `main`; the release asset is pinned to that tag. The release
+(The repo copy tracks `main`; each release asset is pinned to that tag, and the
 pipeline enforces that the file's `skill-version` marker equals the release.)
 **Copy it verbatim (one-to-one) into wherever your agent loads skills from** — the
 location depends on the host, and most LLM harnesses already know how to pick a
