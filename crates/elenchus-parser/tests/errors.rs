@@ -17,7 +17,7 @@ fn diags(src: &str) -> Diagnostics {
 
 /// A failed parse rendered in full (every error) — the default `Display`.
 fn err(src: &str) -> String {
-    diags(src).render(None)
+    diags(src).render(None, None)
 }
 
 // --- per-keyword syntax cards ----------------------------------------------
@@ -149,11 +149,28 @@ fn reports_every_error_in_one_pass() {
     insta::assert_snapshot!(err(BROKEN));
 }
 
-// --- the N-error limit ------------------------------------------------------
+// --- the two caps: classes and places-per-class -----------------------------
+
+/// Four broken lines — three in the FACT class, one in NOT — so the FACT class
+/// has several places (for the per-class cap) and there are two classes (for
+/// the class cap).
+const REPEATED: &str = "\
+FACT one
+FACT two
+FACT three
+NOT four
+";
 
 #[test]
-fn limit_shows_first_n_with_footer() {
-    insta::assert_snapshot!(diags(BROKEN).render(Some(2)));
+fn max_per_class_caps_places_within_a_class() {
+    // All classes shown, but at most two places each (+ "… and N more").
+    insta::assert_snapshot!(diags(REPEATED).render(None, Some(2)));
+}
+
+#[test]
+fn max_classes_caps_the_number_of_classes() {
+    // Only the first class shown, all its places (+ "… and N more classes").
+    insta::assert_snapshot!(diags(REPEATED).render(Some(1), None));
 }
 
 // --- the recovery invariant -------------------------------------------------
@@ -181,7 +198,7 @@ fn extension_plan_reports_many_errors_without_panicking() {
     let d = diags(include_str!("../../../docs/examples/extension-plan.vrf"));
     assert!(d.len() > 100, "expected many errors, got {}", d.len());
     // The rendered report must stay non-empty and well-formed.
-    assert!(d.render(None).starts_with("RESULT: "));
+    assert!(d.render(None, None).starts_with("RESULT: "));
 }
 
 // --- showcase: every keyword and every failure mode in one file ------------

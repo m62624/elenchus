@@ -21,8 +21,8 @@ $ elenchus-cli path/to/program.vrf          # check a file (IMPORTs resolve rela
 $ elenchus-cli --text "FACT x a
 CHECK x"                                      # inline program
 $ cat program.vrf | elenchus-cli -          # stdin
-$ elenchus-cli program.vrf --format json    # machine-readable output
-$ elenchus-cli broken.vrf --max-errors 5    # cap a flood of syntax errors
+$ elenchus-cli program.vrf --format json        # machine-readable output
+$ elenchus-cli broken.vrf --max-per-class 3     # cap places shown per error class
 ```
 
 One input, three ways: a positional `<file>`, inline `--text`, or explicit stdin
@@ -60,30 +60,40 @@ JSON (`--format json`) — one line, for tooling and agents:
 
 ### Syntax errors
 
-A malformed program exits `2` and prints one block per error — the line number,
-the offending line, a caret, the problem, and that keyword's correct syntax with
-a real example. **Every** error is collected in one pass (the parser recovers and
-keeps going); `--max-errors N` shows the first `N` with a `(showing N of TOTAL)`
-footer so a large broken file does not flood the output.
+A malformed program exits `2` and prints the errors **grouped by class** (one
+class per keyword): the correct syntax and a real example are shown *once per
+class*, with every offending place listed beneath — line, caret, and the specific
+problem. **Every** error is collected in one pass (the parser recovers and keeps
+going).
 
 ```text
 $ elenchus-cli broken.vrf
 RESULT: 2 syntax errors in broken.vrf
 
-[1/2] line 1, col 6
-   | FACT lonely
-   |      ^^^^^^
-   problem : FACT expects an atom: <Subject> <predicate> [<object>]
-   syntax  : FACT <Subject> <predicate> [<object>]
-   example : FACT socrates is human
+FACT  (1 problem)
+  syntax  : FACT <Subject> <predicate> [<object>]
+  example : FACT socrates is human
+    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
+      | FACT lonely
+      |      ^^^^^^
 
-[2/2] line 4, col 9
-   |     THEN
-   |         ^
-   problem : THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
-   syntax  : THEN <literal>
-   example : THEN motor uses fast_path
+THEN  (1 problem)
+  syntax  : THEN <literal>
+  example : THEN motor uses fast_path
+    line 5, col 9 - THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
+      |     THEN
+      |         ^
 ```
+
+Two independent caps control the volume (both default to "all"):
+
+| Flag | Caps | Footer when it hides something |
+|------|------|--------------------------------|
+| `--max-classes N` | number of classes shown | `… and N more classes` |
+| `--max-per-class N` | places shown within each class | `… and N more <keyword> problems` |
+
+By default (neither flag) you get **everything**. Set just one to cap that
+dimension and leave the other full; set both for full control.
 
 ## License
 

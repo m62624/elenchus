@@ -26,10 +26,15 @@ fn check_def() -> Value {
                     "enum": ["human", "json"],
                     "description": messages::CHECK_ARG_FORMAT
                 },
-                "max_errors": {
+                "max_classes": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": messages::CHECK_ARG_MAX_ERRORS
+                    "description": messages::CHECK_ARG_MAX_CLASSES
+                },
+                "max_per_class": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": messages::CHECK_ARG_MAX_PER_CLASS
                 }
             },
             "required": ["program"]
@@ -87,10 +92,13 @@ fn check(id: Value, args: Option<&Value>) -> Value {
         .and_then(|a| a.get("format"))
         .and_then(Value::as_str)
         .unwrap_or("json");
-    let max_errors = args
-        .and_then(|a| a.get("max_errors"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let arg_limit = |name: &str| {
+        let n = args
+            .and_then(|a| a.get(name))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        (n > 0).then_some(n)
+    };
 
     match verify_source("<mcp>", program) {
         Ok(report) => {
@@ -101,12 +109,12 @@ fn check(id: Value, args: Option<&Value>) -> Value {
             };
             rpc::tool_result(id, text, false)
         }
-        // Syntax errors get the full diagnostic blocks (capped by `max_errors`).
-        // `rpc::tool_result` carries the whole multi-line block as one JSON
-        // string, which serde_json escapes — the wire stays valid JSON.
+        // Syntax errors get the grouped diagnostic blocks (capped by the two
+        // limits). `rpc::tool_result` carries the whole multi-line block as one
+        // JSON string, which serde_json escapes — the wire stays valid JSON.
         Err(CompileError::Parse(diag)) => {
-            let limit = (max_errors > 0).then_some(max_errors);
-            rpc::tool_result(id, diag.render(limit), true)
+            let text = diag.render(arg_limit("max_classes"), arg_limit("max_per_class"));
+            rpc::tool_result(id, text, true)
         }
         Err(other) => rpc::tool_result(id, other.to_string(), true),
     }

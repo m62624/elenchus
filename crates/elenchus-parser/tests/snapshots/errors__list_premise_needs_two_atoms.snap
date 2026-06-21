@@ -4,7 +4,7 @@ expression: "err(r#\"\n        PREMISE modes:\n            EXCLUSIVE\n          
 ---
 RESULT: 1 syntax error
 
-[1/1] line 5, col 1
-   |         CHECK Sys
-   | ^^^^^^^^^^^^^^^^^
-   problem : a list premise needs at least two atoms
+other  (1 problem)
+    line 5, col 1 - a list premise needs at least two atoms
+      |         CHECK Sys
+      | ^^^^^^^^^^^^^^^^^

@@ -4,9 +4,9 @@ expression: "err(r#\"\n        RULE r:\n            EXCLUSIVE\n                x
 ---
 RESULT: 1 syntax error
 
-[1/1] line 3, col 1
-   |             EXCLUSIVE
-   | ^^^^^^^^^^^^^^^^^^^^^
-   problem : a rule body must be WHEN ... THEN
-   syntax  : WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])
-   example : WHEN motor over_100
+WHEN  (1 problem)
+  syntax  : WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])
+  example : WHEN motor over_100
+    line 3, col 1 - a rule body must be WHEN ... THEN
+      |             EXCLUSIVE
+      | ^^^^^^^^^^^^^^^^^^^^^

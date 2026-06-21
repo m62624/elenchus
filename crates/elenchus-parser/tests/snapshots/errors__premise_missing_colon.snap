@@ -4,7 +4,7 @@ expression: "err(r#\"\n        PREMISE modes\n            EXCLUSIVE\n           
 ---
 RESULT: 1 syntax error
 
-[1/1] line 2, col 22
-   |         PREMISE modes
-   |                      ^
-   problem : expected ':' after the premise name
+other  (1 problem)
+    line 2, col 22 - expected ':' after the premise name
+      |         PREMISE modes
+      |                      ^

@@ -4,9 +4,9 @@ expression: "err(r#\"\n        PREMISE wings_need_bone:\n            WHEN Creatu
 ---
 RESULT: 1 syntax error
 
-[1/1] line 4, col 9
-   |         CHECK Creature.A
-   |         ^^^^^^^^^^^^^^^^
-   problem : expected THEN to complete the WHEN ... THEN implication
-   syntax  : THEN <literal>
-   example : THEN motor uses fast_path
+THEN  (1 problem)
+  syntax  : THEN <literal>
+  example : THEN motor uses fast_path
+    line 4, col 9 - expected THEN to complete the WHEN ... THEN implication
+      |         CHECK Creature.A
+      |         ^^^^^^^^^^^^^^^^

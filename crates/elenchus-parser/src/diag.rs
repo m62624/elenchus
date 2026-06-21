@@ -2,21 +2,23 @@
 //! parse.
 //!
 //! [`parse`](crate::parse) collects every error in one pass into [`Diagnostics`]
-//! (it recovers after each broken statement). Rendering is ASCII-only and
-//! deterministic so a dumb terminal shows it correctly and snapshots stay
-//! stable. Each [`Diagnostic`] becomes a block: the line number, the original
-//! line, a caret under the problem, the message, and — via
-//! [`syntax_for`](crate::syntax::syntax_for) — the keyword's correct syntax and
-//! a real example.
+//! (it recovers after each broken statement). Rendering **groups errors by
+//! class** — the keyword they are about — so the correct syntax and a real
+//! example are shown *once per class*, with every offending place listed beneath
+//! it (line, caret, the specific problem). Two independent caps control the
+//! volume: how many classes, and how many places per class. Output is ASCII-only
+//! and deterministic so a dumb terminal shows it correctly and snapshots stay
+//! stable.
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::{self, Write as _};
 
 use crate::syntax::{TOP_LEVEL_FORMS, syntax_for};
 
 /// One syntax error, fully owned (no borrow of the source) so it can flow into
-/// `CompileError` and be rendered later with any error limit.
+/// `CompileError` and be rendered later with any limit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     /// 1-based source line of the failure.
@@ -28,10 +30,10 @@ pub struct Diagnostic {
     /// The specific parser message ("FACT expects an atom: …").
     pub(crate) message: String,
     /// The keyword this error is about, if one is named in the message — selects
-    /// the syntax card.
+    /// the class and its syntax card.
     pub(crate) keyword: Option<&'static str>,
-    /// `true` for a line that started no statement keyword at all: show the menu
-    /// of valid top-level statements rather than a single card.
+    /// `true` for a line that started no statement keyword at all: its class is
+    /// the statement menu rather than a single card.
     pub(crate) general: bool,
     /// The verbatim offending source line (without its line ending).
     pub(crate) line_text: String,
@@ -45,6 +47,38 @@ pub struct Diagnostics {
     pub(crate) file: Option<String>,
     /// The errors, in source order.
     pub(crate) errors: Vec<Diagnostic>,
+}
+
+/// The class an error is grouped under: a specific keyword, the "not a
+/// statement" menu, or self-explanatory leftovers with no card.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// A keyword named in the message — shows that keyword's syntax card.
+    Keyword(&'static str),
+    /// A line that started no top-level keyword — shows the statement menu.
+    Statement,
+    /// A self-explanatory error with no card (e.g. "needs at least two atoms").
+    Other,
+}
+
+impl Class {
+    /// The class an error belongs to.
+    fn of(d: &Diagnostic) -> Class {
+        match (d.keyword, d.general) {
+            (Some(kw), _) => Class::Keyword(kw),
+            (None, true) => Class::Statement,
+            (None, false) => Class::Other,
+        }
+    }
+
+    /// The class label shown in the header and the "… and N more" footer.
+    fn name(self) -> &'static str {
+        match self {
+            Class::Keyword(kw) => kw,
+            Class::Statement => "statement",
+            Class::Other => "other",
+        }
+    }
 }
 
 impl Diagnostics {
@@ -65,17 +99,18 @@ impl Diagnostics {
         self.file = Some(String::from(file));
     }
 
-    /// Render every error, or the first `limit` of them.
+    /// Render the errors grouped by class.
     ///
-    /// `None` (or `Some(0)`, or a limit ≥ the count) shows all; a smaller limit
-    /// shows the first N blocks and a `(showing N of TOTAL)` footer so the input
-    /// is not flooded.
-    pub fn render(&self, limit: Option<usize>) -> String {
+    /// `max_classes` caps how many classes are shown; `max_per_class` caps how
+    /// many places are listed within each class. `None` (or `Some(0)`, or a cap
+    /// ≥ the count) means "all". A cap that hides some places adds a
+    /// `… and N more <class> problems` line; a cap that hides some classes adds
+    /// a `… and N more classes` footer.
+    pub fn render(&self, max_classes: Option<usize>, max_per_class: Option<usize>) -> String {
+        let groups = self.group();
         let total = self.errors.len();
-        let shown = match limit {
-            Some(n) if n > 0 && n < total => n,
-            _ => total,
-        };
+        let total_classes = groups.len();
+        let shown_classes = cap(max_classes, total_classes);
 
         let noun = if total == 1 { "error" } else { "errors" };
         let mut out = String::new();
@@ -88,74 +123,119 @@ impl Diagnostics {
             }
         }
 
-        for (i, d) in self.errors.iter().take(shown).enumerate() {
+        for (class, items) in groups.iter().take(shown_classes) {
             out.push_str("\n\n");
-            render_block(&mut out, i + 1, total, d);
+            render_class(&mut out, *class, items, max_per_class);
         }
 
-        if shown < total {
+        if shown_classes < total_classes {
+            let rest = total_classes - shown_classes;
+            let plural = if rest == 1 { "class" } else { "classes" };
             let _ = write!(
                 out,
-                "\n\n(showing {shown} of {total} — pass --max-errors 0 for all)"
+                "\n\n... and {rest} more {plural} — pass --max-classes 0 for all"
             );
         }
         out
+    }
+
+    /// Group errors by [`Class`], preserving first-appearance order (so output
+    /// is deterministic and follows the source top to bottom).
+    fn group(&self) -> Vec<(Class, Vec<&Diagnostic>)> {
+        let mut groups: Vec<(Class, Vec<&Diagnostic>)> = Vec::new();
+        for d in &self.errors {
+            let class = Class::of(d);
+            match groups.iter_mut().find(|(c, _)| *c == class) {
+                Some((_, items)) => items.push(d),
+                None => groups.push((class, vec![d])),
+            }
+        }
+        groups
     }
 }
 
 impl fmt::Display for Diagnostics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.render(None))
+        f.write_str(&self.render(None, None))
     }
 }
 
-/// The `   | ` gutter that prefixes the source line and the caret line.
-const GUTTER: &str = "   | ";
-/// Indentation under a `label : value` line, so continuation lines of a
-/// multi-line value align with the value (3 + 7 + 3 = 13 columns).
-const VALUE_INDENT: &str = "             ";
+/// Resolve an optional cap against a total: `None`/`Some(0)`/`≥ total` ⇒ all.
+fn cap(limit: Option<usize>, total: usize) -> usize {
+    match limit {
+        Some(n) if n > 0 && n < total => n,
+        _ => total,
+    }
+}
 
-/// Append one error block (no trailing newline) to `out`.
-fn render_block(out: &mut String, idx: usize, total: usize, d: &Diagnostic) {
-    let _ = writeln!(out, "[{idx}/{total}] line {}, col {}", d.line, d.col);
-    let _ = writeln!(out, "{GUTTER}{}", d.line_text);
+/// The `      | ` gutter that prefixes a place's source line and caret line.
+const PLACE_GUTTER: &str = "      | ";
 
-    let pad = " ".repeat(d.col.saturating_sub(1));
-    let carets = "^".repeat(d.width.max(1));
-    let _ = writeln!(out, "{GUTTER}{pad}{carets}");
+/// Append one class block (no trailing newline) to `out`.
+fn render_class(
+    out: &mut String,
+    class: Class,
+    items: &[&Diagnostic],
+    max_per_class: Option<usize>,
+) {
+    let name = class.name();
+    let n = items.len();
+    let problems = if n == 1 { "problem" } else { "problems" };
+    let _ = writeln!(out, "{name}  ({n} {problems})");
 
-    label(out, "problem", &d.message);
-    match d.keyword.and_then(syntax_for) {
-        // A keyword is named in the message → show its card.
-        Some(card) => {
-            label(out, "syntax", card.form());
-            label(out, "example", card.example());
-        }
-        // A line that starts no keyword at all → show the menu of statements.
-        None if d.general => {
-            out.push_str("   expected one of these statements:");
-            for kw in TOP_LEVEL_FORMS {
-                if let Some(c) = syntax_for(kw) {
-                    let _ = write!(out, "\n       {}", c.form());
-                }
+    // The correct-syntax reference, shown once for the whole class.
+    match class {
+        Class::Keyword(kw) => {
+            if let Some(card) = syntax_for(kw) {
+                label(out, "syntax", card.form());
+                label(out, "example", card.example());
             }
         }
-        // Otherwise the message is self-explanatory; no card to add.
-        None => {}
+        Class::Statement => {
+            out.push_str("  expected one of these statements:");
+            for kw in TOP_LEVEL_FORMS {
+                if let Some(card) = syntax_for(kw) {
+                    let _ = write!(out, "\n      {}", card.form());
+                }
+            }
+            out.push('\n');
+        }
+        // Self-explanatory: each place carries its own message, no shared card.
+        Class::Other => {}
     }
-    // Strip the trailing newline left by the last `writeln!` so blocks join
-    // with a single blank line.
+
+    let shown = cap(max_per_class, n);
+    for d in items.iter().take(shown) {
+        render_place(out, d);
+    }
+    if shown < n {
+        let rest = n - shown;
+        let p = if rest == 1 { "problem" } else { "problems" };
+        let _ = writeln!(out, "    ... and {rest} more {name} {p}");
+    }
+
+    // Strip the trailing newline so classes join with a single blank line.
     if out.ends_with('\n') {
         out.pop();
     }
 }
 
-/// Write a `   label   : value` line; continuation lines of a multi-line value
-/// are indented to align under the value.
+/// Append one place: its location + message, the source line, and the caret.
+fn render_place(out: &mut String, d: &Diagnostic) {
+    let _ = writeln!(out, "    line {}, col {} - {}", d.line, d.col, d.message);
+    let _ = writeln!(out, "{PLACE_GUTTER}{}", d.line_text);
+    let pad = " ".repeat(d.col.saturating_sub(1));
+    let carets = "^".repeat(d.width.max(1));
+    let _ = writeln!(out, "{PLACE_GUTTER}{pad}{carets}");
+}
+
+/// Write a `  label   : value` line under a class header; continuation lines of
+/// a multi-line value align under the value (2 + 7 + 3 = 12 columns).
 fn label(out: &mut String, name: &str, value: &str) {
+    const VALUE_INDENT: &str = "            ";
     let mut lines = value.split('\n');
     let first = lines.next().unwrap_or("");
-    let _ = writeln!(out, "   {name:<7} : {first}");
+    let _ = writeln!(out, "  {name:<7} : {first}");
     for line in lines {
         let _ = writeln!(out, "{VALUE_INDENT}{line}");
     }

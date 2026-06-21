@@ -165,45 +165,53 @@ fn parse_error_exits_2_with_message() {
 }
 
 #[test]
-fn max_errors_caps_the_block_count() {
-    // Three broken lines; --max-errors 1 shows one block and summarises the rest.
+fn max_per_class_caps_places_within_a_class() {
+    // Three FACT problems + one NOT; --max-per-class 1 shows one place per class.
     let out = elenchus(&[
         "--text",
-        "FACT lonely\nNOT lonely2\nFACT also bad words here\n",
-        "--max-errors",
+        "FACT one\nFACT two\nFACT three\nNOT four\n",
+        "--max-per-class",
         "1",
     ]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("RESULT: 3 syntax errors"),
+        stderr.contains("RESULT: 4 syntax errors"),
         "stderr = {stderr}"
     );
-    assert!(stderr.contains("(showing 1 of 3"), "stderr = {stderr}");
+    assert!(
+        stderr.contains("... and 2 more FACT problems"),
+        "stderr = {stderr}"
+    );
 }
 
 #[test]
-fn all_syntax_errors_shown_by_default() {
-    // No --max-errors → every block is rendered, no footer.
+fn max_classes_caps_the_number_of_classes() {
+    // Two classes (FACT, NOT); --max-classes 1 shows only the first + a footer.
     let out = elenchus(&[
         "--text",
-        "FACT lonely\nNOT lonely2\nFACT also bad words here\n",
+        "FACT one\nFACT two\nNOT three\n",
+        "--max-classes",
+        "1",
     ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("... and 1 more class"), "stderr = {stderr}");
+}
+
+#[test]
+fn all_syntax_errors_grouped_by_class_by_default() {
+    // No caps → every class and place is rendered, no "more" footers.
+    let out = elenchus(&["--text", "FACT one\nFACT two\nNOT three\n"]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("RESULT: 3 syntax errors"),
         "stderr = {stderr}"
     );
-    assert_eq!(
-        stderr.matches("problem :").count(),
-        3,
-        "all three blocks shown: {stderr}"
-    );
-    assert!(
-        !stderr.contains("showing"),
-        "no footer when all shown: {stderr}"
-    );
+    assert!(stderr.contains("FACT  (2 problems)"), "stderr = {stderr}");
+    assert!(stderr.contains("NOT  (1 problem)"), "stderr = {stderr}");
+    assert!(!stderr.contains("more"), "no caps → no footers: {stderr}");
 }
 
 #[test]

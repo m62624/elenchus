@@ -4,9 +4,9 @@ expression: "err(\"IMPORT \\\"physics.vrf\\n\")"
 ---
 RESULT: 1 syntax error
 
-[1/1] line 1, col 8
-   | IMPORT "physics.vrf
-   |        ^^^^^^^^^^^^
-   problem : IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
-   syntax  : IMPORT "<path>"
-   example : IMPORT "physics.vrf"
+IMPORT  (1 problem)
+  syntax  : IMPORT "<path>"
+  example : IMPORT "physics.vrf"
+    line 1, col 8 - IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
+      | IMPORT "physics.vrf
+      |        ^^^^^^^^^^^^

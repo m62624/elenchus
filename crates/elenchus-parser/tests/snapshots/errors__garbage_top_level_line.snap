@@ -4,15 +4,15 @@ expression: "err(r#\"\n        FACT a b\n        %%% not a statement\n        FA
 ---
 RESULT: 1 syntax error
 
-[1/1] line 3, col 9
-   |         %%% not a statement
-   |         ^^^^^^^^^^^^^^^^^^^
-   problem : expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
-   expected one of these statements:
-       FACT <Subject> <predicate> [<object>]
-       NOT <Subject> <predicate> [<object>]
-       ASSUME [NOT] <Subject> <predicate> [<object>]
-       PREMISE <name>:  then a list body or a WHEN ... THEN implication
-       RULE <name>:  then a WHEN ... THEN implication
-       CHECK [<subject>] [BIDIRECTIONAL]
-       IMPORT "<path>"
+statement  (1 problem)
+  expected one of these statements:
+      FACT <Subject> <predicate> [<object>]
+      NOT <Subject> <predicate> [<object>]
+      ASSUME [NOT] <Subject> <predicate> [<object>]
+      PREMISE <name>:  then a list body or a WHEN ... THEN implication
+      RULE <name>:  then a WHEN ... THEN implication
+      CHECK [<subject>] [BIDIRECTIONAL]
+      IMPORT "<path>"
+    line 3, col 9 - expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+      |         %%% not a statement
+      |         ^^^^^^^^^^^^^^^^^^^

@@ -79,7 +79,7 @@ fn parse_error_in_imported_file_names_that_file() {
     let e = compile(&fixture("broken/main.vrf"), &FileResolver).unwrap_err();
     match e {
         CompileError::Parse(diag) => {
-            let shown = diag.render(None);
+            let shown = diag.render(None, None);
             assert!(shown.contains("bad.vrf"), "shown = {shown}");
         }
         other => panic!("expected a Parse error naming the imported file, got {other:?}"),

@@ -35,17 +35,20 @@ works identically whether the agent calls `elenchus-cli` via the CLI or via the 
 |----------|------|--|
 | `program` | string (required) | the `.vrf` program: `FACT`/`NOT`/`ASSUME`, `PREMISE`/`RULE`, `CHECK` |
 | `format` | `"human"` \| `"json"` (optional) | output format, default `"json"` |
-| `max_errors` | integer (optional) | on a syntax error, show at most this many error blocks (`0` or omitted = all) |
+| `max_classes` | integer (optional) | on a syntax error, show at most this many error classes — one per keyword (`0` or omitted = all) |
+| `max_per_class` | integer (optional) | on a syntax error, show at most this many places within each class (`0` or omitted = all) |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.
 Treat anything other than CONSISTENT as *not done*: add the missing facts or
 rethink the premises, then call again — iterate until CONSISTENT.
 
 A **syntax error** comes back as a tool error (`isError: true`): the `text`
-field carries the full diagnostic — one block per error (line, caret, the
-problem, and the keyword's correct syntax). Every error is reported in one pass;
-pass `max_errors` to cap how many blocks are shown. The whole multi-line block
-is a single JSON string, so the wire stays valid JSON.
+field carries the full diagnostic, **grouped by class** (one per keyword) — the
+correct syntax and an example shown once per class, with every offending place
+listed beneath. Every error is reported in one pass. By default you get all of
+them; `max_classes` and `max_per_class` independently cap the two dimensions
+(both default to all). The whole multi-line block is a single JSON string, so the
+wire stays valid JSON.
 
 ## Run
 

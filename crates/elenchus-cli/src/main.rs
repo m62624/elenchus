@@ -43,11 +43,17 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
 
-    /// On a syntax error, show at most this many error blocks (0 = all). The
-    /// rest are summarised as a `(showing N of TOTAL)` footer so a large broken
-    /// file does not flood the output.
+    /// On a syntax error, show at most this many error *classes* (one class per
+    /// keyword). 0 = all. The rest are summarised as a `… and N more classes`
+    /// footer.
     #[arg(long, default_value_t = 0)]
-    max_errors: usize,
+    max_classes: usize,
+
+    /// On a syntax error, show at most this many *places* within each class.
+    /// 0 = all. The rest are summarised as a `… and N more <keyword> problems`
+    /// line, so a class with hundreds of hits does not flood the output.
+    #[arg(long, default_value_t = 0)]
+    max_per_class: usize,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -71,7 +77,7 @@ fn main() -> ExitCode {
     let report = match build_report(&cli) {
         Ok(r) => r,
         Err(e) => {
-            print_error(&e, cli.max_errors);
+            print_error(&e, cli.max_classes, cli.max_per_class);
             return ExitCode::from(2);
         }
     };
@@ -89,13 +95,15 @@ enum CliError {
     Other(String),
 }
 
-/// Print a pre-verdict error to stderr. Syntax errors get the full diagnostic
-/// blocks (capped by `--max-errors`); everything else stays a one-liner.
-fn print_error(e: &CliError, max_errors: usize) {
+/// Print a pre-verdict error to stderr. Syntax errors get the grouped
+/// diagnostic blocks (capped by `--max-classes` / `--max-per-class`); everything
+/// else stays a one-liner.
+fn print_error(e: &CliError, max_classes: usize, max_per_class: usize) {
     match e {
         CliError::Compile(CompileError::Parse(diag)) => {
-            let limit = (max_errors > 0).then_some(max_errors);
-            eprintln!("{}", diag.render(limit));
+            let classes = (max_classes > 0).then_some(max_classes);
+            let per_class = (max_per_class > 0).then_some(max_per_class);
+            eprintln!("{}", diag.render(classes, per_class));
         }
         CliError::Compile(other) => eprintln!("elenchus: {other}"),
         CliError::Other(msg) => eprintln!("elenchus: {msg}"),

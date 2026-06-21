@@ -4,7 +4,7 @@ expression: "err(r#\"\n        RULE r\n            WHEN x a\n            THEN x 
 ---
 RESULT: 1 syntax error
 
-[1/1] line 2, col 15
-   |         RULE r
-   |               ^
-   problem : expected ':' after the rule name
+other  (1 problem)
+    line 2, col 15 - expected ':' after the rule name
+      |         RULE r
+      |               ^
