@@ -78,7 +78,10 @@ fn circular_file_imports_detected() {
 fn parse_error_in_imported_file_names_that_file() {
     let e = compile(&fixture("broken/main.vrf"), &FileResolver).unwrap_err();
     match e {
-        CompileError::Parse { file, .. } => assert!(file.ends_with("bad.vrf"), "file = {file}"),
+        CompileError::Parse(diag) => {
+            let shown = diag.render(None, None);
+            assert!(shown.contains("bad.vrf"), "shown = {shown}");
+        }
         other => panic!("expected a Parse error naming the imported file, got {other:?}"),
     }
 }

@@ -50,6 +50,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
+/// Re-exported so library users handling a [`CompileError::Parse`] can render the
+/// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
+pub use elenchus_compiler::Diagnostics;
 use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, Lit, Origin, Value};
 pub use elenchus_compiler::{CompileError, MemoryResolver, Resolver, compile, compile_source};
 

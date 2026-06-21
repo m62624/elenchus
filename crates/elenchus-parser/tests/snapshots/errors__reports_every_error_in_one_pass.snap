@@ -1,0 +1,26 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: err(BROKEN)
+---
+RESULT: 3 syntax errors
+
+FACT  (1 problem)
+  syntax  : FACT <Subject> <predicate> [<object>]
+  example : FACT socrates is human
+    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
+      | FACT lonely
+      |      ^^^^^^
+
+NOT  (1 problem)
+  syntax  : NOT <Subject> <predicate> [<object>]
+  example : NOT socrates is immortal
+    line 3, col 5 - NOT expects an atom: <Subject> <predicate> [<object>]
+      | NOT also_lonely
+      |     ^^^^^^^^^^^
+
+THEN  (1 problem)
+  syntax  : THEN <literal>
+  example : THEN motor uses fast_path
+    line 7, col 24 - unexpected text after the THEN literal
+      |     THEN model uses too many words
+      |                        ^^^^^^^^^^^

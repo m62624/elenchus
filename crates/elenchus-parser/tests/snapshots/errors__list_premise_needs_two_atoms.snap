@@ -2,6 +2,9 @@
 source: crates/elenchus-parser/tests/errors.rs
 expression: "err(r#\"\n        PREMISE modes:\n            EXCLUSIVE\n                Sys mode idle\n        CHECK Sys\n        \"#)"
 ---
-Syntax Error at line 5, col 1: a list premise needs at least two atoms
-  |         CHECK Sys
-  | ^--- here
+RESULT: 1 syntax error
+
+other  (1 problem)
+    line 5, col 1 - a list premise needs at least two atoms
+      |         CHECK Sys
+      | ^^^^^^^^^^^^^^^^^

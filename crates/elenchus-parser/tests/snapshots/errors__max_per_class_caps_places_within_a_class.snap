@@ -1,0 +1,23 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "diags(REPEATED).render(None, Some(2))"
+---
+RESULT: 4 syntax errors
+
+FACT  (3 problems)
+  syntax  : FACT <Subject> <predicate> [<object>]
+  example : FACT socrates is human
+    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
+      | FACT one
+      |      ^^^
+    line 2, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
+      | FACT two
+      |      ^^^
+    ... and 1 more FACT problem
+
+NOT  (1 problem)
+  syntax  : NOT <Subject> <predicate> [<object>]
+  example : NOT socrates is immortal
+    line 4, col 5 - NOT expects an atom: <Subject> <predicate> [<object>]
+      | NOT four
+      |     ^^^^

@@ -108,6 +108,51 @@ fn parse_error_is_a_tool_error() {
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\n"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], true);
+    // The full diagnostic block (not a one-liner) arrives in the text field.
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("FACT expects an atom"), "got: {text}");
+}
+
+#[test]
+fn grouped_block_stays_valid_json_and_respects_max_per_class() {
+    // Four syntax errors (three FACT, one NOT). The whole multi-line block —
+    // newlines, quotes, `|`, `^` carets — must arrive as ONE JSON string.
+    // `roundtrip` parses each reply with serde_json, so if the wire were broken
+    // it would already have panicked; reaching the asserts proves valid JSON.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nFACT two\nFACT three\nNOT four\n","max_per_class":1}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("RESULT: 4 syntax errors"), "got: {text}");
+    assert!(text.contains('^'), "block should carry a caret: {text}");
+    assert!(
+        text.contains("... and 2 more FACT problems"),
+        "max_per_class should cap: {text}"
+    );
+}
+
+#[test]
+fn max_classes_caps_classes_over_mcp() {
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nNOT two\n","max_classes":1}}}"#,
+    ]);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("... and 1 more class"), "got: {text}");
+}
+
+#[test]
+fn all_syntax_errors_grouped_when_no_caps() {
+    // Without caps every class and place comes back, no "more" footers.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nFACT two\nNOT three\n"}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("RESULT: 3 syntax errors"), "got: {text}");
+    assert!(text.contains("FACT  (2 problems)"), "got: {text}");
+    assert!(text.contains("NOT  (1 problem)"), "got: {text}");
+    assert!(!text.contains("more"), "no caps → no footers: {text}");
 }
 
 #[test]

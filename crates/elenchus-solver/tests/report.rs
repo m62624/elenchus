@@ -25,3 +25,12 @@ fn socrates_report_shows_the_derivation_trace() {
     let r = verify_source("socrates.vrf", src).unwrap();
     insta::assert_snapshot!(format!("{r}"));
 }
+
+#[test]
+fn extension_plan_is_consistent_with_a_derivation_chain() {
+    // A well-formed design encoded as a SAT problem: the chosen strategy
+    // forward-chains four consequences and the plan checks out CONSISTENT.
+    let src = include_str!("../../../docs/examples/extension-plan.vrf");
+    let r = verify_source("extension-plan.vrf", src).unwrap();
+    insta::assert_snapshot!(format!("{r}"));
+}

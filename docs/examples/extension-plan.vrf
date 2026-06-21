@@ -1,0 +1,57 @@
+// ============================================================
+// Extension plan: add numeric predicates to elenchus.
+//
+// The design is encoded as a consistency problem: state the
+// goals, pick ONE strategy, let RULES forward-chain its
+// consequences, and let a guard PREMISE catch a choice that
+// would break a goal. The engine confirms the plan holds
+// together — BEFORE any code is written. Run it with
+// `elenchus-cli docs/examples/extension-plan.vrf`.
+// ============================================================
+
+// --- Goals we commit to ---
+
+FACT plan adds numbers
+FACT plan keeps simplicity
+
+// --- The decision: we choose boolean sugar, not the others ---
+
+FACT strategy is boolean_sugar
+NOT  strategy is smt_solver
+NOT  strategy is typed_variables
+
+// At most one strategy may be chosen (a consistency guard).
+PREMISE at_most_one_strategy:
+    EXCLUSIVE
+        strategy is smt_solver
+        strategy is boolean_sugar
+        strategy is typed_variables
+
+// --- Forward-chaining consequences of the chosen strategy ---
+
+RULE sugar_keeps_engine_boolean:
+    WHEN strategy is boolean_sugar
+    THEN engine stays boolean
+
+RULE sugar_makes_numbers_labels:
+    WHEN strategy is boolean_sugar
+    THEN numbers are labels
+
+RULE boolean_engine_avoids_smt:
+    WHEN engine stays boolean
+    THEN plan avoids smt
+
+RULE labels_keep_compatibility:
+    WHEN numbers are labels
+    THEN plan stays compatible
+
+// --- A guard: an SMT core would cost the simplicity we promised ---
+// (Inactive here, since we rejected SMT — but it would fire as a
+// CONFLICT if someone later asserted `FACT strategy is smt_solver`.)
+
+PREMISE smt_would_break_simplicity:
+    WHEN strategy is smt_solver
+    THEN NOT plan keeps simplicity
+
+// Verify the whole plan is consistent and fully determined.
+CHECK BIDIRECTIONAL

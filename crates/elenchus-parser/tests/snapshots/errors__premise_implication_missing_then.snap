@@ -2,6 +2,11 @@
 source: crates/elenchus-parser/tests/errors.rs
 expression: "err(r#\"\n        PREMISE wings_need_bone:\n            WHEN Creature.A has flying\n        CHECK Creature.A\n        \"#)"
 ---
-Syntax Error at line 4, col 9: expected THEN to complete the WHEN ... THEN implication
-  |         CHECK Creature.A
-  |         ^--- here
+RESULT: 1 syntax error
+
+THEN  (1 problem)
+  syntax  : THEN <literal>
+  example : THEN motor uses fast_path
+    line 4, col 9 - expected THEN to complete the WHEN ... THEN implication
+      |         CHECK Creature.A
+      |         ^^^^^^^^^^^^^^^^

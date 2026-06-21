@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"ASSUME lonely\\n\")"
+---
+RESULT: 1 syntax error
+
+ASSUME  (1 problem)
+  syntax  : ASSUME [NOT] <Subject> <predicate> [<object>]
+  example : ASSUME release is_ready
+    line 1, col 8 - ASSUME expects an atom: [NOT] <Subject> <predicate> [<object>]
+      | ASSUME lonely
+      |        ^^^^^^

@@ -1,0 +1,88 @@
+// ============================================================
+// Syntax-error showcase.
+// Every line below is intentionally broken to exercise one
+// failure mode and the keyword card the parser shows for it.
+// Comments and blank lines are skipped; recovery resynchronises
+// to the next top-level keyword, so each broken statement
+// produces exactly one diagnostic.
+// ============================================================
+
+// --- FACT / NOT / ASSUME: an atom is <Subject> <predicate> [<object>] ---
+
+FACT lonely
+NOT lonely
+ASSUME lonely
+FACT subject predicate object extra
+
+// --- IMPORT: a quoted path ---
+
+IMPORT physics.vrf
+IMPORT "physics.vrf
+
+// --- PREMISE: a name, a colon, then a body ---
+
+PREMISE missing_the_colon
+PREMISE has_trailing_junk: nonsense after the colon
+PREMISE empty_body:
+
+// --- RULE: a name, a colon, then a WHEN ... THEN body ---
+
+RULE missing_the_colon
+RULE has_trailing_junk: nonsense after the colon
+
+// --- WHEN / THEN: the implication body ---
+
+PREMISE when_without_literal:
+    WHEN halfatom
+    THEN x ready
+PREMISE when_without_then:
+    WHEN x tested
+PREMISE then_without_literal:
+    WHEN x tested
+    THEN
+
+// --- AND / OR: continuation lines ---
+
+PREMISE and_without_literal:
+    WHEN x tested
+    AND
+    THEN x ready
+PREMISE mixes_and_or:
+    WHEN x tested
+    AND x reviewed
+    OR x hotfixed
+    THEN x ready
+
+// --- list operators: a list body needs at least two atoms ---
+
+PREMISE list_one_atom:
+    EXCLUSIVE
+        only one_atom
+
+// --- a premise body that is neither a list nor an implication ---
+
+PREMISE not_a_real_body:
+    this is not a body
+
+// --- a rule body that is not an implication ---
+
+RULE list_in_a_rule:
+    ONEOF
+        x a
+        x b
+
+// --- a reserved word where an identifier was expected ---
+
+FACT WHEN has surprise
+
+// --- lines that are no statement at all (general "expected a statement") ---
+// Each follows a valid statement so recovery reaches it instead of skipping.
+
+FACT recovery still works
+%%% this line starts no keyword
+FACT and parsing resumes
+123 numbers cannot start a statement
+
+// --- a final valid statement parses after all the breakage ---
+
+CHECK

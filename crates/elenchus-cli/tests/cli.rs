@@ -154,7 +154,64 @@ fn help_points_agents_at_the_skill() {
 fn parse_error_exits_2_with_message() {
     let out = elenchus(&["--text", "FACT lonely\n"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("elenchus:"));
+    // A syntax error prints the diagnostic block (header + caret + card), not a
+    // bare `elenchus:` one-liner.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 1 syntax error"),
+        "stderr = {stderr}"
+    );
+    assert!(stderr.contains("FACT expects an atom"), "stderr = {stderr}");
+}
+
+#[test]
+fn max_per_class_caps_places_within_a_class() {
+    // Three FACT problems + one NOT; --max-per-class 1 shows one place per class.
+    let out = elenchus(&[
+        "--text",
+        "FACT one\nFACT two\nFACT three\nNOT four\n",
+        "--max-per-class",
+        "1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 4 syntax errors"),
+        "stderr = {stderr}"
+    );
+    assert!(
+        stderr.contains("... and 2 more FACT problems"),
+        "stderr = {stderr}"
+    );
+}
+
+#[test]
+fn max_classes_caps_the_number_of_classes() {
+    // Two classes (FACT, NOT); --max-classes 1 shows only the first + a footer.
+    let out = elenchus(&[
+        "--text",
+        "FACT one\nFACT two\nNOT three\n",
+        "--max-classes",
+        "1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("... and 1 more class"), "stderr = {stderr}");
+}
+
+#[test]
+fn all_syntax_errors_grouped_by_class_by_default() {
+    // No caps → every class and place is rendered, no "more" footers.
+    let out = elenchus(&["--text", "FACT one\nFACT two\nNOT three\n"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RESULT: 3 syntax errors"),
+        "stderr = {stderr}"
+    );
+    assert!(stderr.contains("FACT  (2 problems)"), "stderr = {stderr}");
+    assert!(stderr.contains("NOT  (1 problem)"), "stderr = {stderr}");
+    assert!(!stderr.contains("more"), "no caps → no footers: {stderr}");
 }
 
 #[test]

@@ -1,12 +1,12 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-expression: "err(\"FACT WHEN has flying\\n\")"
+expression: "err(\"FACT a b c d\\n\")"
 ---
 RESULT: 1 syntax error
 
 FACT  (1 problem)
   syntax  : FACT <Subject> <predicate> [<object>]
   example : FACT socrates is human
-    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT WHEN has flying
-      |      ^^^^^^^^^^^^^^^
+    line 1, col 11 - unexpected text after the FACT atom
+      | FACT a b c d
+      |           ^^
