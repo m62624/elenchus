@@ -38,6 +38,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -302,6 +303,37 @@ pub enum CompileError {
         /// The offending rule name.
         name: String,
     },
+    /// A reference used a value outside the closed set an `ONEOF` declared for that
+    /// variable. Almost always a typo: the misspelling would otherwise mint a new
+    /// atom that hangs in the air as UNKNOWN. Closed-world is opt-in — it only
+    /// applies to a `(subject, predicate)` whose values an `ONEOF` enumerated.
+    /// Boxed so this comparatively large payload does not bloat every `Result`.
+    #[error(transparent)]
+    UnknownValue(Box<UnknownValue>),
+}
+
+/// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
+/// in its own (boxed) struct so the common error path stays small.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error(
+    "{file}:{line}: '{value}' is not a declared value of '{subject} {predicate}' \
+     — ONEOF declares {{ {declared} }}{suggestion}"
+)]
+pub struct UnknownValue {
+    /// The source the offending reference is in.
+    pub file: String,
+    /// 1-based line of the offending reference.
+    pub line: u32,
+    /// The variable's subject.
+    pub subject: String,
+    /// The variable's predicate.
+    pub predicate: String,
+    /// The out-of-set value that was used.
+    pub value: String,
+    /// The declared legal values, comma-joined (sorted).
+    pub declared: String,
+    /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+    pub suggestion: String,
 }
 
 // --- raw (key-based) intermediate, before interning ------------------------
@@ -358,6 +390,13 @@ pub struct Compiler {
     clause_sigs: BTreeSet<String>,
     /// dedup of identical facts by (key, value).
     fact_sigs: BTreeSet<String>,
+    /// Closed-world value sets declared by `ONEOF`: `(domain, subject, predicate)`
+    /// → the set of legal objects. Once a variable's values are enumerated by a
+    /// `ONEOF`, a reference to that variable with an object *outside* the set is a
+    /// compile error (a likely typo), not a silent new atom. Only `ONEOF` members
+    /// that carry an object register here (binary atoms have no value slot to
+    /// close). See [`Compiler::validate_closed_world`].
+    oneof_values: BTreeMap<(String, String, String), BTreeSet<String>>,
 }
 
 impl Compiler {
@@ -589,10 +628,25 @@ impl Compiler {
                     ListOp::Exclusive | ListOp::Forbids => {
                         self.emit_pairwise(&keys, &origin);
                     }
-                    // ONEOF: pairwise (at most one) + at-least-one.
+                    // ONEOF: pairwise (at most one) + at-least-one. A ONEOF also
+                    // *closes* each of its variables: record every member's object
+                    // as a legal value of `(domain, subject, predicate)` so a later
+                    // out-of-set reference is caught as a typo (closed-world).
                     ListOp::OneOf => {
                         self.emit_pairwise(&keys, &origin);
                         self.emit_at_least_one(&keys, &origin);
+                        for k in &keys {
+                            if let Some(obj) = &k.object {
+                                self.oneof_values
+                                    .entry((
+                                        k.domain.clone(),
+                                        k.subject.clone(),
+                                        k.predicate.clone(),
+                                    ))
+                                    .or_default()
+                                    .insert(obj.clone());
+                            }
+                        }
                     }
                     // ATLEAST: Impossible([NOT a_1, …, NOT a_n]).
                     ListOp::AtLeast => {
@@ -699,6 +753,79 @@ impl Compiler {
         }
     }
 
+    /// Closed-world check: once an `ONEOF` enumerates a variable's values, any
+    /// reference to that `(domain, subject, predicate)` with an object outside the
+    /// declared set is rejected as a likely typo — instead of silently minting a
+    /// new atom that then "hangs in the air" as an UNKNOWN. Reports the earliest
+    /// (by source, line) offender, with a `did you mean` suggestion when a declared
+    /// value is within edit distance. Must run after all sources are accumulated
+    /// (a `ONEOF` may follow the reference) and before [`finalize`].
+    fn validate_closed_world(&self) -> Result<(), CompileError> {
+        if self.oneof_values.is_empty() {
+            return Ok(());
+        }
+        // Every atom reference reachable from a fact, clause, or rule, with the
+        // line it came from. ONEOF members appear here too (as clause literals) but
+        // are in-set by construction, so they never trip the check. `out_of_set`
+        // tests one key against its variable's declared values.
+        let out_of_set = |key: &AtomKey| -> bool {
+            key.object.as_ref().is_some_and(|obj| {
+                self.oneof_values
+                    .get(&(
+                        key.domain.clone(),
+                        key.subject.clone(),
+                        key.predicate.clone(),
+                    ))
+                    .is_some_and(|set| !set.contains(obj))
+            })
+        };
+        let mut offenders: Vec<(&str, u32, &AtomKey)> = Vec::new();
+        for f in &self.facts {
+            if out_of_set(&f.key) {
+                offenders.push((&f.origin.source, f.origin.line, &f.key));
+            }
+        }
+        for c in &self.clauses {
+            for l in &c.lits {
+                if out_of_set(&l.key) {
+                    offenders.push((&c.origin.source, c.origin.line, &l.key));
+                }
+            }
+        }
+        for r in &self.rules {
+            for l in r.antecedent.iter().chain(r.consequent.iter()) {
+                if out_of_set(&l.key) {
+                    offenders.push((&r.origin.source, r.origin.line, &l.key));
+                }
+            }
+        }
+        // Earliest offender wins, for a stable, source-ordered diagnostic.
+        let Some(&(source, line, key)) = offenders.iter().min_by(|a, b| {
+            (a.0, a.1, &a.2.subject, &a.2.object).cmp(&(b.0, b.1, &b.2.subject, &b.2.object))
+        }) else {
+            return Ok(());
+        };
+        let set = &self.oneof_values[&(
+            key.domain.clone(),
+            key.subject.clone(),
+            key.predicate.clone(),
+        )];
+        let declared: Vec<&str> = set.iter().map(|s| s.as_str()).collect(); // BTreeSet → sorted
+        let value = key.object.clone().unwrap_or_default();
+        let suggestion = nearest(&value, &declared)
+            .map(|s| alloc::format!(" — did you mean `{s}`?"))
+            .unwrap_or_default();
+        Err(CompileError::UnknownValue(Box::new(UnknownValue {
+            file: source.to_string(),
+            line,
+            subject: key.subject.clone(),
+            predicate: key.predicate.clone(),
+            value,
+            declared: declared.join(", "),
+            suggestion,
+        })))
+    }
+
     /// Intern all atoms (canonical sort), then lower the raw IR to ids.
     pub fn finalize(self) -> Compiled {
         let atoms: Vec<AtomKey> = self.keys.into_iter().collect(); // BTreeSet → sorted
@@ -756,6 +883,7 @@ impl Compiler {
 pub fn compile_source(source: &str, src: &str) -> Result<Compiled, CompileError> {
     let mut c = Compiler::new();
     c.add_source(source, src)?;
+    c.validate_closed_world()?;
     Ok(c.finalize())
 }
 
@@ -867,6 +995,7 @@ pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, Compil
     for file in &files {
         c.add_resolved(file)?;
     }
+    c.validate_closed_world()?;
     let mut compiled = c.finalize();
     compiled.unused_imports = unused_imports;
     Ok(compiled)
@@ -1094,6 +1223,37 @@ fn extract_domain(
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/// Levenshtein edit distance over Unicode scalar values. Small inputs (atom
+/// names), so the simple two-row DP is plenty.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.chars().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        core::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// The closest candidate to `word` within an edit-distance threshold, or `None`
+/// when nothing is close. Threshold scales with length (`max(1, len/3)`) so short
+/// names need an exact-ish match while longer ones tolerate a slip or two — the
+/// same spirit as the solver's typo-hint lint, but used here to *suggest* a fix.
+fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    let budget = (word.chars().count() / 3).max(1);
+    candidates
+        .iter()
+        .map(|&c| (levenshtein(word, c), c))
+        .filter(|&(d, _)| d <= budget)
+        .min_by_key(|&(d, _)| d)
+        .map(|(_, c)| c)
+}
 
 /// Lower parsed, located literals to key-based [`RawLit`]s (drops spans),
 /// resolving each atom's domain through `ctx`.
@@ -2031,5 +2191,167 @@ mod tests {
         // `x p a` and `x p b` differ only by object → two distinct atoms.
         let c = cs("FACT x p a\nFACT x p b\n").unwrap();
         assert_eq!(c.atoms.len(), 2);
+    }
+
+    // --- closed-world: ONEOF closes its variable's value set -----------------
+
+    /// A `ONEOF` body declaring three values of `resolved is …`.
+    const ONEOF_RESOLVED: &str = "PREMISE pick:\n    ONEOF\n        resolved is censored\n        resolved is censored_mtp\n        resolved is uncensored\n";
+
+    #[test]
+    fn value_outside_oneof_is_rejected() {
+        let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
+        let err = cs(&src).unwrap_err();
+        let CompileError::UnknownValue(e) = err else {
+            panic!("expected UnknownValue, got {err:?}");
+        };
+        assert_eq!(e.value, "censoredmtp");
+        assert_eq!(e.subject, "resolved");
+        assert_eq!(e.predicate, "is");
+        assert_eq!(e.declared, "censored, censored_mtp, uncensored");
+    }
+
+    #[test]
+    fn near_miss_value_suggests_the_intended_one() {
+        let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
+        let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
+            panic!("expected UnknownValue");
+        };
+        assert_eq!(e.suggestion, " — did you mean `censored_mtp`?");
+    }
+
+    #[test]
+    fn far_off_value_offers_no_suggestion() {
+        // `wildly_different` is past the edit-distance budget of every declared
+        // value, so we reject it but do not guess.
+        let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is wildly_different\n");
+        let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
+            panic!("expected UnknownValue");
+        };
+        assert_eq!(e.suggestion, "");
+    }
+
+    #[test]
+    fn declared_value_compiles_cleanly() {
+        let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censored_mtp\n");
+        assert!(cs(&src).is_ok());
+    }
+
+    #[test]
+    fn oneof_declared_after_the_reference_still_catches_it() {
+        // The check runs once every source is accumulated, so order is irrelevant.
+        let src = alloc::format!("FACT resolved is censoredmtp\n{ONEOF_RESOLVED}");
+        assert!(matches!(
+            cs(&src).unwrap_err(),
+            CompileError::UnknownValue(_)
+        ));
+    }
+
+    #[test]
+    fn out_of_set_value_inside_a_premise_is_caught() {
+        // Closed-world covers references anywhere — not just FACTs.
+        let src = alloc::format!(
+            "{ONEOF_RESOLVED}PREMISE p:\n    WHEN resolved is censoredmtp\n    THEN x done\n"
+        );
+        assert!(matches!(
+            cs(&src).unwrap_err(),
+            CompileError::UnknownValue(_)
+        ));
+    }
+
+    #[test]
+    fn out_of_set_value_inside_a_rule_is_caught() {
+        let src = alloc::format!(
+            "{ONEOF_RESOLVED}RULE r:\n    WHEN x go\n    THEN resolved is censoredmtp\n"
+        );
+        assert!(matches!(
+            cs(&src).unwrap_err(),
+            CompileError::UnknownValue(_)
+        ));
+    }
+
+    #[test]
+    fn binary_atoms_in_a_oneof_do_not_close_anything() {
+        // `alice cooks` / `alice cleans` have no object slot, so there is no value
+        // set to violate — a later `alice bakes` is just another atom, not an error.
+        let src = "PREMISE chores:\n    ONEOF\n        alice cooks\n        alice cleans\nFACT alice bakes\n";
+        assert!(cs(src).is_ok());
+    }
+
+    #[test]
+    fn a_subject_without_a_oneof_stays_open() {
+        // No ONEOF over `mood is …` → open world, any value is a fresh atom.
+        let src = alloc::format!("{ONEOF_RESOLVED}FACT mood is anything_goes\n");
+        assert!(cs(&src).is_ok());
+    }
+
+    #[test]
+    fn two_oneofs_union_their_declared_values() {
+        // A value declared by either ONEOF for the same variable is legal.
+        let src = "PREMISE a:\n    ONEOF\n        v is one\n        v is two\nPREMISE b:\n    ONEOF\n        v is two\n        v is three\nFACT v is three\n";
+        assert!(cs(src).is_ok());
+    }
+
+    #[test]
+    fn earliest_offender_is_reported() {
+        // Two violations; the diagnostic points at the first by line.
+        let src = alloc::format!(
+            "{ONEOF_RESOLVED}FACT resolved is firstbad\nFACT resolved is secondbad\n"
+        );
+        let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
+            panic!("expected UnknownValue");
+        };
+        assert_eq!(e.value, "firstbad");
+    }
+
+    #[test]
+    fn closed_world_spans_imported_domains() {
+        // physics closes `Motor speed …`; main, referencing it via the prefix with
+        // a typo, is rejected — the value set is shared across the domain boundary.
+        let mut r = MemoryResolver::new();
+        r.add(
+            "physics.vrf",
+            "DOMAIN physics\nPREMISE g:\n    ONEOF\n        Motor speed slow\n        Motor speed fast\n",
+        );
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT physics.Motor speed faast\n",
+        );
+        let CompileError::UnknownValue(e) = compile("main.vrf", &r).unwrap_err() else {
+            panic!("expected UnknownValue");
+        };
+        assert_eq!(e.value, "faast");
+        assert_eq!(e.suggestion, " — did you mean `fast`?");
+    }
+
+    #[test]
+    fn same_value_in_a_different_domain_does_not_clash() {
+        // `state is open` is closed in domain a; domain b's own `state is shut`
+        // (never declared in a) is fine — value sets are per-domain.
+        let mut r = MemoryResolver::new();
+        r.add(
+            "a.vrf",
+            "DOMAIN a\nPREMISE s:\n    ONEOF\n        state is open\n        state is closed\n",
+        );
+        r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\nFACT state is shut\n");
+        // `state is shut` is in domain b, which has no ONEOF → open, so it compiles.
+        assert!(compile("b.vrf", &r).is_ok());
+    }
+
+    #[test]
+    fn levenshtein_basics() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("abc", "abc"), 0);
+        assert_eq!(levenshtein("censoredmtp", "censored_mtp"), 1);
+        assert_eq!(levenshtein("norml", "normal"), 1);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn nearest_respects_the_length_budget() {
+        let cands = ["censored", "censored_mtp", "uncensored"];
+        assert_eq!(nearest("censoredmtp", &cands), Some("censored_mtp"));
+        // "zzz" is far from all; no suggestion.
+        assert_eq!(nearest("zzz", &cands), None);
     }
 }
