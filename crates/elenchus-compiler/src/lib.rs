@@ -1242,11 +1242,21 @@ fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 /// The closest candidate to `word` within an edit-distance threshold, or `None`
-/// when nothing is close. Threshold scales with length (`max(1, len/3)`) so short
-/// names need an exact-ish match while longer ones tolerate a slip or two — the
-/// same spirit as the solver's typo-hint lint, but used here to *suggest* a fix.
+/// when nothing is close enough to be a useful "did you mean".
+///
+/// The threshold scales with length (`len / 3`, in Unicode scalars) and is **not**
+/// floored at 1: a value of 1–2 characters yields a budget of 0, so no suggestion
+/// is offered. This is deliberate — for very short tokens (a single CJK character,
+/// where one symbol is a whole word, or a two-letter code) every other short value
+/// sits at distance 1, so a "did you mean" there is pure noise, not a typo cue. The
+/// rejection itself is exact (set membership), so suppressing the guess never hides
+/// a real error; it only withholds a meaningless one. Longer names tolerate a slip
+/// or two, mirroring the spirit of the solver's typo-hint lint.
 fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
-    let budget = (word.chars().count() / 3).max(1);
+    let budget = word.chars().count() / 3;
+    if budget == 0 {
+        return None;
+    }
     candidates
         .iter()
         .map(|&c| (levenshtein(word, c), c))
@@ -2353,5 +2363,31 @@ mod tests {
         assert_eq!(nearest("censoredmtp", &cands), Some("censored_mtp"));
         // "zzz" is far from all; no suggestion.
         assert_eq!(nearest("zzz", &cands), None);
+    }
+
+    #[test]
+    fn nearest_offers_nothing_for_very_short_values() {
+        // 1–2 character values get a budget of 0: every other short token is at
+        // distance 1, so a "did you mean" carries no signal. True for single CJK
+        // characters (one symbol = a whole word) and for two-letter codes alike.
+        assert_eq!(nearest("七", &["一", "二", "三"]), None);
+        assert_eq!(nearest("us", &["uk", "eu", "jp"]), None);
+        // A multi-character CJK word still gets a sensible nearest (one wrong
+        // character = distance 1, budget = 3/3 = 1).
+        assert_eq!(nearest("中文字", &["中文学", "日本語"]), Some("中文学"));
+    }
+
+    #[test]
+    fn short_value_is_still_rejected_just_without_a_guess() {
+        // The closed-world error does not depend on the suggestion: an out-of-set
+        // single-character value is rejected exactly, only the `did you mean` is
+        // suppressed.
+        let src =
+            "PREMISE pick:\n    ONEOF\n        roll is 一\n        roll is 二\nFACT roll is 七\n";
+        let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
+            panic!("expected UnknownValue");
+        };
+        assert_eq!(e.value, "七");
+        assert_eq!(e.suggestion, "");
     }
 }
