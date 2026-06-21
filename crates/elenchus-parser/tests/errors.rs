@@ -189,16 +189,28 @@ fn recovery_does_not_swallow_following_valid_statements() {
     assert_eq!(diags(src).len(), 1);
 }
 
-// --- smoke: a real large file ----------------------------------------------
+// --- smoke: scale & a valid example ----------------------------------------
 
 #[test]
-fn extension_plan_reports_many_errors_without_panicking() {
-    // The design doc written as pseudo-`.vrf` (single-token FACTs, trailing
-    // words) is a real torture test: dozens of genuine errors, all collected.
-    let d = diags(include_str!("../../../docs/examples/extension-plan.vrf"));
-    assert!(d.len() > 100, "expected many errors, got {}", d.len());
-    // The rendered report must stay non-empty and well-formed.
-    assert!(d.render(None, None).starts_with("RESULT: "));
+fn many_errors_are_grouped_without_panicking() {
+    // A large pile of broken lines (all one class) stays well-behaved: every
+    // error is collected, grouped under one class, and the per-class cap trims it.
+    let mut src = String::new();
+    for i in 0..200 {
+        src.push_str(&format!("FACT lonely{i}\n"));
+    }
+    let d = diags(&src);
+    assert_eq!(d.len(), 200);
+    let shown = d.render(None, Some(3));
+    assert!(shown.contains("FACT  (200 problems)"), "{shown}");
+    assert!(shown.contains("... and 197 more FACT problems"), "{shown}");
+}
+
+#[test]
+fn the_extension_plan_example_is_valid() {
+    // docs/examples/extension-plan.vrf is a real, well-formed program.
+    let src = include_str!("../../../docs/examples/extension-plan.vrf");
+    assert!(parse(src).is_ok(), "the example should parse cleanly");
 }
 
 // --- showcase: every keyword and every failure mode in one file ------------
