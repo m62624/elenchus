@@ -24,7 +24,7 @@ use nom::{
 
 use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
 use crate::diag::{Diagnostic, Diagnostics};
-use crate::reserved::{RESERVED, is_reserved, is_top_level};
+use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
 
 // --- Parser primitives -----------------------------------------------------
 
@@ -76,10 +76,11 @@ fn perr<'a, T>(input: Span<'a>) -> PResult<'a, T> {
 
 /// Characters allowed *after* the first in an identifier. Letters and digits of
 /// *any* script are accepted (Unicode `is_alphanumeric`), so `условие` or `名前`
-/// are valid; `_` joins multi-word names and `.` makes dotted subjects like
-/// `Creature.A` a single token. Punctuation and other symbols are rejected.
+/// are valid; `_` joins multi-word names. `.` is **not** an identifier character:
+/// it is the domain separator (`physics.engine`), so use `_` for compound
+/// subjects (`Creature_A`). Punctuation and other symbols are rejected.
 fn is_ident_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '.'
+    c.is_alphanumeric() || c == '_'
 }
 
 /// A bare identifier (does not reject reserved words). The first character must
@@ -128,9 +129,14 @@ fn skip_noise<'a>(input: Span<'a>) -> PResult<'a, ()> {
 
 // --- Atoms & literals ------------------------------------------------------
 
-/// `<subject> <predicate> [<object>]` — two or three space-separated identifiers.
+/// `[<domain>.]<subject> <predicate> [<object>]` — an atom, optionally qualified
+/// by a `domain.` prefix on the subject, then two or three space-separated
+/// identifiers. The domain is recognised only when an identifier is immediately
+/// followed by `.` (no space), so a bare `engine has_fuel` keeps `engine` as the
+/// subject.
 fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     let start = input;
+    let (input, domain) = opt(terminated(identifier, char('.'))).parse(input)?;
     let (input, subject) = identifier(input)?;
     let (input, _) = space1(input)?;
     let (input, predicate) = identifier(input)?;
@@ -139,6 +145,7 @@ fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
         input,
         Located {
             data: Atom {
+                domain: domain.map(|d| d.data),
                 subject: subject.data,
                 predicate: predicate.data,
                 object: object.map(|o| o.data),
@@ -151,7 +158,7 @@ fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
 /// An optionally `NOT`-prefixed [`atom`] — a literal inside a `WHEN`/`THEN` body.
 fn literal<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     let start = input;
-    let (input, neg) = opt(terminated(tag("NOT"), space1)).parse(input)?;
+    let (input, neg) = opt(terminated(tag(kw::NOT), space1)).parse(input)?;
     let (input, a) = atom(input)?;
     Ok((
         input,
@@ -178,10 +185,10 @@ fn atom_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
 /// One of the list-constraint keywords (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`).
 fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
     alt((
-        value(ListOp::Exclusive, tag("EXCLUSIVE")),
-        value(ListOp::Forbids, tag("FORBIDS")),
-        value(ListOp::OneOf, tag("ONEOF")),
-        value(ListOp::AtLeast, tag("ATLEAST")),
+        value(ListOp::Exclusive, tag(kw::EXCLUSIVE)),
+        value(ListOp::Forbids, tag(kw::FORBIDS)),
+        value(ListOp::OneOf, tag(kw::ONEOF)),
+        value(ListOp::AtLeast, tag(kw::ATLEAST)),
     ))
     .parse(input)
 }
@@ -230,7 +237,7 @@ fn cont_line<'a>(input: Span<'a>) -> PResult<'a, (Conn, Located<'a, Literal<'a>>
     let (input, _) = space0(input)?;
     // Not an AND/OR line → Error so many0 stops cleanly.
     let (input, conn) =
-        alt((value(Conn::And, tag("AND")), value(Conn::Or, tag("OR")))).parse(input)?;
+        alt((value(Conn::And, tag(kw::AND)), value(Conn::Or, tag(kw::OR)))).parse(input)?;
     let (input, _) = space1(input)?;
     let at = input;
     let (input, lit) = promote(
@@ -277,7 +284,7 @@ fn fail_at<'a, T>(at: Span<'a>, msg: &str) -> PResult<'a, T> {
 fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // No WHEN → Error so the PREMISE alt can fall through to a list body.
-    let (input, _) = (tag("WHEN"), space1).parse(input)?;
+    let (input, _) = (tag(kw::WHEN), space1).parse(input)?;
     // Committed to an implication body now.
     let at = input;
     let (input, when) = promote(
@@ -300,7 +307,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     let at = input;
     let (input, _) = promote(
-        tag("THEN").parse(input),
+        tag(kw::THEN).parse(input),
         at,
         "expected THEN to complete the WHEN ... THEN implication",
     )?;
@@ -339,28 +346,51 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
 
 // --- Statements ------------------------------------------------------------
 
-/// `IMPORT "<path>"` — a quoted path on one line.
+/// `IMPORT "<path>" [AS <alias>]` — a quoted path, optionally bound to a local
+/// domain alias, on one line.
 fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("IMPORT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::IMPORT), space1).parse(input)?;
     let start = input;
     let (input, path) = promote(
         delimited(char('"'), take_while(|c| c != '"' && c != '\n'), char('"')).parse(input),
         start,
         "IMPORT expects a quoted path, e.g. IMPORT \"physics.vrf\"",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after the IMPORT path")?;
+    // Optional `AS <alias>`: a local name for the imported domain.
+    let (input, alias) = opt(preceded((space1, tag(kw::AS), space1), identifier)).parse(input)?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the IMPORT path (did you mean AS <alias>?)",
+    )?;
     Ok((
         input,
-        Statement::Import(Located {
-            data: *path.fragment(),
-            span: start,
-        }),
+        Statement::Import {
+            path: Located {
+                data: *path.fragment(),
+                span: start,
+            },
+            alias,
+        },
     ))
+}
+
+/// `DOMAIN <name>` — declare this file's domain on one line.
+fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::DOMAIN), space1).parse(input)?;
+    let at = input;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "DOMAIN expects a name (a lowercase identifier), e.g. DOMAIN physics",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the DOMAIN name")?;
+    Ok((input, Statement::Domain(name)))
 }
 
 /// `FACT <atom>` — a TRUE assertion.
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("FACT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::FACT), space1).parse(input)?;
     let at = input;
     let (input, a) = promote(
         atom(input),
@@ -374,7 +404,7 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// `ASSUME [NOT] <atom>` — a soft (retractable) assertion. Accepts a leading
 /// `NOT` (like a `WHEN`/`THEN` literal), so `ASSUME NOT x a` is FALSE-by-default.
 fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("ASSUME"), space1).parse(input)?;
+    let (input, _) = (tag(kw::ASSUME), space1).parse(input)?;
     let at = input;
     let (input, lit) = promote(
         literal(input),
@@ -388,7 +418,7 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
 /// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("NOT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::NOT), space1).parse(input)?;
     let at = input;
     let (input, a) = promote(
         atom(input),
@@ -401,9 +431,9 @@ fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `CHECK [<subject>] [BIDIRECTIONAL]` — both modifiers optional.
 fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = tag("CHECK").parse(input)?;
+    let (input, _) = tag(kw::CHECK).parse(input)?;
     let (input, subject) = opt(preceded(space1, identifier)).parse(input)?;
-    let (input, bidir) = opt(preceded(space1, tag("BIDIRECTIONAL"))).parse(input)?;
+    let (input, bidir) = opt(preceded(space1, tag(kw::BIDIRECTIONAL))).parse(input)?;
     let (input, _) = eol(input)?;
     Ok((
         input,
@@ -416,7 +446,7 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `PREMISE <name>: <body>` where the body is a list or an implication.
 fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("PREMISE"), space1).parse(input)?;
+    let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
     // Committed to a premise now.
     let at = input;
     let (input, name) = promote(
@@ -442,7 +472,7 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `RULE <name>: <implication>` — like a premise but the body must be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("RULE"), space1).parse(input)?;
+    let (input, _) = (tag(kw::RULE), space1).parse(input)?;
     let at = input;
     let (input, name) = promote(
         identifier(input),
@@ -470,6 +500,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     // host's here-doc) and parse identically.
     let (input, _) = space0(input)?;
     alt((
+        stmt_domain,
         stmt_import,
         stmt_fact,
         stmt_assume,
@@ -484,7 +515,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 // --- Recovering driver -----------------------------------------------------
 
 /// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///
@@ -553,11 +584,7 @@ fn make_diag(src: &str, at: Span<'_>, message: String, general: bool) -> Diagnos
     // not the line the parser stalled on — a stall often lands on the *next*
     // line (e.g. "expected THEN …" points at the CHECK after a bodyless WHEN),
     // whose leading word would be a misleading card.
-    let keyword = if general {
-        None
-    } else {
-        keyword_from_message(&message)
-    };
+    let keyword = if general { None } else { keyword_in(&message) };
     Diagnostic {
         line,
         col,
@@ -567,14 +594,6 @@ fn make_diag(src: &str, at: Span<'_>, message: String, general: bool) -> Diagnos
         general,
         line_text: line_text.to_string(),
     }
-}
-
-/// The first reserved keyword named anywhere in `message`, if any — selects the
-/// syntax card. Returns a `'static` slice from [`RESERVED`].
-fn keyword_from_message(message: &str) -> Option<&'static str> {
-    message
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .find_map(|w| RESERVED.iter().copied().find(|k| *k == w))
 }
 
 /// Caret length: from `col` to the last non-whitespace character of the line (at

@@ -15,6 +15,8 @@
 //
 // Expected result:  CONSISTENT  (satisfiable AND unique — no UNDERDETERMINED)
 
+DOMAIN roles
+
 // --- each person holds exactly one role ---
 PREMISE alice_one_role:
     ONEOF

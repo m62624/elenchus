@@ -15,10 +15,10 @@
 //! pass, each rendered as a caret block with the keyword's correct syntax (see
 //! [`diag`] and [`syntax`]).
 //!
-//! The crate is split into focused modules — [`ast`] (the tree), [`reserved`]
-//! (keywords), [`syntax`] (per-keyword cards), [`diag`] (error rendering), and
-//! `grammar` (the nom parser + recovering driver) — re-exported here as a flat
-//! public surface.
+//! The crate is split into focused modules — [`ast`] (the tree), [`keywords`]
+//! (the single keyword table: spellings, roles, syntax cards), [`diag`] (error
+//! rendering), and `grammar` (the nom parser + recovering driver) — re-exported
+//! here as a flat public surface.
 //!
 //! # Example
 //!
@@ -39,14 +39,12 @@ extern crate alloc;
 pub mod ast;
 pub mod diag;
 mod grammar;
-pub mod reserved;
-pub mod syntax;
+pub mod keywords;
 
 pub use ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;
-pub use reserved::{RESERVED, is_reserved};
-pub use syntax::{KeywordSyntax, syntax_for};
+pub use keywords::{Card, KEYWORDS, Keyword, card_for, is_reserved, kw};
 
 #[cfg(test)]
 mod tests {
@@ -89,14 +87,14 @@ mod tests {
     fn parses_fact_and_negation() {
         let p = prog(
             r#"
-        FACT Creature.A has flying
-        NOT Creature.A has cold_blood
+        FACT Creature_A has flying
+        NOT Creature_A has cold_blood
         "#,
         );
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
             Statement::Fact(a) => {
-                assert_eq!(a.data.subject, "Creature.A");
+                assert_eq!(a.data.subject, "Creature_A");
                 assert_eq!(a.data.predicate, "has");
                 assert_eq!(a.data.object, Some("flying"));
             }
@@ -159,9 +157,65 @@ mod tests {
     fn parses_import() {
         let p = prog("IMPORT \"physics.vrf\"\n");
         match &p.statements[0] {
-            Statement::Import(path) => assert_eq!(path.data, "physics.vrf"),
+            Statement::Import { path, alias } => {
+                assert_eq!(path.data, "physics.vrf");
+                assert!(alias.is_none());
+            }
             other => panic!("expected import, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parses_import_with_alias() {
+        let p = prog("IMPORT \"physics.vrf\" AS phys\n");
+        match &p.statements[0] {
+            Statement::Import { path, alias } => {
+                assert_eq!(path.data, "physics.vrf");
+                assert_eq!(alias.as_ref().unwrap().data, "phys");
+            }
+            other => panic!("expected import, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_domain_declaration() {
+        let p = prog("DOMAIN physics\n");
+        match &p.statements[0] {
+            Statement::Domain(name) => assert_eq!(name.data, "physics"),
+            other => panic!("expected domain, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_domain_qualified_atom() {
+        // `physics.Motor over_200` → domain prefix split from the subject.
+        let p = prog("FACT physics.Motor over_200\n");
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.domain, Some("physics"));
+                assert_eq!(a.data.subject, "Motor");
+                assert_eq!(a.data.predicate, "over_200");
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_atom_has_no_domain() {
+        let p = prog("FACT engine has_fuel\n");
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.domain, None);
+                assert_eq!(a.data.subject, "engine");
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn domain_is_a_reserved_word() {
+        assert!(parse("FACT DOMAIN has x\n").is_err());
+        assert!(parse("FACT AS has x\n").is_err());
     }
 
     #[test]
@@ -169,8 +223,8 @@ mod tests {
         let src = r#"
         PREMISE fly_xor_swim:
             EXCLUSIVE
-                Creature.A has flying
-                Creature.A has swimming
+                Creature_A has flying
+                Creature_A has swimming
         "#;
         let p = prog(src);
         match &p.statements[0] {
@@ -193,9 +247,9 @@ mod tests {
     fn parses_implication_premise_with_and() {
         let src = r#"
         PREMISE wings_need_bone:
-            WHEN Creature.A has flying
-            THEN Creature.A has wing
-            AND  Creature.A has bone
+            WHEN Creature_A has flying
+            THEN Creature_A has wing
+            AND  Creature_A has bone
         "#;
         let p = prog(src);
         match &p.statements[0] {
@@ -344,13 +398,13 @@ mod tests {
 
     #[test]
     fn parses_check_variants() {
-        let p = prog("CHECK Creature.A BIDIRECTIONAL\n");
+        let p = prog("CHECK Creature_A BIDIRECTIONAL\n");
         match &p.statements[0] {
             Statement::Check {
                 subject,
                 bidirectional,
             } => {
-                assert_eq!(subject.as_ref().unwrap().data, "Creature.A");
+                assert_eq!(subject.as_ref().unwrap().data, "Creature_A");
                 assert!(bidirectional);
             }
             other => panic!("expected check, got {:?}", other),
@@ -416,15 +470,16 @@ mod tests {
     fn full_creature_example_parses() {
         let src = include_str!("../../../docs/examples/creature.vrf");
         let p = prog(src);
-        // 2 FACT + 3 PREMISE + 1 RULE + 1 CHECK = 7
-        assert_eq!(p.statements.len(), 7);
+        // 1 DOMAIN + 2 FACT + 3 PREMISE + 1 RULE + 1 CHECK = 8
+        assert_eq!(p.statements.len(), 8);
     }
 
     #[test]
     fn import_demo_example_parses() {
         let src = include_str!("../../../docs/examples/import-demo.vrf");
         let p = prog(src);
-        assert!(matches!(p.statements[0], Statement::Import(_)));
+        assert!(matches!(p.statements[0], Statement::Domain(_)));
+        assert!(matches!(p.statements[1], Statement::Import { .. }));
     }
 
     #[test]
@@ -597,9 +652,9 @@ FACT c d
 
     #[test]
     fn negation_with_object() {
-        match &prog("NOT Creature.A has wing\n").statements[0] {
+        match &prog("NOT Creature_A has wing\n").statements[0] {
             Statement::Negation(a) => {
-                assert_eq!(a.data.subject, "Creature.A");
+                assert_eq!(a.data.subject, "Creature_A");
                 assert_eq!(a.data.object, Some("wing"));
             }
             other => panic!("unexpected {other:?}"),
@@ -634,8 +689,8 @@ FACT c d
         FACT x y
         "#,
         );
-        assert!(matches!(p.statements[0], Statement::Import(_)));
-        assert!(matches!(p.statements[1], Statement::Import(_)));
+        assert!(matches!(p.statements[0], Statement::Import { .. }));
+        assert!(matches!(p.statements[1], Statement::Import { .. }));
         assert!(matches!(p.statements[2], Statement::Fact(_)));
     }
 

@@ -147,7 +147,7 @@ fn cases() -> Vec<(&'static str, &'static str)> {
 #[test]
 fn json_is_valid_and_stable_for_every_variant() {
     for (name, src) in cases() {
-        let report = verify_source("v.vrf", src).unwrap();
+        let report = verify_source("v.vrf", &format!("DOMAIN d\n{src}")).unwrap();
         let json = report.to_json();
 
         // (a) it is valid JSON ...

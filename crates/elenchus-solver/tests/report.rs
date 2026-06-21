@@ -33,6 +33,7 @@ fn orphan_fact_appears_as_an_advisory_line_in_a_consistent_report() {
     // the premise, so they are not flagged. The verdict stays CONSISTENT — the
     // ORPHAN is purely informational.
     let src = "\
+DOMAIN garage
 FACT engine has_fuel
 FACT spare wheel mounted
 PREMISE runs_on_fuel:

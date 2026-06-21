@@ -1,5 +1,6 @@
 // A concrete car. The model writes only FACTs; the first principles come from
 // the imported engine + safety libraries, which share the core base (a diamond).
+DOMAIN car
 IMPORT "std/engine.vrf"
 IMPORT "std/safety.vrf"
 

@@ -189,6 +189,7 @@ fn engine_instance() -> impl Strategy<Value = EngineCase> {
 fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Compiled {
     let atoms: Vec<AtomKey> = (0..n)
         .map(|i| AtomKey {
+            domain: "t".into(),
             subject: "s".into(),
             predicate: alloc_p(i),
             object: None,
@@ -233,6 +234,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         rules: Vec::new(),
         checks: Vec::new(),
         pending_imports: Vec::new(),
+        unused_imports: Vec::new(),
     }
 }
 
@@ -468,8 +470,8 @@ fn ref_close(a: &(String, String, Option<String>), b: &(String, String, Option<S
 
 fn ref_label(a: &(String, String, Option<String>)) -> String {
     match &a.2 {
-        Some(o) => format!("{} {} {}", a.0, a.1, o),
-        None => format!("{} {}", a.0, a.1),
+        Some(o) => format!("p.{} {} {}", a.0, a.1, o),
+        None => format!("p.{} {}", a.0, a.1),
     }
 }
 
@@ -537,7 +539,7 @@ proptest! {
         expected.dedup();
 
         // Build a program and run the real engine.
-        let mut src = String::new();
+        let mut src = String::from("DOMAIN p\n");
         for (s, p, o) in &atoms {
             match o {
                 Some(o) => src.push_str(&format!("FACT {s} {p} {o}\n")),
@@ -680,7 +682,7 @@ proptest! {
 
     #[test]
     fn or_and_implication_lowering_matches_truth_table(case in impl_case()) {
-        let compiled = compile_source("<or>", &build_impl_program(&case))
+        let compiled = compile_source("<or>", &format!("DOMAIN o\n{}", build_impl_program(&case)))
             .expect("a single premise compiles");
         // atom index -> interned id
         let mut id_of = vec![None; case.k];

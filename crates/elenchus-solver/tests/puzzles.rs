@@ -8,6 +8,7 @@ use elenchus_solver::{Status, verify_source};
 /// lead/dev/qa, and each role goes to exactly one person — a permutation.
 /// Six ONEOF premises (~24 clauses), nine atoms, none asserted by default.
 const ROLES: &str = "\
+DOMAIN roles
 PREMISE alice_role:
     ONEOF
         alice is lead
@@ -100,6 +101,7 @@ fn no_givens_is_underdetermined() {
 /// A ~20-condition deployment gate: a long implication chain where the first
 /// links fire but the rest are blocked on UNKNOWN data — a forward WARNING web.
 const DEPLOY: &str = "\
+DOMAIN deploy
 FACT svc built
 FACT svc unit_tested
 NOT  svc deprecated
@@ -142,7 +144,11 @@ fn deploy_chain_is_warning_when_data_is_missing() {
     assert!(r.conflicts.is_empty());
     assert!(!r.warnings.is_empty());
     // the RULE fires on `built`, deriving the artifact.
-    assert!(r.derived.iter().any(|d| d.atom == "svc has_artifact"));
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "deploy.svc has_artifact")
+    );
 }
 
 #[test]

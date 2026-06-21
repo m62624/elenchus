@@ -1,2 +1,3 @@
 // Mutually recursive imports — must be detected, not loop forever.
+DOMAIN x
 IMPORT "y.vrf"

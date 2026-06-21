@@ -5,7 +5,7 @@ expression: "diags(REPEATED).render(None, Some(2))"
 RESULT: 4 syntax errors
 
 FACT  (3 problems)
-  syntax  : FACT <Subject> <predicate> [<object>]
+  syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
   example : FACT socrates is human
     line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
       | FACT one

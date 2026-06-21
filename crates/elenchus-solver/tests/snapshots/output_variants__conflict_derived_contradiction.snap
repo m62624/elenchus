@@ -3,10 +3,10 @@ source: crates/elenchus-solver/tests/output_variants.rs
 expression: "report(r#\"\n        FACT x a\n        NOT x b\n        RULE r:\n            WHEN x a\n            THEN x b\n        CHECK x\n        \"#)"
 ---
 RESULT: CONFLICT
-  CONFLICT  r (RULE)  [v.vrf:4]
-      x b (derived value contradicts a known fact)
+  CONFLICT  r (RULE)  [v.vrf:5]
+      d.x b (derived value contradicts a known fact)
       why:
-        x a = TRUE   [FACT v.vrf:2]
-        x b = FALSE   [NOT v.vrf:3]
+        d.x a = TRUE   [FACT v.vrf:3]
+        d.x b = FALSE   [NOT v.vrf:4]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

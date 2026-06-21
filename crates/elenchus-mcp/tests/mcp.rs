@@ -33,7 +33,7 @@ fn initialize_list_and_call() {
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, // notification → no reply
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nCHECK x\n","format":"json"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT x a\nCHECK x\n","format":"json"}}}"#,
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"elenchus_version","arguments":{}}}"#,
     ]);
 
@@ -83,8 +83,8 @@ fn about_tool_is_listed_and_points_at_the_skill() {
 #[test]
 fn program_whitespace_is_cosmetic() {
     // Indented (readable) vs flat (no-indent) — identical to the engine.
-    let pretty = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT svc built\nPREMISE gate:\n    WHEN svc built\n    THEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
-    let flat = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT svc built\nPREMISE gate:\nWHEN svc built\nTHEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
+    let pretty = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT svc built\nPREMISE gate:\n    WHEN svc built\n    THEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
+    let flat = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT svc built\nPREMISE gate:\nWHEN svc built\nTHEN svc ready\nFACT svc ready\nCHECK svc\n","format":"json"}}}"#;
     let a = roundtrip(&[pretty]);
     let b = roundtrip(&[flat]);
     let ta = a[0]["result"]["content"][0]["text"].as_str().unwrap();
@@ -96,7 +96,7 @@ fn program_whitespace_is_cosmetic() {
 #[test]
 fn conflict_program_is_reported() {
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nNOT x a\nCHECK x\n"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT x a\nNOT x a\nCHECK x\n"}}}"#,
     ]);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("CONFLICT"), "got: {text}");
@@ -109,7 +109,7 @@ fn orphan_fact_rides_through_json_over_mcp() {
     // serde_json by `roundtrip`, so the wire stays valid), while the verdict
     // stays CONSISTENT and the call is not an error.
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely sits idle\nCHECK\n","format":"json"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT lonely sits idle\nCHECK\n","format":"json"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], false);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
@@ -119,7 +119,7 @@ fn orphan_fact_rides_through_json_over_mcp() {
     assert_eq!(report["exit_code"], 0);
     let orphans = report["orphans"].as_array().expect("orphans array");
     assert_eq!(orphans.len(), 1, "got: {text}");
-    assert_eq!(orphans[0]["atom"], "lonely sits idle");
+    assert_eq!(orphans[0]["atom"], "d.lonely sits idle");
     assert_eq!(orphans[0]["kind"], "FACT");
     assert_eq!(orphans[0]["value"], true);
 }
@@ -128,12 +128,12 @@ fn orphan_fact_rides_through_json_over_mcp() {
 fn orphan_fact_renders_in_the_human_report_over_mcp() {
     // The `human` format: the advisory ORPHAN line reaches the text field.
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely sits idle\nCHECK\n","format":"human"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT lonely sits idle\nCHECK\n","format":"human"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], false);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(
-        text.contains("ORPHAN    FACT lonely sits idle"),
+        text.contains("ORPHAN    FACT d.lonely sits idle"),
         "got: {text}"
     );
 }

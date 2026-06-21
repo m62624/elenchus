@@ -6,9 +6,9 @@ RESULT: CONFLICT
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
       Remove or flip ONE of them, then check again:
-      ASSUME rel in_prod   [v.vrf:7]
-      ASSUME NOT rel has_rollback   [v.vrf:8]
-      ASSUME NOT rel has_feature_flag   [v.vrf:9]
-  ORPHAN    FACT rel reviewed — not used by any premise or rule (no effect on the result)
+      ASSUME d.rel in_prod   [v.vrf:8]
+      ASSUME NOT d.rel has_rollback   [v.vrf:9]
+      ASSUME NOT d.rel has_feature_flag   [v.vrf:10]
+  ORPHAN    FACT d.rel reviewed — not used by any premise or rule (no effect on the result)
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

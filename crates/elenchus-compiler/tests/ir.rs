@@ -6,6 +6,7 @@ use elenchus_compiler::{MemoryResolver, compile, compile_source};
 
 /// A deliberately dense single source exercising every desugaring path.
 const COMPLEX: &str = "\
+DOMAIN sys
 FACT Sys ready
 NOT  Sys broken
 

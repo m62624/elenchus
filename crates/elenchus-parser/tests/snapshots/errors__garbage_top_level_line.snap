@@ -6,13 +6,14 @@ RESULT: 1 syntax error
 
 statement  (1 problem)
   expected one of these statements:
-      FACT <Subject> <predicate> [<object>]
+      DOMAIN <name>
+      FACT [<domain>.]<Subject> <predicate> [<object>]
       NOT <Subject> <predicate> [<object>]
       ASSUME [NOT] <Subject> <predicate> [<object>]
       PREMISE <name>:  then a list body or a WHEN ... THEN implication
       RULE <name>:  then a WHEN ... THEN implication
       CHECK [<subject>] [BIDIRECTIONAL]
-      IMPORT "<path>"
-    line 3, col 9 - expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+      IMPORT "<path>" [AS <alias>]
+    line 3, col 9 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       |         %%% not a statement
       |         ^^^^^^^^^^^^^^^^^^^

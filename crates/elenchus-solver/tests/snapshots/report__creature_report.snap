@@ -3,10 +3,10 @@ source: crates/elenchus-solver/tests/report.rs
 expression: "format!(\"{r}\")"
 ---
 RESULT: WARNING
-  WARNING   wings_need_bone (PREMISE)  [creature.vrf:15]
-      blocked by: Creature.A has wing
-  WARNING   wings_need_bone (PREMISE)  [creature.vrf:15]
-      blocked by: Creature.A has bone
-  DERIVED   Creature.A needs oxygen = TRUE   from needs_oxygen (RULE)  [creature.vrf:26]
+  WARNING   wings_need_bone (PREMISE)  [creature.vrf:17]
+      blocked by: creatures.Creature_A has wing
+  WARNING   wings_need_bone (PREMISE)  [creature.vrf:17]
+      blocked by: creatures.Creature_A has bone
+  DERIVED   creatures.Creature_A needs oxygen = TRUE   from needs_oxygen (RULE)  [creature.vrf:28]
 SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
 EXIT_CODE: 1

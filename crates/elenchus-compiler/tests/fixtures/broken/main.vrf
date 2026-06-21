@@ -1,2 +1,3 @@
 // Imports a file that fails to parse — the error must name the imported file.
+DOMAIN main
 IMPORT "bad.vrf"

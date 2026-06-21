@@ -3,9 +3,9 @@ source: crates/elenchus-solver/tests/report.rs
 expression: "format!(\"{r}\")"
 ---
 RESULT: CONSISTENT
-  DERIVED   engine stays boolean = TRUE   from sugar_keeps_engine_boolean (RULE)  [extension-plan.vrf:32]
-  DERIVED   numbers are labels = TRUE   from sugar_makes_numbers_labels (RULE)  [extension-plan.vrf:36]
-  DERIVED   plan avoids smt = TRUE   from boolean_engine_avoids_smt (RULE)  [extension-plan.vrf:40]
-  DERIVED   plan stays compatible = TRUE   from labels_keep_compatibility (RULE)  [extension-plan.vrf:44]
+  DERIVED   plan.engine stays boolean = TRUE   from sugar_keeps_engine_boolean (RULE)  [extension-plan.vrf:34]
+  DERIVED   plan.numbers are labels = TRUE   from sugar_makes_numbers_labels (RULE)  [extension-plan.vrf:38]
+  DERIVED   plan.plan avoids smt = TRUE   from boolean_engine_avoids_smt (RULE)  [extension-plan.vrf:42]
+  DERIVED   plan.plan stays compatible = TRUE   from labels_keep_compatibility (RULE)  [extension-plan.vrf:46]
 SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 4 derived
 EXIT_CODE: 0

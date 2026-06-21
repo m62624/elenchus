@@ -1,5 +1,6 @@
 // Safety domain. Also reuses the shared core invariants (so core/base.vrf is a
 // diamond import: pulled by both engine.vrf and safety.vrf, merged only once).
+DOMAIN car
 IMPORT "../core/base.vrf"
 
 PREMISE drive_safely:

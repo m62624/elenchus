@@ -6,7 +6,10 @@
 use elenchus_solver::verify_source;
 
 fn report(src: &str) -> String {
-    format!("{}", verify_source("v.vrf", src).unwrap())
+    format!(
+        "{}",
+        verify_source("v.vrf", &format!("DOMAIN d\n{src}")).unwrap()
+    )
 }
 
 // --- CONSISTENT ------------------------------------------------------------

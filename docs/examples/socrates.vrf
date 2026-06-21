@@ -10,6 +10,8 @@
 // Expected result: CONFLICT — the derived `mortal` and the asserted `immortal`
 // violate the exclusivity premise.
 
+DOMAIN philosophy
+
 FACT socrates is human
 FACT socrates is immortal        // the claim being cross-examined
 

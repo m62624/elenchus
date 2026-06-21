@@ -116,7 +116,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
     match (p, s) {
         (Statement::Fact(a), Stmt::Fact(b)) => atom_eq(&a.data, b),
         (Statement::Negation(a), Stmt::Not(b)) => atom_eq(&a.data, b),
-        (Statement::Import(a), Stmt::Import(b)) => a.data == b,
+        (Statement::Import { path: a, .. }, Stmt::Import(b)) => a.data == b,
         (
             Statement::Premise {
                 name,

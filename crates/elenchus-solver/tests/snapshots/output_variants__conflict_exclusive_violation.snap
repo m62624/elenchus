@@ -3,11 +3,11 @@ source: crates/elenchus-solver/tests/output_variants.rs
 expression: "report(r#\"\n        FACT x a\n        FACT x b\n        PREMISE e:\n            EXCLUSIVE\n                x a\n                x b\n        CHECK x\n        \"#)"
 ---
 RESULT: CONFLICT
-  CONFLICT  e (EXCLUSIVE)  [v.vrf:4]
-      x a
-      x b
+  CONFLICT  e (EXCLUSIVE)  [v.vrf:5]
+      d.x a
+      d.x b
       why:
-        x a = TRUE   [FACT v.vrf:2]
-        x b = TRUE   [FACT v.vrf:3]
+        d.x a = TRUE   [FACT v.vrf:3]
+        d.x b = TRUE   [FACT v.vrf:4]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

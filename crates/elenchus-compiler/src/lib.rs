@@ -25,7 +25,7 @@
 //!
 //! // `ASSUME` lowers to a *soft* fact: the same atom universe as a `FACT`, but
 //! // one the solver may retract. Here `x a` is asserted both ways (hard + soft).
-//! let ir = compile_source("demo.vrf", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+//! let ir = compile_source("demo.vrf", "DOMAIN d\nFACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
 //! assert_eq!(ir.facts.len(), 2);
 //! assert!(ir.facts.iter().any(|f| f.soft)); // the ASSUME is the soft one
 //! ```
@@ -47,7 +47,7 @@ use core::fmt::Write as _;
 /// Re-exported so downstream crates can name the syntax diagnostics carried by
 /// [`CompileError::Parse`] (and render them with a custom error limit).
 pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement};
+use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement, kw};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -71,10 +71,16 @@ pub fn hash_hex(data: &[u8]) -> String {
 /// Dense atom identifier (also the SAT variable number).
 pub type AtomId = u32;
 
-/// The identity of an atom: the triple `(subject, predicate, object?)`, owned so
-/// it survives across merged sources. Ordering is lexicographic → canonical.
+/// The identity of an atom: the `domain` plus the triple
+/// `(subject, predicate, object?)`, owned so it survives across merged sources.
+/// The domain is the leading sort key, so atoms group by domain; ordering is
+/// otherwise lexicographic → canonical. Two atoms with the same triple in
+/// *different* domains are distinct (no cross-domain unification).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AtomKey {
+    /// The domain this atom belongs to (the resolved namespace, never a raw
+    /// alias). `physics.engine` and `plan.engine` are different atoms.
+    pub domain: String,
     /// The entity the claim is about (owned copy of the parser's `subject`).
     pub subject: String,
     /// The relation or property asserted.
@@ -83,14 +89,43 @@ pub struct AtomKey {
     pub object: Option<String>,
 }
 
-impl AtomKey {
-    /// Owned copy of a borrowed parser [`Atom`].
-    fn from_atom(a: &Atom) -> Self {
-        AtomKey {
+/// The domain context of one file being compiled: its own declared domain (where
+/// bare atoms fall) and the local names — aliases or imported domain names — it
+/// may reference other domains by. Resolving an atom's optional `domain.` prefix
+/// against this context yields its canonical [`AtomKey`] domain.
+struct DomainCtx {
+    /// The file's own declared domain (the target for unqualified atoms).
+    current: String,
+    /// `local name -> canonical domain` for every name visible in this file
+    /// (always includes `current -> current`, plus one entry per `IMPORT`).
+    aliases: BTreeMap<String, String>,
+}
+
+impl DomainCtx {
+    /// Resolve an atom's optional `domain.` prefix to a canonical domain name.
+    /// `None` → the file's own domain; a prefix not imported here is an error.
+    fn resolve(&self, prefix: Option<&str>) -> Result<String, CompileError> {
+        match prefix {
+            None => Ok(self.current.clone()),
+            Some(p) => self
+                .aliases
+                .get(p)
+                .cloned()
+                .ok_or_else(|| CompileError::UnknownDomain {
+                    domain: p.to_string(),
+                }),
+        }
+    }
+
+    /// Build the owned [`AtomKey`] for a borrowed parser [`Atom`], resolving its
+    /// domain prefix against this file's context.
+    fn key(&self, a: &Atom) -> Result<AtomKey, CompileError> {
+        Ok(AtomKey {
+            domain: self.resolve(a.domain)?,
             subject: a.subject.to_string(),
             predicate: a.predicate.to_string(),
             object: a.object.map(|o| o.to_string()),
-        }
+        })
     }
 }
 
@@ -189,6 +224,27 @@ pub struct Compiled {
     /// Imports seen but not yet resolved (only populated by [`compile_source`];
     /// [`compile`] resolves them, leaving this empty).
     pub pending_imports: Vec<String>,
+    /// Advisory: imports that a file makes but never references (no `domain.atom`
+    /// from that file uses the imported domain). Structural, per-file, and inert —
+    /// it never affects the solve. Only populated by [`compile`] (an unresolved
+    /// import in [`compile_source`] cannot be classified). See [`UnusedImport`].
+    pub unused_imports: Vec<UnusedImport>,
+}
+
+/// An advisory record: a file `IMPORT`s a domain it never references. Such an
+/// import is inert — no `domain.atom` in that file mentions it, so removing it
+/// would not change the result. It is almost always a leftover or a forgotten
+/// `domain.` prefix. **Purely informational** — it never changes the verdict.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct UnusedImport {
+    /// The source that declared the unused `IMPORT`.
+    pub file: String,
+    /// The imported domain that is never referenced from `file`.
+    pub domain: String,
+    /// The local alias, if the import used `AS <alias>`.
+    pub alias: Option<String>,
+    /// 1-based line of the `IMPORT` statement in `file`.
+    pub line: u32,
 }
 
 /// Anything that can go wrong while compiling (and resolving imports).
@@ -204,6 +260,33 @@ pub enum CompileError {
     PremiseRedefinition {
         /// The clashing premise/rule name.
         name: String,
+    },
+    /// A source did not declare its `DOMAIN` (required, once, as the first
+    /// statement).
+    #[error("{file}: missing a DOMAIN declaration (every file must start with `DOMAIN <name>`)")]
+    MissingDomain {
+        /// The source label that lacked a `DOMAIN`.
+        file: String,
+    },
+    /// A source declared `DOMAIN` more than once (a file has exactly one domain).
+    #[error("{file}: more than one DOMAIN declaration (a file has exactly one domain)")]
+    DuplicateDomain {
+        /// The source label with the duplicate `DOMAIN`.
+        file: String,
+    },
+    /// An atom referenced a `domain.` prefix that is not the file's own domain and
+    /// was not imported in this file.
+    #[error("unknown domain '{domain}' — declare it with DOMAIN, or IMPORT it in this file")]
+    UnknownDomain {
+        /// The unresolved domain prefix.
+        domain: String,
+    },
+    /// Two imports bound the same local domain name to different domains (use a
+    /// distinct `AS <alias>` to tell them apart).
+    #[error("domain name '{alias}' is bound to two different imports (disambiguate with AS)")]
+    DomainAliasClash {
+        /// The clashing local domain name.
+        alias: String,
     },
     /// An `IMPORT` target could not be loaded by the [`Resolver`].
     #[error("import not found: {0}")]
@@ -284,66 +367,64 @@ impl Compiler {
     }
 
     /// Parse one source and accumulate its statements. `source` is a label used
-    /// in provenance (e.g. a file name or `"<root>"`).
+    /// in provenance (e.g. a file name or `"<root>"`). The source must declare its
+    /// `DOMAIN`; `IMPORT`s are recorded as pending (their domains cannot be bound
+    /// without a [`Resolver`]), so a single source may only reference its own
+    /// domain. Use [`compile`] for cross-domain references.
     pub fn add_source(&mut self, source: &str, src: &str) -> Result<(), CompileError> {
         let program = elenchus_parser::parse(src).map_err(|mut diag| {
             diag.set_file(source);
             CompileError::Parse(diag)
         })?;
+        let domain = extract_domain(&program, source)?;
+        let mut aliases = BTreeMap::new();
+        aliases.insert(domain.clone(), domain.clone());
+        let ctx = DomainCtx {
+            current: domain,
+            aliases,
+        };
         for stmt in &program.statements {
-            self.add_statement(source, stmt)?;
+            match stmt {
+                Statement::Domain(_) => {}
+                Statement::Import { path, .. } => {
+                    self.pending_imports.push(path.data.to_string());
+                }
+                other => self.add_statement(source, other, &ctx)?,
+            }
         }
         Ok(())
     }
 
-    /// Resolve and flat-merge `path` and its transitive imports.
-    /// `visited` holds content hashes already merged (dedup); `stack` holds the
-    /// hashes on the current path (cycle detection).
-    fn load_recursive<R: Resolver>(
-        &mut self,
-        path: &str,
-        resolver: &R,
-        visited: &mut BTreeSet<String>,
-        stack: &mut Vec<String>,
-    ) -> Result<(), CompileError> {
-        let content = resolver.load(path)?;
-        let hash = hash_hex(content.as_bytes());
-        if visited.contains(&hash) {
-            return Ok(()); // already merged — idempotent
-        }
-        if stack.contains(&hash) {
-            return Err(CompileError::CircularImport(path.to_string()));
-        }
-        stack.push(hash.clone());
-
-        let program = elenchus_parser::parse(&content).map_err(|mut diag| {
-            diag.set_file(path);
+    /// Compile one already-resolved file's statements under its domain context.
+    fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
+        let program = elenchus_parser::parse(&file.content).map_err(|mut diag| {
+            diag.set_file(&file.path);
             CompileError::Parse(diag)
         })?;
         for stmt in &program.statements {
-            if let Statement::Import(p) = stmt {
-                let resolved = resolver.resolve(path, p.data);
-                self.load_recursive(&resolved, resolver, visited, stack)?;
-            } else {
-                self.add_statement(path, stmt)?;
+            match stmt {
+                Statement::Import { .. } | Statement::Domain(_) => {}
+                other => self.add_statement(&file.path, other, &file.ctx)?,
             }
         }
-
-        stack.pop();
-        visited.insert(hash);
         Ok(())
     }
 
-    /// Route one statement to the right accumulator (facts, checks, named
-    /// constructs); `IMPORT` is only recorded as pending here (see [`compile`]
-    /// / [`load_recursive`] for actual resolution).
-    fn add_statement(&mut self, source: &str, stmt: &Statement) -> Result<(), CompileError> {
+    /// Route one statement (never `IMPORT`/`DOMAIN` — handled by the loaders) to
+    /// the right accumulator, resolving atom domains through `ctx`.
+    fn add_statement(
+        &mut self,
+        source: &str,
+        stmt: &Statement,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
         match stmt {
-            Statement::Import(path) => {
-                self.pending_imports.push(path.data.to_string());
+            // Handled by `add_source` / `load_recursive`, never reach here.
+            Statement::Import { .. } | Statement::Domain(_) => {}
+            Statement::Fact(a) => self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?,
+            Statement::Negation(a) => {
+                self.add_fact(source, a, Value::False, kw::NOT, false, ctx)?
             }
-            Statement::Fact(a) => self.add_fact(source, a, Value::True, "FACT", false),
-            Statement::Negation(a) => self.add_fact(source, a, Value::False, "NOT", false),
             Statement::Assume(l) => {
                 let value = if l.data.negated {
                     Value::False
@@ -357,7 +438,7 @@ impl Compiler {
                     data: l.data.atom.clone(),
                     span: l.span,
                 };
-                self.add_fact(source, &located, value, "ASSUME", true);
+                self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
             }
             Statement::Check {
                 subject,
@@ -368,11 +449,11 @@ impl Compiler {
             }),
             Statement::Premise { name, body } => {
                 let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, false)?;
+                self.add_named(source, name.data, line, body, false, ctx)?;
             }
             Statement::Rule { name, body } => {
                 let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, true)?;
+                self.add_named(source, name.data, line, body, true, ctx)?;
             }
         }
         Ok(())
@@ -395,8 +476,9 @@ impl Compiler {
         value: Value,
         kind: &'static str,
         soft: bool,
-    ) {
-        let key = AtomKey::from_atom(&a.data);
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&a.data)?;
         self.intern(&key);
         let sig = alloc::format!(
             "{}|{}|{}|{}",
@@ -406,7 +488,7 @@ impl Compiler {
             "" // facts dedup ignores line; identical FACT twice is idempotent
         );
         if !self.fact_sigs.insert(sig) {
-            return; // exact duplicate fact — idempotent
+            return Ok(()); // exact duplicate fact — idempotent
         }
         self.facts.push(RawFact {
             key,
@@ -419,6 +501,7 @@ impl Compiler {
             },
             soft,
         });
+        Ok(())
     }
 
     /// Handle a named construct (`PREMISE` or `RULE`). `is_rule` selects derivation
@@ -430,8 +513,9 @@ impl Compiler {
         line: u32,
         body: &Body,
         is_rule: bool,
+        ctx: &DomainCtx,
     ) -> Result<(), CompileError> {
-        let body_hash = hash_hex(canonical_body(name, body, is_rule).as_bytes());
+        let body_hash = hash_hex(canonical_body(name, body, is_rule, ctx)?.as_bytes());
         let key = (source.to_string(), name.to_string());
         match self.defined.get(&key) {
             Some(prev) if *prev == body_hash => return Ok(()), // identical → idempotent
@@ -462,11 +546,11 @@ impl Compiler {
                         name: name.to_string(),
                     });
                 }
-                let (ante, cons) = (raw_lits(antecedent), raw_lits(consequent));
+                let (ante, cons) = (raw_lits(antecedent, ctx)?, raw_lits(consequent, ctx)?);
                 for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
-                let origin = self.origin(source, line, Some(name), "RULE");
+                let origin = self.origin(source, line, Some(name), kw::RULE);
                 match ante_conn {
                     // a ∧ b → C : one rule firing on the whole antecedent.
                     Conn::And => self.rules.push(RawRule {
@@ -491,8 +575,10 @@ impl Compiler {
 
         match body {
             Body::List { op, atoms } => {
-                let keys: Vec<AtomKey> =
-                    atoms.iter().map(|a| AtomKey::from_atom(&a.data)).collect();
+                let keys: Vec<AtomKey> = atoms
+                    .iter()
+                    .map(|a| ctx.key(&a.data))
+                    .collect::<Result<_, _>>()?;
                 for k in &keys {
                     self.intern(k);
                 }
@@ -527,12 +613,12 @@ impl Compiler {
                 //   OR-ante  → one clause per literal;
                 //   AND-cons → one clause per (negated) literal;
                 //   OR-cons  → all its (negated) literals share every clause.
-                let ante = raw_lits(antecedent);
-                let cons = raw_lits(consequent);
+                let ante = raw_lits(antecedent, ctx)?;
+                let cons = raw_lits(consequent, ctx)?;
                 for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
-                let origin = self.origin(source, line, Some(name), "PREMISE");
+                let origin = self.origin(source, line, Some(name), kw::PREMISE);
 
                 let ante_groups: Vec<Vec<RawLit>> = match ante_conn {
                     Conn::And => vec![ante.clone()],
@@ -660,6 +746,7 @@ impl Compiler {
             rules,
             checks: self.checks,
             pending_imports: self.pending_imports,
+            unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
         }
     }
 }
@@ -751,31 +838,275 @@ impl Resolver for FileResolver {
     }
 }
 
+/// One resolved source ready to compile: its provenance path, raw text, and the
+/// domain context (own domain + import-alias bindings) its atoms resolve against.
+struct ResolvedFile {
+    path: String,
+    content: String,
+    ctx: DomainCtx,
+}
+
 /// Compile a root source and all its transitive `IMPORT`s into one IR.
 ///
-/// Imports are flat-merged into a single shared atom universe (atoms unify by
-/// identity across files). Sources are content-addressed (sha256): a source
-/// already merged is skipped (dedup), and an import cycle is an error.
+/// Each file is keyed by `DOMAIN`; atoms unify only within a domain. Imports are
+/// referenced by `<domain>.<atom>` and visibility is file-local (naming is not
+/// transitive, though a dependency's clauses still participate). Sources are
+/// content-addressed (sha256): a source reached by several paths is compiled once
+/// (so a diamond — or an exponential fan-out — stays linear, never blowing up),
+/// and an import cycle is an error.
+///
+/// Resolution is **iterative** (an explicit work stack, not native recursion), so
+/// an arbitrarily deep import chain cannot overflow the call stack.
 ///
 /// Premise/rule names are per-source labels, not global identifiers: different
-/// files (domains) may reuse a name, and the report qualifies them by source. A
-/// name reused with a different body is an error only *within the same source*.
+/// files may reuse a name, and the report qualifies them by source. A name reused
+/// with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
+    let (files, unused_imports) = resolve_graph(root, resolver)?;
     let mut c = Compiler::new();
-    let mut visited = BTreeSet::new();
-    let mut stack = Vec::new();
-    c.load_recursive(root, resolver, &mut visited, &mut stack)?;
-    Ok(c.finalize())
+    for file in &files {
+        c.add_resolved(file)?;
+    }
+    let mut compiled = c.finalize();
+    compiled.unused_imports = unused_imports;
+    Ok(compiled)
+}
+
+/// One `IMPORT` edge: the optional local alias, the resolved child path, and the
+/// `IMPORT` line (for the unused-import advisory).
+struct ImportEdge {
+    alias: Option<String>,
+    child_path: String,
+    line: u32,
+}
+
+/// A discovered source during graph resolution: its first-seen path, raw text,
+/// declared domain, import edges, and the set of domain prefixes its atoms use
+/// (`None` = its own domain; `Some(p)` = a `p.` prefix) — used to flag imports
+/// that the file never references.
+struct DiscoveredFile {
+    path: String,
+    content: String,
+    domain: String,
+    edges: Vec<ImportEdge>,
+    used_prefixes: BTreeSet<Option<String>>,
+}
+
+/// Resolve the whole import graph reachable from `root` into a flat list of
+/// [`ResolvedFile`]s, each distinct source appearing once.
+///
+/// Iterative depth-first traversal with an explicit work stack (`Enter`/`Exit`
+/// frames) — no native recursion, so depth is unbounded without risking a stack
+/// overflow. Memoized by content hash (a diamond/repeat is visited once); a hash
+/// re-encountered while still on the active path is a [`CompileError::CircularImport`].
+fn resolve_graph<R: Resolver>(
+    root: &str,
+    resolver: &R,
+) -> Result<(Vec<ResolvedFile>, Vec<UnusedImport>), CompileError> {
+    /// One unit of pending work on the traversal stack.
+    enum Step {
+        /// Visit a file at this resolved path (load, parse, enqueue its imports).
+        Enter(String),
+        /// Mark this content hash finished (pop it off the active path).
+        Exit(String),
+    }
+
+    let mut discovered: BTreeMap<String, DiscoveredFile> = BTreeMap::new(); // by hash
+    let mut path_hash: BTreeMap<String, String> = BTreeMap::new(); // resolved path → hash
+    let mut order: Vec<String> = Vec::new(); // finish order, by hash
+    let mut active: BTreeSet<String> = BTreeSet::new(); // hashes on the current DFS path
+    let mut work: Vec<Step> = vec![Step::Enter(root.to_string())];
+
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Exit(hash) => {
+                active.remove(&hash);
+                order.push(hash);
+            }
+            Step::Enter(path) => {
+                let content = resolver.load(&path)?;
+                let hash = hash_hex(content.as_bytes());
+                path_hash.insert(path.clone(), hash.clone());
+                if active.contains(&hash) {
+                    return Err(CompileError::CircularImport(path)); // back-edge to an ancestor
+                }
+                if discovered.contains_key(&hash) {
+                    continue; // already fully resolved by another path — dedup
+                }
+                let program = elenchus_parser::parse(&content).map_err(|mut diag| {
+                    diag.set_file(&path);
+                    CompileError::Parse(diag)
+                })?;
+                let domain = extract_domain(&program, &path)?;
+                let mut edges = Vec::new();
+                let mut used_prefixes = BTreeSet::new();
+                for stmt in &program.statements {
+                    if let Statement::Import { path: p, alias } = stmt {
+                        edges.push(ImportEdge {
+                            alias: alias.as_ref().map(|a| a.data.to_string()),
+                            child_path: resolver.resolve(&path, p.data),
+                            line: p.span.location_line(),
+                        });
+                    } else {
+                        collect_prefixes(stmt, &mut used_prefixes);
+                    }
+                }
+                drop(program); // release the borrow on `content` before moving it
+                active.insert(hash.clone());
+                work.push(Step::Exit(hash.clone()));
+                for e in edges.iter().rev() {
+                    work.push(Step::Enter(e.child_path.clone()));
+                }
+                discovered.insert(
+                    hash,
+                    DiscoveredFile {
+                        path,
+                        content,
+                        domain,
+                        edges,
+                        used_prefixes,
+                    },
+                );
+            }
+        }
+    }
+
+    // Build each file's domain context now that every domain is known.
+    // Look up every file's domain (small strings) so we can then *move* each
+    // file's (potentially large) content out of `discovered` instead of cloning.
+    let domain_of: BTreeMap<&str, &str> = discovered
+        .iter()
+        .map(|(h, f)| (h.as_str(), f.domain.as_str()))
+        .collect();
+
+    let mut out = Vec::with_capacity(order.len());
+    let mut unused: Vec<UnusedImport> = Vec::new();
+    for hash in &order {
+        let file = &discovered[hash];
+        let mut aliases = BTreeMap::new();
+        aliases.insert(file.domain.clone(), file.domain.clone());
+        for edge in &file.edges {
+            let child_domain = domain_of[path_hash[&edge.child_path].as_str()];
+            let bind = edge
+                .alias
+                .clone()
+                .unwrap_or_else(|| child_domain.to_string());
+            match aliases.get(&bind) {
+                Some(existing) if existing != child_domain => {
+                    return Err(CompileError::DomainAliasClash { alias: bind });
+                }
+                _ => {
+                    aliases.insert(bind, child_domain.to_string());
+                }
+            }
+        }
+
+        // The domains this file actually references (each used prefix resolved
+        // against its own domain / imports). An imported domain absent from this
+        // set is an unused import.
+        let referenced: BTreeSet<&str> = file
+            .used_prefixes
+            .iter()
+            .filter_map(|p| match p {
+                None => Some(file.domain.as_str()),
+                Some(name) => aliases.get(name).map(|d| d.as_str()),
+            })
+            .collect();
+        for edge in &file.edges {
+            let child_domain = domain_of[path_hash[&edge.child_path].as_str()];
+            if !referenced.contains(child_domain) {
+                unused.push(UnusedImport {
+                    file: file.path.clone(),
+                    domain: child_domain.to_string(),
+                    alias: edge.alias.clone(),
+                    line: edge.line,
+                });
+            }
+        }
+
+        let ctx = DomainCtx {
+            current: file.domain.clone(),
+            aliases,
+        };
+        out.push((hash.clone(), ctx));
+    }
+    unused.sort();
+
+    // Now move content/path out of `discovered` (no large clones) and pair with
+    // the contexts built above.
+    let files = out
+        .into_iter()
+        .map(|(hash, ctx)| {
+            let file = discovered.remove(&hash).expect("hash was discovered");
+            ResolvedFile {
+                path: file.path,
+                content: file.content,
+                ctx,
+            }
+        })
+        .collect();
+    Ok((files, unused))
+}
+
+/// Collect the domain prefixes used by a statement's atoms into `out` (`None` for
+/// a bare atom, `Some(p)` for a `p.`-qualified one) — feeds the unused-import lint.
+fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
+    let mut add = |a: &Atom| {
+        out.insert(a.domain.map(|d| d.to_string()));
+    };
+    match stmt {
+        Statement::Fact(a) | Statement::Negation(a) => add(&a.data),
+        Statement::Assume(l) => add(&l.data.atom),
+        Statement::Premise { body, .. } | Statement::Rule { body, .. } => match body {
+            Body::List { atoms, .. } => atoms.iter().for_each(|a| add(&a.data)),
+            Body::Impl {
+                antecedent,
+                consequent,
+                ..
+            } => antecedent
+                .iter()
+                .chain(consequent)
+                .for_each(|l| add(&l.data.atom)),
+        },
+        Statement::Domain(_) | Statement::Import { .. } | Statement::Check { .. } => {}
+    }
+}
+
+/// The single `DOMAIN` a source declares, or an error if it has none or several.
+fn extract_domain(
+    program: &elenchus_parser::Program,
+    source: &str,
+) -> Result<String, CompileError> {
+    let mut found: Option<String> = None;
+    for stmt in &program.statements {
+        if let Statement::Domain(name) = stmt {
+            if found.is_some() {
+                return Err(CompileError::DuplicateDomain {
+                    file: source.to_string(),
+                });
+            }
+            found = Some(name.data.to_string());
+        }
+    }
+    found.ok_or_else(|| CompileError::MissingDomain {
+        file: source.to_string(),
+    })
 }
 
 // --- helpers ---------------------------------------------------------------
 
-/// Lower parsed, located literals to key-based [`RawLit`]s (drops spans).
-fn raw_lits(lits: &[elenchus_parser::Located<Literal>]) -> Vec<RawLit> {
+/// Lower parsed, located literals to key-based [`RawLit`]s (drops spans),
+/// resolving each atom's domain through `ctx`.
+fn raw_lits(
+    lits: &[elenchus_parser::Located<Literal>],
+    ctx: &DomainCtx,
+) -> Result<Vec<RawLit>, CompileError> {
     lits.iter()
-        .map(|l| RawLit {
-            key: AtomKey::from_atom(&l.data.atom),
-            negated: l.data.negated,
+        .map(|l| {
+            Ok(RawLit {
+                key: ctx.key(&l.data.atom)?,
+                negated: l.data.negated,
+            })
         })
         .collect()
 }
@@ -783,18 +1114,20 @@ fn raw_lits(lits: &[elenchus_parser::Located<Literal>]) -> Vec<RawLit> {
 /// The surface keyword for a list op, used as [`Origin::kind`] in the report.
 fn list_kind(op: ListOp) -> &'static str {
     match op {
-        ListOp::Exclusive => "EXCLUSIVE",
-        ListOp::Forbids => "FORBIDS",
-        ListOp::OneOf => "ONEOF",
-        ListOp::AtLeast => "ATLEAST",
+        ListOp::Exclusive => kw::EXCLUSIVE,
+        ListOp::Forbids => kw::FORBIDS,
+        ListOp::OneOf => kw::ONEOF,
+        ListOp::AtLeast => kw::ATLEAST,
     }
 }
 
-/// Stable `subject|predicate|object` string for an atom key (the unit from which
-/// clause/fact/body signatures are built).
+/// Stable `domain|subject|predicate|object` string for an atom key (the unit from
+/// which clause/fact/body signatures are built). Includes the domain so atoms in
+/// different domains never share a signature.
 fn key_sig(k: &AtomKey) -> String {
     alloc::format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
+        k.domain,
         k.subject,
         k.predicate,
         k.object.as_deref().unwrap_or("")
@@ -813,7 +1146,13 @@ fn clause_sig(lits: &[RawLit]) -> String {
 }
 
 /// Canonical body string for a named construct, hashed for redefinition checks.
-fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
+/// Resolves atom domains through `ctx` so the signature keys on resolved identity.
+fn canonical_body(
+    name: &str,
+    body: &Body,
+    is_rule: bool,
+    ctx: &DomainCtx,
+) -> Result<String, CompileError> {
     let mut s = String::new();
     let _ = write!(s, "{}|{}|", if is_rule { "RULE" } else { "PREMISE" }, name);
     match body {
@@ -821,8 +1160,8 @@ fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
             let _ = write!(s, "LIST|{}|", list_kind(*op));
             let mut keys: Vec<String> = atoms
                 .iter()
-                .map(|a| key_sig(&AtomKey::from_atom(&a.data)))
-                .collect();
+                .map(|a| Ok(key_sig(&ctx.key(&a.data)?)))
+                .collect::<Result<_, CompileError>>()?;
             keys.sort();
             s.push_str(&keys.join(";"));
         }
@@ -836,39 +1175,55 @@ fn canonical_body(name: &str, body: &Body, is_rule: bool) -> String {
             s.push_str("IMPL|ANTE|");
             s.push_str(conn(ante_conn));
             s.push('|');
-            s.push_str(&lit_sigs(antecedent));
+            s.push_str(&lit_sigs(antecedent, ctx)?);
             s.push_str("|CONS|");
             s.push_str(conn(cons_conn));
             s.push('|');
-            s.push_str(&lit_sigs(consequent));
+            s.push_str(&lit_sigs(consequent, ctx)?);
         }
     }
-    s
+    Ok(s)
 }
 
 /// Sorted `key|negated` signature of a literal list (order-independent), used
 /// inside [`canonical_body`] so reordering a body does not look like a redefinition.
-fn lit_sigs(lits: &[elenchus_parser::Located<Literal>]) -> String {
+fn lit_sigs(
+    lits: &[elenchus_parser::Located<Literal>],
+    ctx: &DomainCtx,
+) -> Result<String, CompileError> {
     let mut parts: Vec<String> = lits
         .iter()
         .map(|l| {
-            alloc::format!(
+            Ok(alloc::format!(
                 "{}|{}",
-                key_sig(&AtomKey::from_atom(&l.data.atom)),
+                key_sig(&ctx.key(&l.data.atom)?),
                 l.data.negated as u8
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<_, CompileError>>()?;
     parts.sort();
-    parts.join(";")
+    Ok(parts.join(";"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Compile a single inline source under a default `DOMAIN t`, so test
+    /// programs need not repeat the declaration. Atoms land in domain `t`.
+    fn cs(src: &str) -> Result<Compiled, CompileError> {
+        compile_source("<t>", &alloc::format!("DOMAIN t\n{src}"))
+    }
+
+    /// An atom key in the default test domain `t`.
     fn key(subject: &str, predicate: &str, object: Option<&str>) -> AtomKey {
+        key_in("t", subject, predicate, object)
+    }
+
+    /// An atom key in an explicit domain.
+    fn key_in(domain: &str, subject: &str, predicate: &str, object: Option<&str>) -> AtomKey {
         AtomKey {
+            domain: domain.to_string(),
             subject: subject.to_string(),
             predicate: predicate.to_string(),
             object: object.map(|o| o.to_string()),
@@ -888,7 +1243,7 @@ mod tests {
                 x b
                 x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         // C(3,2) = 3 clauses, each of 2 positive literals.
         assert_eq!(c.clauses.len(), 3);
         for cl in &c.clauses {
@@ -905,7 +1260,7 @@ mod tests {
             WHEN x a
             THEN x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         let cl = &c.clauses[0];
         assert_eq!(cl.lits.len(), 2);
@@ -929,7 +1284,7 @@ mod tests {
             WHEN x a
             THEN NOT x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         let b = id(&c, &key("x", "b", None));
         assert!(c.clauses[0].lits.contains(&Lit {
             atom: b,
@@ -946,7 +1301,7 @@ mod tests {
             THEN x a
             OR x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         let cl = &c.clauses[0];
         assert_eq!(cl.lits.len(), 3);
@@ -977,7 +1332,7 @@ mod tests {
             OR x b
             THEN x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 2);
         let a = id(&c, &key("x", "a", None));
         let b = id(&c, &key("x", "b", None));
@@ -1011,7 +1366,7 @@ mod tests {
             THEN x c
             OR x d
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 2);
         for cl in &c.clauses {
             assert_eq!(cl.lits.len(), 3);
@@ -1027,7 +1382,7 @@ mod tests {
             OR x b
             THEN x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.rules.len(), 2);
         assert!(
             c.rules
@@ -1045,7 +1400,7 @@ mod tests {
             THEN x b
             OR x c
         "#;
-        let err = compile_source("<t>", src).unwrap_err();
+        let err = cs(src).unwrap_err();
         assert!(matches!(
             err,
             CompileError::RuleDisjunctiveConsequent { .. }
@@ -1060,7 +1415,7 @@ mod tests {
                 x a
                 x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         // pairwise C(2,2)=1 + 1 at-least-one = 2 clauses
         assert_eq!(c.clauses.len(), 2);
         // the at-least-one clause is the all-negated one
@@ -1076,7 +1431,7 @@ mod tests {
                 x b
                 x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 1);
         assert_eq!(c.clauses[0].lits.len(), 3);
         assert!(c.clauses[0].lits.iter().all(|l| l.negated));
@@ -1089,7 +1444,7 @@ mod tests {
             WHEN x a
             THEN x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 0);
         assert_eq!(c.rules.len(), 1);
         assert_eq!(c.rules[0].antecedent.len(), 1);
@@ -1103,7 +1458,7 @@ mod tests {
         FACT a a
         FACT m m
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         let mut sorted = c.atoms.clone();
         sorted.sort();
         assert_eq!(c.atoms, sorted);
@@ -1121,7 +1476,7 @@ mod tests {
                 x a
                 x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }
 
@@ -1137,7 +1492,7 @@ mod tests {
                 x a
                 x c
         "#;
-        let err = compile_source("<t>", src).unwrap_err();
+        let err = cs(src).unwrap_err();
         assert_eq!(
             err,
             CompileError::PremiseRedefinition {
@@ -1148,42 +1503,44 @@ mod tests {
 
     #[test]
     fn duplicate_fact_is_idempotent() {
-        let c = compile_source("<t>", "FACT x a\nFACT x a\n").unwrap();
+        let c = cs("FACT x a\nFACT x a\n").unwrap();
         assert_eq!(c.facts.len(), 1);
     }
 
     #[test]
     fn conflicting_facts_are_both_kept() {
         // FACT X + NOT X is a CONFLICT for the solver, not a compile error.
-        let c = compile_source("<t>", "FACT x a\nNOT x a\n").unwrap();
+        let c = cs("FACT x a\nNOT x a\n").unwrap();
         assert_eq!(c.facts.len(), 2);
     }
 
     #[test]
     fn import_is_recorded_pending() {
-        let c = compile_source("<t>", "IMPORT \"physics.vrf\"\nFACT x a\n").unwrap();
+        let c = cs("IMPORT \"physics.vrf\"\nFACT x a\n").unwrap();
         assert_eq!(c.pending_imports, vec!["physics.vrf".to_string()]);
     }
 
     #[test]
-    fn import_flat_merges_and_atoms_unify() {
-        // The library constrains `Engine.X has fuel`; the main file asserts it.
-        // After merge the atom must be ONE shared id (unification across files).
+    fn qualified_fact_lands_in_the_imported_domain() {
+        // The library's premise is about `physics.Engine_X has fuel`; the main file
+        // asserts a fact qualified INTO that domain, so the two share one atom id.
         let mut r = MemoryResolver::new();
         r.add(
             "lib.vrf",
             r#"
+        DOMAIN physics
         PREMISE needs_fuel:
-            WHEN Engine.X has engine
-            THEN Engine.X has fuel
+            WHEN Engine_X has engine
+            THEN Engine_X has fuel
         "#,
         );
         r.add(
             "main.vrf",
             r#"
+        DOMAIN main
         IMPORT "lib.vrf"
-        FACT Engine.X has engine
-        FACT Engine.X has fuel
+        FACT physics.Engine_X has engine
+        FACT physics.Engine_X has fuel
         "#,
         );
         let c = compile("main.vrf", &r).unwrap();
@@ -1191,29 +1548,152 @@ mod tests {
         assert_eq!(c.clauses.len(), 1); // the imported premise
         assert_eq!(c.facts.len(), 2);
 
-        // `Engine.X has fuel` from the FACT and from the imported premise share an id.
-        let fuel = key("Engine.X", "has", Some("fuel"));
+        // `physics.Engine_X has fuel` from the FACT and the imported premise share an id.
+        let fuel = key_in("physics", "Engine_X", "has", Some("fuel"));
         let fuel_id = id(&c, &fuel);
         assert!(c.facts.iter().any(|f| f.atom == fuel_id));
         assert!(c.clauses[0].lits.iter().any(|l| l.atom == fuel_id));
     }
 
     #[test]
+    fn same_triple_in_different_domains_does_not_unify() {
+        // Without a domain prefix the fact lands in `main`, NOT `physics`, so it is
+        // a distinct atom from the library's `physics.Engine_X has fuel`.
+        let mut r = MemoryResolver::new();
+        r.add("lib.vrf", "DOMAIN physics\nFACT Engine_X has fuel\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"lib.vrf\"\nFACT Engine_X has fuel\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        // Two distinct atoms: physics.Engine_X has fuel and main.Engine_X has fuel.
+        assert!(c.atoms.iter().any(|a| a.domain == "physics"));
+        assert!(c.atoms.iter().any(|a| a.domain == "main"));
+        assert_eq!(
+            c.atoms
+                .iter()
+                .filter(|a| a.subject == "Engine_X" && a.predicate == "has")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn import_alias_binds_a_local_domain_name() {
+        // `AS phys` lets the consumer reference the imported domain by a local name.
+        let mut r = MemoryResolver::new();
+        r.add("lib.vrf", "DOMAIN physics\nFACT Motor over_200\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"lib.vrf\" AS phys\nFACT phys.Motor over_100\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        // Both facts live in the physics domain (one via its own name, one via alias).
+        assert_eq!(c.atoms.iter().filter(|a| a.domain == "physics").count(), 2);
+    }
+
+    #[test]
+    fn unknown_domain_reference_errors() {
+        // Referencing a domain that is neither this file's nor imported here fails.
+        let err = cs("FACT ghost.x a\n").unwrap_err();
+        assert!(matches!(err, CompileError::UnknownDomain { .. }));
+    }
+
+    #[test]
+    fn imports_are_not_transitive_for_naming() {
+        // main imports physics; physics imports math. main may NOT name math.
+        let mut r = MemoryResolver::new();
+        r.add("math.vrf", "DOMAIN math\nFACT foo bar\n");
+        r.add(
+            "physics.vrf",
+            "DOMAIN physics\nIMPORT \"math.vrf\"\nFACT Motor over_100\n",
+        );
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT math.foo bar\n",
+        );
+        let err = compile("main.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::UnknownDomain { .. }));
+    }
+
+    #[test]
+    fn transitive_dependency_clauses_still_load() {
+        // Even though main can't *name* math, math's clauses still participate.
+        let mut r = MemoryResolver::new();
+        r.add(
+            "math.vrf",
+            "DOMAIN math\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+        );
+        r.add("physics.vrf", "DOMAIN physics\nIMPORT \"math.vrf\"\n");
+        r.add("main.vrf", "DOMAIN main\nIMPORT \"physics.vrf\"\n");
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.clauses.len(), 1); // math's clause loaded transitively
+        assert!(c.clauses.iter().all(|cl| cl.origin.source == "math.vrf"));
+    }
+
+    #[test]
+    fn missing_domain_errors() {
+        let err = compile_source("nodomain.vrf", "FACT x a\n").unwrap_err();
+        assert!(matches!(err, CompileError::MissingDomain { .. }));
+    }
+
+    #[test]
+    fn duplicate_domain_errors() {
+        let err = compile_source("dup.vrf", "DOMAIN a\nDOMAIN b\nFACT x a\n").unwrap_err();
+        assert!(matches!(err, CompileError::DuplicateDomain { .. }));
+    }
+
+    #[test]
+    fn alias_clash_when_one_local_name_binds_two_domains() {
+        // The same local alias `x` bound to two genuinely different domains is a
+        // clash: disambiguate with distinct aliases.
+        let mut r = MemoryResolver::new();
+        r.add("a.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add("b.vrf", "DOMAIN chemistry\nFACT atom reacts\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"a.vrf\" AS x\nIMPORT \"b.vrf\" AS x\n",
+        );
+        let err = compile("main.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::DomainAliasClash { .. }));
+    }
+
+    #[test]
+    fn two_files_with_the_same_domain_name_merge() {
+        // Nominal domains: two files both declaring DOMAIN physics share it (the
+        // value of importing a premise library is exactly this unification).
+        let mut r = MemoryResolver::new();
+        r.add("a.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN physics\nIMPORT \"a.vrf\"\nFACT Motor over_200\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        // Both motors live in the single shared `physics` domain.
+        assert!(c.atoms.iter().all(|a| a.domain == "physics"));
+        assert_eq!(c.atoms.len(), 2);
+    }
+
+    #[test]
     fn diamond_import_is_deduped() {
-        // main → a, b ; a → base ; b → base. base merged once.
+        // main → a, c ; a → base ; c → base. base merged once.
         let mut r = MemoryResolver::new();
         r.add(
             "base.vrf",
             r#"
+        DOMAIN base
         PREMISE b:
             EXCLUSIVE
                 x a
                 x b
         "#,
         );
-        r.add("a.vrf", "IMPORT \"base.vrf\"\n");
-        r.add("c.vrf", "IMPORT \"base.vrf\"\n");
-        r.add("main.vrf", "IMPORT \"a.vrf\"\nIMPORT \"c.vrf\"\n");
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"base.vrf\"\n");
+        r.add("c.vrf", "DOMAIN c\nIMPORT \"base.vrf\"\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"a.vrf\"\nIMPORT \"c.vrf\"\n",
+        );
         let c = compile("main.vrf", &r).unwrap();
         assert_eq!(c.clauses.len(), 1); // base's single clause, not two
     }
@@ -1221,29 +1701,154 @@ mod tests {
     #[test]
     fn circular_import_errors() {
         let mut r = MemoryResolver::new();
-        r.add("a.vrf", "IMPORT \"b.vrf\"\n");
-        r.add("b.vrf", "IMPORT \"a.vrf\"\n");
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\n");
+        r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\n");
         let err = compile("a.vrf", &r).unwrap_err();
         assert!(matches!(err, CompileError::CircularImport(_)));
     }
 
     #[test]
+    fn three_node_cycle_errors() {
+        // a → b → c → a. The back-edge to the on-path ancestor is detected.
+        let mut r = MemoryResolver::new();
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\n");
+        r.add("b.vrf", "DOMAIN b\nIMPORT \"c.vrf\"\n");
+        r.add("c.vrf", "DOMAIN c\nIMPORT \"a.vrf\"\n");
+        let err = compile("a.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::CircularImport(_)));
+    }
+
+    #[test]
+    fn shared_grandchild_diamond_loads_once() {
+        // The user's case: a imports B and C; C ALSO imports B. B must be compiled
+        // exactly once (its single clause is not duplicated by the two paths to it).
+        let mut r = MemoryResolver::new();
+        r.add(
+            "b.vrf",
+            "DOMAIN b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+        );
+        r.add("c.vrf", "DOMAIN c\nIMPORT \"b.vrf\"\n");
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\nIMPORT \"c.vrf\"\n");
+        let c = compile("a.vrf", &r).unwrap();
+        assert_eq!(
+            c.clauses.len(),
+            1,
+            "b.vrf's clause must appear exactly once"
+        );
+    }
+
+    #[test]
+    fn exponential_fan_out_is_memoized_not_blown_up() {
+        // f_k imports f_{k-1} TWICE. Without content-hash memoization the visit
+        // count is 2^k (2^40 ≈ a trillion); with it, the work is linear, so this
+        // finishes instantly. A guard against any combinatorial blow-up / DoS.
+        let mut r = MemoryResolver::new();
+        r.add("f0.vrf", "DOMAIN d0\nFACT x a\n");
+        let n = 40;
+        for k in 1..=n {
+            r.add(
+                &alloc::format!("f{k}.vrf"),
+                &alloc::format!(
+                    "DOMAIN d{k}\nIMPORT \"f{}.vrf\"\nIMPORT \"f{}.vrf\"\n",
+                    k - 1,
+                    k - 1
+                ),
+            );
+        }
+        let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+        assert_eq!(c.facts.len(), 1); // the single fact from f0, reached once
+    }
+
+    #[test]
+    fn very_deep_linear_chain_does_not_overflow() {
+        // A long non-cyclic chain. Resolution is iterative (explicit work stack),
+        // so a depth that would overflow a recursive loader compiles cleanly.
+        let mut r = MemoryResolver::new();
+        r.add("f0.vrf", "DOMAIN d0\nFACT x a\n");
+        let n = 10_000;
+        for k in 1..=n {
+            r.add(
+                &alloc::format!("f{k}.vrf"),
+                &alloc::format!("DOMAIN d{k}\nIMPORT \"f{}.vrf\"\n", k - 1),
+            );
+        }
+        let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+        assert_eq!(c.facts.len(), 1);
+    }
+
+    #[test]
     fn missing_import_errors() {
         let mut r = MemoryResolver::new();
-        r.add("main.vrf", "IMPORT \"ghost.vrf\"\n");
+        r.add("main.vrf", "DOMAIN main\nIMPORT \"ghost.vrf\"\n");
         let err = compile("main.vrf", &r).unwrap_err();
         assert!(matches!(err, CompileError::ImportNotFound(_)));
     }
 
     #[test]
-    fn same_name_across_domains_coexists() {
-        // Two files may legitimately reuse a premise NAME with different bodies
-        // (different domains). Names are per-source labels — both premises apply,
-        // and the report qualifies them by source. NOT a redefinition error.
+    fn unused_import_is_flagged() {
+        // main imports physics but never writes a `physics.` atom → unused.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT x a\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.unused_imports.len(), 1);
+        assert_eq!(c.unused_imports[0].domain, "physics");
+        assert_eq!(c.unused_imports[0].file, "main.vrf");
+        assert_eq!(c.unused_imports[0].alias, None);
+    }
+
+    #[test]
+    fn referenced_import_is_not_unused() {
+        // The same import, but now a `physics.` atom uses it → not flagged.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT physics.Motor over_200\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
+    }
+
+    #[test]
+    fn unused_import_records_its_alias() {
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\" AS phys\nFACT x a\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert_eq!(c.unused_imports.len(), 1);
+        assert_eq!(c.unused_imports[0].alias.as_deref(), Some("phys"));
+    }
+
+    #[test]
+    fn import_referenced_only_inside_a_premise_is_used() {
+        // The reference can be anywhere — here inside a premise body, not a fact.
+        let mut r = MemoryResolver::new();
+        r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+        r.add(
+            "main.vrf",
+            "DOMAIN main\nIMPORT \"physics.vrf\"\nPREMISE p:\n    WHEN physics.Motor over_100\n    THEN x ok\n",
+        );
+        let c = compile("main.vrf", &r).unwrap();
+        assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
+    }
+
+    #[test]
+    fn same_premise_name_across_files_coexists() {
+        // Two files may legitimately reuse a premise NAME with different bodies.
+        // Names are per-source labels — both premises apply, qualified by source.
+        // NOT a redefinition error. (Atoms stay apart too: different domains.)
         let mut r = MemoryResolver::new();
         r.add(
             "physics.vrf",
             r#"
+        DOMAIN physics
         PREMISE safety:
             EXCLUSIVE
                 x a
@@ -1253,6 +1858,7 @@ mod tests {
         r.add(
             "main.vrf",
             r#"
+        DOMAIN main
         IMPORT "physics.vrf"
         PREMISE safety:
             EXCLUSIVE
@@ -1267,61 +1873,10 @@ mod tests {
     }
 
     #[test]
-    fn two_libs_same_name_into_one_consumer() {
-        // A.vrf and B.vrf each define their OWN `x` (different bodies); C imports
-        // both. Both `x` coexist (per-source labels). Meanwhile the atom they
-        // share (S has a) unifies into ONE id — names are scoped, atoms are not.
-        let mut r = MemoryResolver::new();
-        r.add(
-            "A.vrf",
-            r#"
-        PREMISE x:
-            EXCLUSIVE
-                S has a
-                S has b
-        "#,
-        );
-        r.add(
-            "B.vrf",
-            r#"
-        PREMISE x:
-            EXCLUSIVE
-                S has a
-                S has c
-        "#,
-        );
-        r.add("C.vrf", "IMPORT \"A.vrf\"\nIMPORT \"B.vrf\"\n");
-        let c = compile("C.vrf", &r).unwrap();
-
-        // both `x` premises contributed a clause, kept apart by source
-        assert_eq!(c.clauses.len(), 2);
-        assert!(
-            c.clauses
-                .iter()
-                .any(|cl| cl.origin.source == "A.vrf" && cl.origin.premise.as_deref() == Some("x"))
-        );
-        assert!(
-            c.clauses
-                .iter()
-                .any(|cl| cl.origin.source == "B.vrf" && cl.origin.premise.as_deref() == Some("x"))
-        );
-
-        // the shared atom `S has a` is a single interned id used by both clauses
-        let s_a = id(&c, &key("S", "has", Some("a")));
-        assert!(
-            c.clauses
-                .iter()
-                .filter(|cl| cl.lits.iter().any(|l| l.atom == s_a))
-                .count()
-                == 2,
-            "both clauses must reference the same unified `S has a` atom"
-        );
-    }
-
-    #[test]
     fn redefinition_within_one_source_still_errors() {
         // But reusing a name with a different body *inside one source* is a mistake.
         let src = r#"
+        DOMAIN m
         PREMISE e:
             EXCLUSIVE
                 x a
@@ -1355,8 +1910,8 @@ mod tests {
         assert!(c.pending_imports.is_empty());
         // physics.vrf: one_path (EXCLUSIVE, 1 clause) + speed_order (impl, 1 clause)
         assert_eq!(c.clauses.len(), 2);
-        // over_200 / over_100 unify between the facts and the imported premise.
-        let over_100 = id(&c, &key("Motor", "over_100", None));
+        // The qualified facts (`physics.Motor …`) share ids with the imported premise.
+        let over_100 = id(&c, &key_in("physics", "Motor", "over_100", None));
         assert!(c.facts.iter().any(|f| f.atom == over_100));
         assert!(
             c.clauses
@@ -1386,7 +1941,7 @@ mod tests {
                 x b
                 x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 3); // C(3,2), like EXCLUSIVE
         assert!(
             c.clauses
@@ -1403,7 +1958,7 @@ mod tests {
             THEN x b
             AND  x c
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.rules.len(), 1);
         assert_eq!(c.rules[0].consequent.len(), 2);
     }
@@ -1416,7 +1971,7 @@ mod tests {
             WHEN NOT x a
             THEN x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         let xa = id(&c, &key("x", "a", None));
         assert!(c.clauses[0].lits.contains(&Lit {
             atom: xa,
@@ -1431,7 +1986,7 @@ mod tests {
             WHEN x a
             THEN NOT x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert!(c.rules[0].consequent[0].negated);
     }
 
@@ -1445,15 +2000,12 @@ mod tests {
                 m m
         FACT q q
         "#;
-        assert_eq!(
-            compile_source("<t>", src).unwrap(),
-            compile_source("<t>", src).unwrap()
-        );
+        assert_eq!(cs(src).unwrap(), cs(src).unwrap());
     }
 
     #[test]
     fn empty_program_compiles_to_empty_ir() {
-        let c = compile_source("<t>", "// nothing here\n").unwrap();
+        let c = cs("// nothing here\n").unwrap();
         assert!(c.atoms.is_empty() && c.clauses.is_empty() && c.facts.is_empty());
     }
 
@@ -1470,14 +2022,14 @@ mod tests {
                 x a
                 x b
         "#;
-        let c = compile_source("<t>", src).unwrap();
+        let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 1);
     }
 
     #[test]
     fn object_distinguishes_atom_identity() {
         // `x p a` and `x p b` differ only by object → two distinct atoms.
-        let c = compile_source("<t>", "FACT x p a\nFACT x p b\n").unwrap();
+        let c = cs("FACT x p a\nFACT x p b\n").unwrap();
         assert_eq!(c.atoms.len(), 2);
     }
 }

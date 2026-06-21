@@ -9,6 +9,8 @@
 // `elenchus-cli docs/examples/extension-plan.vrf`.
 // ============================================================
 
+DOMAIN plan
+
 // --- Goals we commit to ---
 
 FACT plan adds numbers

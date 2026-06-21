@@ -18,8 +18,9 @@ harness that supports shell tools.
 
 ```console
 $ elenchus-cli path/to/program.vrf          # check a file (IMPORTs resolve relative to it)
-$ elenchus-cli --text "FACT x a
-CHECK x"                                      # inline program
+$ elenchus-cli --text "DOMAIN d
+FACT x a
+CHECK x"                                      # inline program (every file starts with DOMAIN)
 $ cat program.vrf | elenchus-cli -          # stdin
 $ elenchus-cli program.vrf --format json        # machine-readable output
 $ elenchus-cli broken.vrf --max-per-class 3     # cap places shown per error class
@@ -46,8 +47,8 @@ Human (default) — e.g. a gate whose consequent has not been stated yet:
 ```text
 $ elenchus-cli ready.vrf
 RESULT: WARNING
-  WARNING   ready (PREMISE)  [ready.vrf:2]
-      blocked by: svc tested
+  WARNING   ready (PREMISE)  [ready.vrf:3]
+      blocked by: web.svc tested
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1
 ```
@@ -55,7 +56,7 @@ EXIT_CODE: 1
 JSON (`--format json`) — one line, for tooling and agents:
 
 ```json
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[]}
 ```
 
 ### Syntax errors
@@ -71,7 +72,7 @@ $ elenchus-cli broken.vrf
 RESULT: 2 syntax errors in broken.vrf
 
 FACT  (1 problem)
-  syntax  : FACT <Subject> <predicate> [<object>]
+  syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
   example : FACT socrates is human
     line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
       | FACT lonely

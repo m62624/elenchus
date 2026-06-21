@@ -6,15 +6,15 @@ RESULT: CONFLICT
   CONFLICT  - (UNSAT)  [<system>:0]
       the premises and facts are jointly unsatisfiable
   CORE  smallest jointly-unsatisfiable set (4):
-        a_implies_b (PREMISE)  [v.vrf:2]
-        a_implies_not_b (PREMISE)  [v.vrf:5]
-        atleast_a_c (ATLEAST)  [v.vrf:8]
-        c_implies_a (PREMISE)  [v.vrf:12]
-  WARNING   a_implies_b (PREMISE)  [v.vrf:2]
-      blocked by: x a, x b
-  WARNING   a_implies_not_b (PREMISE)  [v.vrf:5]
-      blocked by: x a, x b
-  WARNING   c_implies_a (PREMISE)  [v.vrf:12]
-      blocked by: x c, x a
+        a_implies_b (PREMISE)  [v.vrf:3]
+        a_implies_not_b (PREMISE)  [v.vrf:6]
+        atleast_a_c (ATLEAST)  [v.vrf:9]
+        c_implies_a (PREMISE)  [v.vrf:13]
+  WARNING   a_implies_b (PREMISE)  [v.vrf:3]
+      blocked by: d.x a, d.x b
+  WARNING   a_implies_not_b (PREMISE)  [v.vrf:6]
+      blocked by: d.x a, d.x b
+  WARNING   c_implies_a (PREMISE)  [v.vrf:13]
+      blocked by: d.x c, d.x a
 SUMMARY: 1 conflicts, 0 underdetermined, 3 warnings, 0 derived
 EXIT_CODE: 2

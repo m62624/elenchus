@@ -6,8 +6,8 @@ RESULT: CONFLICT
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
       Remove or flip ONE of them, then check again:
-      ASSUME NOT x a   [v.vrf:2]
-  ORPHAN    FACT x a — not used by any premise or rule (no effect on the result)
-  ORPHAN    ASSUME NOT x a — not used by any premise or rule (no effect on the result)
+      ASSUME NOT d.x a   [v.vrf:3]
+  ORPHAN    FACT d.x a — not used by any premise or rule (no effect on the result)
+  ORPHAN    ASSUME NOT d.x a — not used by any premise or rule (no effect on the result)
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2
