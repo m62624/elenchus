@@ -82,6 +82,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 
 | Keyword | Where | One-line meaning |
 |---------|-------|------------------|
+| `DOMAIN` | statement (first, once) | declare this file's domain — the namespace its atoms live in (**required**) |
 | `FACT` | statement | assert an atom TRUE |
 | `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
 | `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
@@ -89,7 +90,8 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
 | `CHECK` | statement | run the engine (optionally for one subject) |
 | `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
-| `IMPORT` | statement | flat-merge another `.vrf` source (atoms unify by identity) |
+| `IMPORT` | statement | pull in another `.vrf` source; reference its atoms as `<domain>.<atom>` |
+| `AS` | `IMPORT` modifier | give the imported domain a local alias (`IMPORT "x.vrf" AS y`) |
 | `EXCLUSIVE` | `PREMISE` body | **at most one** of the listed atoms is TRUE |
 | `FORBIDS` | `PREMISE` body | synonym of `EXCLUSIVE` (reads well for two: "not both") |
 | `ONEOF` | `PREMISE` body | **exactly one** of the listed atoms is TRUE |
@@ -100,12 +102,26 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `OR` | `WHEN`/`THEN` group | disjunction of literals in that group |
 | `//` | anywhere | line comment (to end of line) |
 
-The line-oriented rules that hold everywhere: **one statement per line** (newlines
-separate them); **indentation and extra spaces are cosmetic**; an **atom** is two
-or three space-separated identifiers `subject predicate [object]`; a **literal** is
-an atom optionally prefixed with `NOT`.
+The line-oriented rules that hold everywhere: **every file begins with `DOMAIN
+<name>`** (its first statement); **one statement per line** (newlines separate
+them); **indentation and extra spaces are cosmetic**; an **atom** is two or three
+space-separated identifiers `subject predicate [object]`, optionally prefixed with
+a domain (`<domain>.subject predicate [object]`); a **literal** is an atom
+optionally prefixed with `NOT`.
 
 ## Each keyword: syntax · why · mini-example
+
+### `DOMAIN` — declare the file's domain (required, first)
+- **Syntax:** `DOMAIN <name>` — exactly once, as the first statement of the file.
+- **Why:** the domain is part of every atom's identity. Atoms you write without a
+  prefix belong to **this** domain; the same triple in a different domain is a
+  **different atom** (so `physics.engine runs` ≠ `plan.engine runs`). This is what
+  keeps an imported library's `capital` from silently colliding with yours. A file
+  with no `DOMAIN` is an error.
+```vrf
+DOMAIN plan
+FACT engine has_fuel          // identity: plan.engine has_fuel
+```
 
 ### `FACT` / `NOT` — confident facts
 - **Syntax:** `FACT <subject> <predicate> [<object>]` · `NOT <subject> <predicate> [<object>]`
@@ -223,17 +239,22 @@ RULE flyers_breathe:
 CHECK alice BIDIRECTIONAL
 ```
 
-### `IMPORT` — reuse another source
-- **Syntax:** `IMPORT "<path>"` (quoted path).
-- **Why:** flat-merges another `.vrf` file. Think **linker**, not function import:
-  files link through **shared atoms** — `Engine.X has fuel` is the same atom
-  everywhere, so an imported premise constrains your local facts about that atom.
-  Premise *names* are per-source labels (no clash, never referenced). Imports
-  compose by **AND**; a genuine disagreement (`a→b` vs `a→¬b`) is a real CONFLICT.
-  **`IMPORT` only resolves in file mode** (not `--text`/stdin).
+### `IMPORT` — reuse another domain
+- **Syntax:** `IMPORT "<path>"` · `IMPORT "<path>" AS <alias>` (quoted path).
+- **Why:** pulls in another `.vrf` file (which declares its own `DOMAIN`). You then
+  reference its atoms **explicitly** as `<domain>.<atom>` — no silent merge. To make
+  an imported premise constrain a fact, write that fact **into the imported domain**:
+  if `physics.vrf` has `WHEN Motor over_200 THEN Motor over_100`, then your
+  `FACT physics.Motor over_200` triggers it. By default the local name is the
+  imported file's own domain; `AS <alias>` renames it (and disambiguates two imports
+  that declare the same domain). Naming is **file-local and non-transitive**: you can
+  reference only domains *you* import here — not what they, in turn, imported.
+  Premise *names* stay per-source labels. **`IMPORT` only resolves in file mode**
+  (not `--text`/stdin).
 ```vrf
+DOMAIN demo
 IMPORT "physics.vrf"
-FACT motor over_100
+FACT physics.Motor over_200   // a fact placed into the imported domain
 ```
 
 ### `//` — comments
@@ -244,10 +265,13 @@ FACT a b   // a trailing note
 
 ## Atoms & identity — the #1 gotcha
 
-An **atom** is the triple `(subject, predicate, object?)` and is compared
-**verbatim, case-sensitively**. Identifiers may use letters of **any script**
-(`условие`, `名前` are fine), then letters/digits/`_`/`.`; they can't start with a
-digit or equal a keyword.
+An **atom**'s identity is its **domain** plus the triple
+`(subject, predicate, object?)`, compared **verbatim, case-sensitively**. Bare
+atoms take the file's `DOMAIN`; a `<domain>.` prefix puts the atom in an imported
+domain. Identifiers may use letters of **any script** (`условие`, `名前` are fine),
+then letters/digits/`_`; they can't start with a digit or equal a keyword. **`.` is
+the domain separator, not a name character** — write compound names with `_`
+(`Engine_X`, not `Engine.X`).
 
 `has_fuel` ≠ `hasFuel` ≠ `Has_fuel`, and crucially **`is rolled_back` (two words)
 ≠ `is_rolled_back` (one word)** — `_`-vs-space changes which token is predicate vs
@@ -362,6 +386,7 @@ CONFLICT) — a ready CI gate.
 
 ### 1. The smallest contradiction
 ```vrf
+DOMAIN demo
 FACT x a
 NOT  x a
 CHECK x
@@ -370,6 +395,7 @@ CHECK x
 
 ### 2. Exactly-one assignment
 ```vrf
+DOMAIN roles
 PREMISE alice_role:
     ONEOF
         alice is lead
@@ -382,6 +408,7 @@ CHECK alice
 
 ### 3. A gate — iterate WARNING → CONSISTENT
 ```vrf
+DOMAIN svc
 FACT svc built
 PREMISE ready:
     WHEN svc built
@@ -395,6 +422,7 @@ deployable` → `CONSISTENT`. Add `FACT svc tested` but `NOT svc deployable` →
 
 ### 4. Disjunction — `OR` in `THEN`
 ```vrf
+DOMAIN net
 PREMISE needs_backend:
     WHEN gateway in_prod
     THEN auth in_staging
@@ -410,6 +438,7 @@ it fires when *either* trigger holds.)
 
 ### 5. Derivation + branch coverage (`RULE` + `EXCLUSIVE`)
 ```vrf
+DOMAIN motor
 FACT motor over_100
 RULE pick_fast:
     WHEN motor over_100
@@ -428,6 +457,7 @@ CHECK motor
 
 ### 6. Jointly-unsatisfiable — only `BIDIRECTIONAL` finds it
 ```vrf
+DOMAIN demo
 PREMISE a_to_b:
     WHEN x a
     THEN x b
@@ -449,14 +479,16 @@ four premises jointly to blame.
 
 ### 7. Reuse via `IMPORT`
 ```vrf
-// physics.vrf provides: PREMISE fast_xor_slow (EXCLUSIVE motor uses fast_path / slow_path)
+// physics.vrf (DOMAIN physics) provides:
+//   PREMISE fast_xor_slow (EXCLUSIVE Motor uses fast_path / slow_path)
+DOMAIN demo
 IMPORT "physics.vrf"
-FACT motor uses fast_path
-FACT motor uses slow_path
-CHECK motor
+FACT physics.Motor uses fast_path
+FACT physics.Motor uses slow_path
+CHECK
 ```
-`CONFLICT` — your local facts violate the imported premise, because both files
-share the atoms `motor uses fast_path` / `slow_path`. (`IMPORT` needs file mode.)
+`CONFLICT` — your facts, placed **into the physics domain** (`physics.Motor …`),
+violate the imported premise about those same atoms. (`IMPORT` needs file mode.)
 
 ### 8. Capstone — a real "ship to prod?" decision (the payoff)
 
@@ -466,6 +498,7 @@ derives an obligation, and a chained gate. You believe the release is ready and
 state what you know:
 
 ```vrf
+DOMAIN ship
 PREMISE one_stage:                 // a release is in exactly one stage
     ONEOF
         rel in_dev
@@ -522,6 +555,7 @@ Same safety gate, but now you're *trying something on*: "what if this ships to
 prod with no rollback and no feature flag — does it hold?" State the real
 facts/premises, then guess with `ASSUME`:
 ```vrf
+DOMAIN ship
 FACT  rel reviewed
 PREMISE prod_needs_safety:        // in prod: need a rollback OR a feature flag
     WHEN rel in_prod
@@ -550,7 +584,7 @@ You have exactly one of two ways in. Detect which:
 
 - **Shell available →** use the **CLI** (the `elenchus-cli` binary).
   - `elenchus-cli program.vrf` — check a file (the only mode where `IMPORT` resolves).
-  - `elenchus-cli --text "FACT x a\nCHECK x"` — inline (newlines required between lines).
+  - `elenchus-cli --text "DOMAIN d\nFACT x a\nCHECK x"` — inline (newlines required between lines).
   - `cat program.vrf | elenchus-cli` — stdin. `--format json` for machine output.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
@@ -572,8 +606,8 @@ You have exactly one of two ways in. Detect which:
 Prove at least one transport actually runs before trusting anything. Run the
 known-CONFLICT program and confirm the result:
 
-- **CLI:** `elenchus-cli --text "FACT x a\nNOT x a\nCHECK x"` → expect **CONFLICT**, exit **2**.
-- **MCP:** `elenchus_check` with `{"program":"FACT x a\nNOT x a\nCHECK x"}` → `status` == `"CONFLICT"`.
+- **CLI:** `elenchus-cli --text "DOMAIN d\nFACT x a\nNOT x a\nCHECK x"` → expect **CONFLICT**, exit **2**.
+- **MCP:** `elenchus_check` with `{"program":"DOMAIN d\nFACT x a\nNOT x a\nCHECK x"}` → `status` == `"CONFLICT"`.
 
 Any other answer means the install is broken — fix that before continuing.
 

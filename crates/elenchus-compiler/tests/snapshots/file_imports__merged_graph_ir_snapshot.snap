@@ -5,6 +5,7 @@ expression: c
 Compiled {
     atoms: [
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "brakes",
             object: Some(
@@ -12,6 +13,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "engine",
             object: Some(
@@ -19,6 +21,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "engine",
             object: Some(
@@ -26,6 +29,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "gear",
             object: Some(
@@ -33,6 +37,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "gear",
             object: Some(
@@ -40,6 +45,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "gear",
             object: Some(
@@ -47,6 +53,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "car",
             subject: "Car",
             predicate: "has",
             object: Some(
@@ -60,7 +67,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
-                line: 6,
+                line: 7,
                 premise: None,
                 kind: "FACT",
             },
@@ -71,7 +78,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
-                line: 7,
+                line: 8,
                 premise: None,
                 kind: "FACT",
             },
@@ -82,7 +89,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
-                line: 8,
+                line: 9,
                 premise: None,
                 kind: "FACT",
             },
@@ -93,7 +100,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "tests/fixtures/car.vrf",
-                line: 9,
+                line: 10,
                 premise: None,
                 kind: "FACT",
             },
@@ -114,7 +121,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
-                line: 2,
+                line: 3,
                 premise: Some(
                     "exactly_one_gear",
                 ),
@@ -134,7 +141,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
-                line: 2,
+                line: 3,
                 premise: Some(
                     "exactly_one_gear",
                 ),
@@ -154,7 +161,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
-                line: 2,
+                line: 3,
                 premise: Some(
                     "exactly_one_gear",
                 ),
@@ -178,7 +185,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/core/base.vrf",
-                line: 2,
+                line: 3,
                 premise: Some(
                     "exactly_one_gear",
                 ),
@@ -198,7 +205,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/std/engine.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "engine_needs_fuel",
                 ),
@@ -218,7 +225,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/std/safety.vrf",
-                line: 5,
+                line: 6,
                 premise: Some(
                     "drive_safely",
                 ),
@@ -242,7 +249,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "tests/fixtures/std/engine.vrf",
-                line: 8,
+                line: 9,
                 premise: Some(
                     "running_implies_warm",
                 ),

@@ -4,7 +4,9 @@
 
 /// Reserved words — always CAPS, in full. An identifier may not equal any of these.
 pub const RESERVED: &[&str] = &[
+    "DOMAIN",
     "IMPORT",
+    "AS",
     "FACT",
     "NOT",
     "ASSUME",
@@ -27,7 +29,7 @@ pub const RESERVED: &[&str] = &[
 /// starts (after cosmetic indentation) with one of these, so a broken PREMISE
 /// body never cascades into spurious errors on its `WHEN`/`THEN`/atom lines.
 pub const TOP_LEVEL: &[&str] = &[
-    "IMPORT", "FACT", "NOT", "ASSUME", "PREMISE", "RULE", "CHECK",
+    "DOMAIN", "IMPORT", "FACT", "NOT", "ASSUME", "PREMISE", "RULE", "CHECK",
 ];
 
 /// Whether `word` is a reserved keyword.

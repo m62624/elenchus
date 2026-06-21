@@ -76,10 +76,11 @@ fn perr<'a, T>(input: Span<'a>) -> PResult<'a, T> {
 
 /// Characters allowed *after* the first in an identifier. Letters and digits of
 /// *any* script are accepted (Unicode `is_alphanumeric`), so `условие` or `名前`
-/// are valid; `_` joins multi-word names and `.` makes dotted subjects like
-/// `Creature.A` a single token. Punctuation and other symbols are rejected.
+/// are valid; `_` joins multi-word names. `.` is **not** an identifier character:
+/// it is the domain separator (`physics.engine`), so use `_` for compound
+/// subjects (`Creature_A`). Punctuation and other symbols are rejected.
 fn is_ident_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '.'
+    c.is_alphanumeric() || c == '_'
 }
 
 /// A bare identifier (does not reject reserved words). The first character must
@@ -128,9 +129,14 @@ fn skip_noise<'a>(input: Span<'a>) -> PResult<'a, ()> {
 
 // --- Atoms & literals ------------------------------------------------------
 
-/// `<subject> <predicate> [<object>]` — two or three space-separated identifiers.
+/// `[<domain>.]<subject> <predicate> [<object>]` — an atom, optionally qualified
+/// by a `domain.` prefix on the subject, then two or three space-separated
+/// identifiers. The domain is recognised only when an identifier is immediately
+/// followed by `.` (no space), so a bare `engine has_fuel` keeps `engine` as the
+/// subject.
 fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     let start = input;
+    let (input, domain) = opt(terminated(identifier, char('.'))).parse(input)?;
     let (input, subject) = identifier(input)?;
     let (input, _) = space1(input)?;
     let (input, predicate) = identifier(input)?;
@@ -139,6 +145,7 @@ fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
         input,
         Located {
             data: Atom {
+                domain: domain.map(|d| d.data),
                 subject: subject.data,
                 predicate: predicate.data,
                 object: object.map(|o| o.data),
@@ -339,7 +346,8 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
 
 // --- Statements ------------------------------------------------------------
 
-/// `IMPORT "<path>"` — a quoted path on one line.
+/// `IMPORT "<path>" [AS <alias>]` — a quoted path, optionally bound to a local
+/// domain alias, on one line.
 fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag("IMPORT"), space1).parse(input)?;
     let start = input;
@@ -348,14 +356,36 @@ fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         start,
         "IMPORT expects a quoted path, e.g. IMPORT \"physics.vrf\"",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after the IMPORT path")?;
+    // Optional `AS <alias>`: a local name for the imported domain.
+    let (input, alias) = opt(preceded((space1, tag("AS"), space1), identifier)).parse(input)?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the IMPORT path (did you mean AS <alias>?)",
+    )?;
     Ok((
         input,
-        Statement::Import(Located {
-            data: *path.fragment(),
-            span: start,
-        }),
+        Statement::Import {
+            path: Located {
+                data: *path.fragment(),
+                span: start,
+            },
+            alias,
+        },
     ))
+}
+
+/// `DOMAIN <name>` — declare this file's domain on one line.
+fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag("DOMAIN"), space1).parse(input)?;
+    let at = input;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "DOMAIN expects a name (a lowercase identifier), e.g. DOMAIN physics",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the DOMAIN name")?;
+    Ok((input, Statement::Domain(name)))
 }
 
 /// `FACT <atom>` — a TRUE assertion.
@@ -470,6 +500,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     // host's here-doc) and parse identically.
     let (input, _) = space0(input)?;
     alt((
+        stmt_domain,
         stmt_import,
         stmt_fact,
         stmt_assume,
@@ -484,7 +515,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 // --- Recovering driver -----------------------------------------------------
 
 /// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///

@@ -1,4 +1,5 @@
 // Core invariant shared by every domain: a car is in exactly one gear.
+DOMAIN car
 PREMISE exactly_one_gear:
     ONEOF
         Car gear park

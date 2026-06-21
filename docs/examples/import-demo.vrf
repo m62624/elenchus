@@ -1,16 +1,18 @@
 // The model writes ONLY facts. The first principles come from a vetted library.
-// Atoms unify across the IMPORT boundary: `Motor over_200` here is the SAME atom
-// as in physics.vrf, so speed_order constrains it.
+// Atoms are qualified into the imported domain: `physics.Motor over_200` is the
+// SAME atom the library's speed_order premise constrains.
+
+DOMAIN demo
 
 IMPORT "physics.vrf"
 
-FACT Motor over_200
-NOT  Motor over_100        // contradicts the imported speed_order premise
+FACT physics.Motor over_200
+NOT  physics.Motor over_100   // contradicts the imported speed_order premise
 
-CHECK Motor
+CHECK
 
 // Expected result:
 // CONFLICT  speed_order (WHEN/THEN)
-//   FACT Motor over_200  = TRUE   [line 6]
-//   NOT  Motor over_100  = FALSE  [line 7]
+//   physics.Motor over_200  = TRUE   [line 8]
+//   physics.Motor over_100  = FALSE  [line 9]
 //   → antecedent fired (over_200=TRUE) but consequent over_100 is FALSE

@@ -1,9 +1,9 @@
 ---
 source: crates/elenchus-solver/tests/output_variants.rs
-expression: "report(\"PREMISE e:\\n    EXCLUSIVE\\n        x a\\n        x b\\nCHECK x BIDIRECTIONAL\\n\")"
+expression: "report(r#\"\n        PREMISE e:\n            EXCLUSIVE\n                x a\n                x b\n        CHECK x BIDIRECTIONAL\n        \"#)"
 ---
 RESULT: UNDERDETERMINED
   UNDERDETERMINED  an alternative model exists
-      pin it down: add  FACT x b  or  NOT x b
+      pin it down: add  FACT d.x b  or  NOT d.x b
 SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 1

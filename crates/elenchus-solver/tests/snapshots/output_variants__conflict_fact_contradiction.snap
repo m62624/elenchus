@@ -3,9 +3,9 @@ source: crates/elenchus-solver/tests/output_variants.rs
 expression: "report(\"FACT x a\\nNOT x a\\nCHECK x\\n\")"
 ---
 RESULT: CONFLICT
-  CONFLICT  - (FACT)  [v.vrf:1]
-      x a (asserted both TRUE and FALSE)
-  ORPHAN    FACT x a — not used by any premise or rule (no effect on the result)
-  ORPHAN    NOT x a — not used by any premise or rule (no effect on the result)
+  CONFLICT  - (FACT)  [v.vrf:2]
+      d.x a (asserted both TRUE and FALSE)
+  ORPHAN    FACT d.x a — not used by any premise or rule (no effect on the result)
+  ORPHAN    NOT d.x a — not used by any premise or rule (no effect on the result)
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

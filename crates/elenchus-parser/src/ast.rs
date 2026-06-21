@@ -20,11 +20,16 @@ pub struct Located<'a, T> {
     pub span: Span<'a>,
 }
 
-/// An atom is the triple `(subject, predicate, object?)` — the unit of identity.
-/// `Creature.A has flying` and `Creature.A has swimming` are DIFFERENT atoms.
+/// An atom is the triple `(subject, predicate, object?)` — the unit of identity —
+/// optionally qualified by a domain (`physics.engine has fuel`).
+/// `Creature_A has flying` and `Creature_A has swimming` are DIFFERENT atoms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom<'a> {
-    /// The entity the claim is about, e.g. `Creature.A` or `Motor`.
+    /// The domain this atom is qualified into, written as a `domain.` prefix on
+    /// the subject (e.g. `physics` in `physics.engine has fuel`). `None` means the
+    /// atom belongs to the current file's own declared domain (no prefix).
+    pub domain: Option<&'a str>,
+    /// The entity the claim is about, e.g. `Creature_A` or `Motor`.
     pub subject: &'a str,
     /// The relation or property asserted, e.g. `has` or `over_100`.
     pub predicate: &'a str,
@@ -98,8 +103,20 @@ pub enum Body<'a> {
 /// A top-level statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement<'a> {
-    /// `IMPORT "path"` — reuse another source (resolved by the compiler).
-    Import(Located<'a, &'a str>),
+    /// `DOMAIN <name>` — declare the domain this file's atoms belong to. Required
+    /// once per file, as the first statement; it is the identity namespace into
+    /// which bare atoms fall.
+    Domain(Located<'a, &'a str>),
+    /// `IMPORT "path" [AS <alias>]` — reuse another source (resolved by the
+    /// compiler). The optional `alias` is the local name the imported domain is
+    /// referenced by; without it, the imported file's own declared domain name is
+    /// used.
+    Import {
+        /// The quoted source path.
+        path: Located<'a, &'a str>,
+        /// The local alias for the imported domain, if `AS <alias>` was given.
+        alias: Option<Located<'a, &'a str>>,
+    },
     /// `FACT <atom>` — a TRUE assertion.
     Fact(Located<'a, Atom<'a>>),
     /// `NOT <atom>` — a FALSE assertion.

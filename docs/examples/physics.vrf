@@ -1,6 +1,8 @@
 // A vetted, reusable premise library — first principles only, no facts.
 // A human curates this once; the model never edits it, only imports it.
 
+DOMAIN physics
+
 PREMISE one_path:
     EXCLUSIVE
         Motor uses fast_path

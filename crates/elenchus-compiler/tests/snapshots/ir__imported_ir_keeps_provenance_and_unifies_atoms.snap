@@ -5,16 +5,19 @@ expression: c
 Compiled {
     atoms: [
         AtomKey {
+            domain: "physics",
             subject: "Motor",
             predicate: "over_100",
             object: None,
         },
         AtomKey {
+            domain: "physics",
             subject: "Motor",
             predicate: "over_200",
             object: None,
         },
         AtomKey {
+            domain: "physics",
             subject: "Motor",
             predicate: "uses",
             object: Some(
@@ -22,6 +25,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "physics",
             subject: "Motor",
             predicate: "uses",
             object: Some(
@@ -35,7 +39,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "import-demo.vrf",
-                line: 7,
+                line: 9,
                 premise: None,
                 kind: "FACT",
             },
@@ -46,7 +50,7 @@ Compiled {
             value: False,
             origin: Origin {
                 source: "import-demo.vrf",
-                line: 8,
+                line: 10,
                 premise: None,
                 kind: "NOT",
             },
@@ -67,7 +71,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "physics.vrf",
-                line: 4,
+                line: 6,
                 premise: Some(
                     "one_path",
                 ),
@@ -87,7 +91,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "physics.vrf",
-                line: 9,
+                line: 11,
                 premise: Some(
                     "speed_order",
                 ),
@@ -98,9 +102,7 @@ Compiled {
     rules: [],
     checks: [
         Check {
-            subject: Some(
-                "Motor",
-            ),
+            subject: None,
             bidirectional: false,
         },
     ],

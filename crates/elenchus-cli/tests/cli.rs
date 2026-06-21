@@ -42,6 +42,7 @@ fn dash_reads_stdin() {
     let out = elenchus_with_stdin(
         &["-"],
         r#"
+        DOMAIN d
         FACT x a
         CHECK x
         "#,
@@ -55,6 +56,7 @@ fn text_consistent_exits_0() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         FACT x a
         CHECK x
         "#,
@@ -68,6 +70,7 @@ fn text_warning_exits_1() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         FACT x a
         PREMISE w:
             WHEN x a
@@ -83,6 +86,7 @@ fn text_conflict_exits_2() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         FACT x a
         NOT x a
         CHECK x
@@ -96,6 +100,7 @@ fn json_format_is_emitted() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         FACT x a
         CHECK x
         "#,
@@ -112,6 +117,7 @@ fn whitespace_is_cosmetic_indented_equals_flat() {
     // The same program written fully indented vs. flat at column 0. Indentation
     // is cosmetic everywhere, so both must produce a byte-identical report.
     let pretty = r#"
+        DOMAIN d
         FACT svc built
         PREMISE gate:
             WHEN svc built
@@ -120,6 +126,7 @@ fn whitespace_is_cosmetic_indented_equals_flat() {
         CHECK svc
         "#;
     let flat = r#"
+DOMAIN d
 FACT svc built
 PREMISE gate:
 WHEN svc built
@@ -221,6 +228,7 @@ fn consequent_or_is_satisfied_by_one_disjunct() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         PREMISE gw:
             WHEN gateway is_prod
             THEN auth is_staging
@@ -240,6 +248,7 @@ fn consequent_or_conflicts_when_all_disjuncts_false() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         PREMISE gw:
             WHEN gateway is_prod
             THEN auth is_staging
@@ -260,6 +269,7 @@ fn antecedent_or_fires_on_any_disjunct() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN d
         PREMISE r:
             WHEN x a
             OR x b
@@ -284,6 +294,7 @@ fn clashing_assumptions_exit_2_and_print_retract() {
     let out = elenchus(&[
         "--text",
         r#"
+        DOMAIN ops
         FACT rel reviewed
         PREMISE prod_needs_safety:
             WHEN rel in_prod
@@ -298,12 +309,12 @@ fn clashing_assumptions_exit_2_and_print_retract() {
     assert_eq!(out.status.code(), Some(2));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("RETRACT"), "{stdout}");
-    assert!(stdout.contains("ASSUME rel in_prod"), "{stdout}");
+    assert!(stdout.contains("ASSUME ops.rel in_prod"), "{stdout}");
 }
 
 #[test]
 fn compatible_assumption_exits_0() {
-    let out = elenchus(&["--text", "ASSUME x a\nFACT y b\nCHECK\n"]);
+    let out = elenchus(&["--text", "DOMAIN d\nASSUME x a\nFACT y b\nCHECK\n"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("CONSISTENT"));
 }

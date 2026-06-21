@@ -5,7 +5,7 @@ expression: "err(\"IMPORT \\\"physics.vrf\\n\")"
 RESULT: 1 syntax error
 
 IMPORT  (1 problem)
-  syntax  : IMPORT "<path>"
+  syntax  : IMPORT "<path>" [AS <alias>]
   example : IMPORT "physics.vrf"
     line 1, col 8 - IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
       | IMPORT "physics.vrf

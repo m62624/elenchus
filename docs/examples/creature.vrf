@@ -2,32 +2,34 @@
 // One explorer says it flies, another says it swims.
 // The book says: it cannot do both at once.
 
-FACT Creature.A has flying
-FACT Creature.A has warm_blood
+DOMAIN creatures
+
+FACT Creature_A has flying
+FACT Creature_A has warm_blood
 // has swimming not mentioned → UNKNOWN
 
 // First principles (premises — cannot be violated)
 PREMISE fly_xor_swim:
     EXCLUSIVE
-        Creature.A has flying
-        Creature.A has swimming
+        Creature_A has flying
+        Creature_A has swimming
 
 PREMISE wings_need_bone:
-    WHEN Creature.A has flying
-    THEN Creature.A has wing
-    AND  Creature.A has bone
+    WHEN Creature_A has flying
+    THEN Creature_A has wing
+    AND  Creature_A has bone
 
 PREMISE no_dual_temp:
     FORBIDS
-        Creature.A has warm_blood
-        Creature.A has cold_blood
+        Creature_A has warm_blood
+        Creature_A has cold_blood
 
 // Inference rule — the engine derives a fact
 RULE needs_oxygen:
-    WHEN Creature.A has flying
-    THEN Creature.A needs oxygen
+    WHEN Creature_A has flying
+    THEN Creature_A needs oxygen
 
-CHECK Creature.A BIDIRECTIONAL
+CHECK Creature_A BIDIRECTIONAL
 
 // Expected result:
 // CONSISTENT      fly_xor_swim     — swimming = UNKNOWN, no conflict

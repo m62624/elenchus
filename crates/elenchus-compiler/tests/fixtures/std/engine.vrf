@@ -1,4 +1,5 @@
 // Engine domain. Reuses the shared core invariants via a relative import.
+DOMAIN car
 IMPORT "../core/base.vrf"
 
 PREMISE engine_needs_fuel:

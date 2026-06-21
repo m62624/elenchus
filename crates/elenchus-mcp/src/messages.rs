@@ -16,8 +16,7 @@ details and an exit code. Treat WARNING, UNDERDETERMINED and CONFLICT as NOT don
 missing facts or rethink the premises, then call again — iterate until the result is CONSISTENT.";
 
 /// `elenchus_check` — description of the required `program` argument.
-pub const CHECK_ARG_PROGRAM: &str =
-    "The .vrf program text: FACT/NOT assertions, PREMISE/RULE first principles, and a CHECK.";
+pub const CHECK_ARG_PROGRAM: &str = "The .vrf program text: a leading DOMAIN, FACT/NOT assertions, PREMISE/RULE first principles, and a CHECK.";
 
 /// `elenchus_check` — description of the optional `format` argument.
 pub const CHECK_ARG_FORMAT: &str = "Output format. Default \"json\".";

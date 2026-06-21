@@ -1,17 +1,19 @@
 // Example: an explicit conflict — two facts violate a premise.
 
-FACT Animal.B has flying
-FACT Animal.B has swimming
+DOMAIN zoo
+
+FACT Animal_B has flying
+FACT Animal_B has swimming
 
 PREMISE fly_xor_swim:
     EXCLUSIVE
-        Animal.B has flying
-        Animal.B has swimming
+        Animal_B has flying
+        Animal_B has swimming
 
-CHECK Animal.B
+CHECK Animal_B
 
 // Expected result:
 // CONFLICT  fly_xor_swim
-//   FACT Animal.B has flying    [line 3]
-//   FACT Animal.B has swimming  [line 4]
+//   zoo.Animal_B has flying    [line 5]
+//   zoo.Animal_B has swimming  [line 6]
 //   → EXCLUSIVE: at most one may be TRUE

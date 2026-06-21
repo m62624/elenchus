@@ -42,8 +42,12 @@ macro_rules! cards {
 }
 
 cards! {
+    Domain => "DOMAIN",
+        "DOMAIN <name>",
+        "declare this file's domain (required, once, first) — the namespace bare atoms fall into",
+        "DOMAIN physics";
     Fact => "FACT",
-        "FACT <Subject> <predicate> [<object>]",
+        "FACT [<domain>.]<Subject> <predicate> [<object>]",
         "assert an atom is TRUE",
         "FACT socrates is human";
     Not => "NOT",
@@ -67,9 +71,13 @@ cards! {
         "run the query; an optional subject narrows the report",
         "CHECK socrates";
     Import => "IMPORT",
-        "IMPORT \"<path>\"",
-        "pull in another .vrf source for reuse",
+        "IMPORT \"<path>\" [AS <alias>]",
+        "pull in another .vrf source for reuse; its atoms are named <domain>.<atom>",
         "IMPORT \"physics.vrf\"";
+    As => "AS",
+        "IMPORT \"<path>\" AS <alias>",
+        "give the imported domain a local name to reference it by",
+        "IMPORT \"physics.vrf\" AS phys";
     When => "WHEN",
         "WHEN <literal>   (literal = [NOT] <Subject> <predicate> [<object>])",
         "the condition (if-part) of an implication; continue with AND/OR",
@@ -112,5 +120,5 @@ cards! {
 /// general card when an error is not tied to one specific keyword (e.g. a line
 /// that starts with none of them).
 pub const TOP_LEVEL_FORMS: &[&str] = &[
-    "FACT", "NOT", "ASSUME", "PREMISE", "RULE", "CHECK", "IMPORT",
+    "DOMAIN", "FACT", "NOT", "ASSUME", "PREMISE", "RULE", "CHECK", "IMPORT",
 ];

@@ -238,8 +238,8 @@ clause — we translate it back into the premise name + the specific lines:
 
 ```
 CONFLICT  fly_xor_swim (EXCLUSIVE)
-   FACT Animal.B has flying    [line 3]
-   FACT Animal.B has swimming  [line 4]
+   FACT Animal_B has flying    [line 3]
+   FACT Animal_B has swimming  [line 4]
    → at most one may be TRUE; this pair conflicts
 ```
 
@@ -347,10 +347,12 @@ engine *propose* the missing hypothesis itself.
 
 **A purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
 `RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses, plus a few
-words for the body of constraints and rules, plus `IMPORT` for reuse.
+words for the body of constraints and rules, plus `DOMAIN`/`IMPORT`/`AS` for
+namespacing and reuse.
 
 | Word | Meaning | Kind |
 |---|---|---|
+| `DOMAIN` | declares the file's domain — the identity namespace of its atoms (required, first) | namespace |
 | `FACT` | a TRUE assertion | premise (unchecked) |
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
@@ -358,7 +360,8 @@ words for the body of constraints and rules, plus `IMPORT` for reuse.
 | `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
-| `IMPORT` | pull in another source for reuse | reuse |
+| `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
+| `AS` | local alias for an imported domain | reuse |
 | `CHECK` / `BIDIRECTIONAL` | a query | query |
 
 ### Case convention (mandatory)
@@ -379,11 +382,14 @@ forms (`PREMISE`/`RULE`) — as a vertical block with indentation, each conditio
 its own line.
 
 ```
-// Reuse: pull facts/premises/rules from another source
+// Declare the file's domain — required, first statement
+DOMAIN <name>
+
+// Reuse: pull in another domain (reference its atoms as <domain>.<atom>)
 IMPORT "physics.vrf"
 
 // Facts (TRUE) and negations (FALSE) — boolean atoms, no numbers, one line
-FACT <Subject> <predicate> [<object>]
+FACT [<domain>.]<Subject> <predicate> [<object>]
 NOT  <Subject> <predicate> [<object>]
 
 // List premise: EXCLUSIVE / FORBIDS / ONEOF / ATLEAST
@@ -425,14 +431,38 @@ vetted premise library removes even that — the model writes only `FACT` lines 
 pulls the first principles from a curated, reviewed library. It also saves
 context: the generated file is just facts.
 
-### Semantics: flat merge into one shared atom universe
+### Semantics: domains are the identity namespace — explicit, not magic
 
-`IMPORT` performs a **flat merge** of all `FACT` / `NOT` / `PREMISE` / `RULE` from
-the imported source into the current set. Crucially, **atoms unify across sources
-by identity** — an imported premise about `Engine.X has fuel` constrains the fact
-`Engine.X has fuel` declared in the main file. There is **no alias namespacing of
-atoms** (that would break unification, which is the whole point of importing
-premises). Atoms live in one global namespace keyed by `(subject, predicate, object?)`.
+Every file declares a `DOMAIN`, and an atom's identity is `(domain, subject,
+predicate, object?)`. Unqualified atoms belong to the file's own domain; a
+`<domain>.` prefix targets another. **Atoms do not merge across files by
+accident** — the same triple in two different domains is two different atoms, so a
+library's `capital` never silently collides with yours.
+
+Sharing is therefore **explicit**: to let an imported premise about
+`physics.Motor over_200` constrain your fact, you write that fact *into* the
+physics domain — `FACT physics.Motor over_200`. Think of the domain prefix as the
+opt-in to unification.
+
+`IMPORT "x.vrf" [AS <alias>]` makes the imported file's domain referenceable in
+the current file (under its own declared name, or under `<alias>`). Two analogy
+axes stay orthogonal: the **domain** is the field of knowledge; a structured
+subject like `Engine_X` is which object within it (use `_`, since `.` is now the
+domain separator).
+
+**Visibility is file-local and non-transitive.** You may reference only the
+domains *you* import in this file — not what they, in turn, imported. Loading is
+still transitive (a dependency's clauses participate in the solve), but its domain
+is not nameable from a grandparent unless re-imported. A library that wants to
+build a layer on top imports the lower one explicitly.
+
+**Name binding & clashes.** Without `AS`, an import binds under the imported file's
+own domain name; two files that both declare `DOMAIN physics` simply share that
+domain (nominal — this is the value of a premise library). `AS` renames an import
+locally, both to fit your project and to separate two imports that would otherwise
+bind the same name to different domains (a `DomainAliasClash`). A file with no
+`DOMAIN`, or two `DOMAIN` lines, is an error (`MissingDomain` / `DuplicateDomain`);
+referencing an un-imported domain is an `UnknownDomain` error.
 
 ### Duplicate premises are idempotent — not a conflict
 
@@ -453,12 +483,12 @@ vsm-guard's CAS) is the natural tool for both:
   (`physics.vrf:safety` vs `biology.vrf:safety`). Reusing a name with a different
   body *inside the same source* is a genuine `PremiseRedefinition` error.
 
-> This is the one place we deliberately diverge from vsm-grammar. vsm
-> hash-namespaces rules so they stay *apart* and are referenced by alias. We need
-> the opposite for **atoms** (they must unify across files — that is the value of
-> importing premise libraries), so atoms are global. We apply the same idea vsm uses
-> for namespacing only to the human-facing **labels** (per-source scoping) — never
-> to atoms — and there is no `AS` alias because premises are never referenced by name.
+> Relation to vsm-grammar. Like vsm we namespace by name and resolve imports
+> through a `Resolver`, but the unit differs: vsm hash-namespaces *rules* and
+> references them by alias, whereas elenchus namespaces *atoms* by a nominal
+> `DOMAIN` and never references premises by name (those stay per-source labels).
+> Sharing is explicit (write into a domain), not automatic — the opposite of the
+> earlier flat-merge design, chosen so unrelated domains cannot collide by accident.
 
 ### Cycle detection and dedup of sources
 
@@ -485,9 +515,10 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = import | fact | negation | assume | premise | rule | check ;
+statement   = domain | import | fact | negation | assume | premise | rule | check ;
 
-import      = "IMPORT" , string , NEWLINE ;
+domain      = "DOMAIN" , name , NEWLINE ;      (* required, first statement of a file *)
+import      = "IMPORT" , string , [ "AS" , name ] , NEWLINE ;
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
@@ -506,7 +537,8 @@ then_line   = "THEN" , literal , NEWLINE ;
 cont_line   = ( "AND" | "OR" ) , literal , NEWLINE ;
             (* one group (antecedent or consequent) may not mix AND and OR *)
 
-atom        = subject , predicate , [ object ] ;
+atom        = [ domain_ref , "." ] , subject , predicate , [ object ] ;
+domain_ref  = identifier ;                     (* an imported domain or the file's own *)
 literal     = [ "NOT" ] , atom ;
 subject     = identifier ;
 predicate   = identifier ;
@@ -514,26 +546,28 @@ object      = identifier ;
 name        = identifier ;
 string      = '"' , { any-char-except-quote } , '"' ;
 
-identifier  = letter , { letter | digit | "_" | "." } ;
+identifier  = letter , { letter | digit | "_" } ;
 letter      = ? any Unicode letter (Cyrillic, CJK, Latin, …) ? ;
 digit       = ? any Unicode digit ? ;
 ```
 
 Identifiers accept letters of **any** script, so `условие`, `名前` and `motor` are
 all valid. The first character must be a letter (never a digit, `_`, `.`, or
-punctuation); subsequent characters may also be digits, `_`, or `.`. Keywords stay
-ASCII CAPS (see the reserved list below) — like SQL, only the keywords are fixed to
-one language, the names are yours.
+punctuation); subsequent characters may also be digits or `_`. **`.` is reserved as
+the domain separator** (`physics.Motor`), so it is not an identifier character —
+write compound names with `_` (`Engine_X`). Keywords stay ASCII CAPS (see the
+reserved list below) — like SQL, only the keywords are fixed to one language, the
+names are yours.
 
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
 identifier (list atoms), and ends at the first line with a top-level word
-(`IMPORT`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
+(`DOMAIN`/`IMPORT`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
-Reserved words (always CAPS, in full): `IMPORT FACT NOT ASSUME PREMISE RULE CHECK
-BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST`. An identifier may not
-coincide with a reserved word.
+Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME PREMISE
+RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST`. An
+identifier may not coincide with a reserved word.
 
 ## Name normalization
 
@@ -544,7 +578,7 @@ main hidden risk. So the identity rules are fixed hard:
 2. **Identifiers are case-sensitive and compared verbatim.**
    `has_fuel` ≠ `hasFuel` ≠ `Has_fuel` — these are DIFFERENT atoms. No auto-matching.
 3. **Whitespace**: runs of spaces/tabs collapse to one separator; leading and
-   trailing are trimmed. `Creature.A   has    flying` ≡ `Creature.A has flying`.
+   trailing are trimmed. `Creature_A   has    flying` ≡ `Creature_A has flying`.
 4. **Atom identity** = `(subject, predicate, object?)` character by character,
    case-sensitive, after whitespace normalization.
 5. **Comments** `//` to end of line are stripped before parsing. Blank lines are ignored.
@@ -667,15 +701,15 @@ EXIT_CODE: 0=consistent, 1=underdetermined/warnings, 2=conflicts
 ### Example of full output
 
 ```
-CHECK: Creature.A BIDIRECTIONAL
+CHECK: Creature_A BIDIRECTIONAL
   CONSISTENT     no_dual_temp        — has cold_blood = UNKNOWN, no conflict
   WARNING        wings_need_bone     — UNKNOWN: has wing, has bone
-                 hint: FACT Creature.A has wing
-                       FACT Creature.A has bone
-                  OR   NOT  Creature.A has flying
+                 hint: FACT Creature_A has wing
+                       FACT Creature_A has bone
+                  OR   NOT  Creature_A has flying
   UNDERDETERMINED fly_xor_swim       — alternative model: has swimming=TRUE, has flying=FALSE
-                 hint: NOT Creature.A has swimming  to pin it down unambiguously
-  DERIVED        Creature.A needs oxygen — from RULE [line 9] + FACT has flying [line 3]
+                 hint: NOT Creature_A has swimming  to pin it down unambiguously
+  DERIVED        Creature_A needs oxygen — from RULE [line 9] + FACT has flying [line 3]
 
 SUMMARY: 0 conflicts, 1 underdetermined, 1 warning, 1 consistent, 1 derived
 EXIT_CODE: 1
@@ -806,7 +840,7 @@ until every point is covered.
 
 ### Atom identity
 An atom is the triple `(subject, predicate, object?)`, object optional.
-`Creature.A has flying` and `Creature.A has swimming` are DIFFERENT atoms (the
+`Creature_A has flying` and `Creature_A has swimming` are DIFFERENT atoms (the
 object differs). Two atoms are equal ⇔ all three parts match character by
 character (after whitespace normalization). The FactStore key is exactly this
 whole triple, not `(subject, predicate)`.
@@ -952,30 +986,30 @@ independent — this tool only does the first.
 // One explorer says it flies, another says it swims.
 // The book says: one of the two, not both at once.
 
-FACT Creature.A has flying
-FACT Creature.A has warm_blood
+FACT Creature_A has flying
+FACT Creature_A has warm_blood
 // has swimming not mentioned → UNKNOWN
 
 // First principles
 PREMISE fly_xor_swim:
     EXCLUSIVE
-        Creature.A has flying
-        Creature.A has swimming
+        Creature_A has flying
+        Creature_A has swimming
 
 PREMISE wings_need_bone:
-    WHEN Creature.A has flying
-    THEN Creature.A has wing
-    AND  Creature.A has bone
+    WHEN Creature_A has flying
+    THEN Creature_A has wing
+    AND  Creature_A has bone
 
 PREMISE no_dual_temp:
     FORBIDS
-        Creature.A has warm_blood
-        Creature.A has cold_blood
+        Creature_A has warm_blood
+        Creature_A has cold_blood
 
 // Inference rule — produces a new fact
 RULE needs_oxygen:
-    WHEN Creature.A has flying
-    THEN Creature.A needs oxygen
+    WHEN Creature_A has flying
+    THEN Creature_A needs oxygen
 
-CHECK Creature.A BIDIRECTIONAL
+CHECK Creature_A BIDIRECTIONAL
 ```

@@ -28,7 +28,7 @@
 //! // the engine cannot confirm the rule and reports WARNING (not CONFLICT).
 //! let report = verify_source(
 //!     "demo.vrf",
-//!     "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
+//!     "DOMAIN d\nFACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
 //! )
 //! .unwrap();
 //! assert_eq!(report.status, Status::Warning); // `A has wing` is UNKNOWN
@@ -426,12 +426,14 @@ fn json_origin(o: &Origin, out: &mut String) {
     json_origin_fields(o, out);
 }
 
-/// Render atom `a` as the human string `subject predicate [object]`.
+/// Render atom `a` as the human string `domain.subject predicate [object]`. The
+/// domain prefix is always shown — atom identity now includes it, so the label
+/// is unambiguous (`physics.engine runs` vs `plan.engine runs`).
 fn label(c: &Compiled, a: AtomId) -> String {
     let k = &c.atoms[a as usize];
     match &k.object {
-        Some(o) => alloc::format!("{} {} {}", k.subject, k.predicate, o),
-        None => alloc::format!("{} {}", k.subject, k.predicate),
+        Some(o) => alloc::format!("{}.{} {} {}", k.domain, k.subject, k.predicate, o),
+        None => alloc::format!("{}.{} {}", k.domain, k.subject, k.predicate),
     }
 }
 
@@ -1012,15 +1014,17 @@ fn atoms_look_similar(
     fb: &[char],
     cased_b: bool,
 ) -> Option<&'static str> {
-    // A — same folded form (the AtomKeys differ, so the raw spelling differs).
-    if fa == fb {
+    // A — same folded form in the SAME domain (the AtomKeys differ, so the raw
+    // spelling differs). Atoms in different domains are legitimately distinct
+    // even when their triples fold equal, so they are never flagged.
+    if fa == fb && ka.domain == kb.domain {
         return Some("same name up to case, '_', or spaces");
     }
     // B — same subject, an alphabetic (cased) script, a single-character slip.
     // Only distance 1: distance 2 flags real antonyms (mortal/immortal) and word
     // pairs far too often — genuine typos are almost always a one-character edit,
     // and the underscore/case case is already covered by signal A.
-    if !cased_a || !cased_b || ka.subject != kb.subject {
+    if !cased_a || !cased_b || ka.domain != kb.domain || ka.subject != kb.subject {
         return None;
     }
     if fa.len().abs_diff(fb.len()) > 1 {
@@ -1509,16 +1513,22 @@ impl fmt::Display for Report {
 mod tests {
     use super::*;
 
+    /// Verify a single inline source under a default `DOMAIN t` (so test programs
+    /// need not repeat it); atoms land in domain `t`, labelled `t.subject …`.
+    fn vs(src: &str) -> Result<Report, CompileError> {
+        verify_source("t.vrf", &alloc::format!("DOMAIN t\n{src}"))
+    }
+
     #[test]
     fn clean_consistent() {
-        let r = verify_source("<t>", "FACT x a\nCHECK x\n").unwrap();
+        let r = vs("FACT x a\nCHECK x\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.conflicts.is_empty() && r.warnings.is_empty());
     }
 
     #[test]
     fn fact_contradiction_is_conflict() {
-        let r = verify_source("<t>", "FACT x a\nNOT x a\n").unwrap();
+        let r = vs("FACT x a\nNOT x a\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.conflicts.len(), 1);
     }
@@ -1538,7 +1548,7 @@ mod tests {
     #[test]
     fn exclusive_with_unknown_is_consistent_not_warning() {
         // flying TRUE, swimming UNKNOWN — at most one can hold, no conflict, no warning.
-        let r = verify_source("<t>", "FACT A has flying\nPREMISE e:\n    EXCLUSIVE\n        A has flying\n        A has swimming\n").unwrap();
+        let r = vs("FACT A has flying\nPREMISE e:\n    EXCLUSIVE\n        A has flying\n        A has swimming\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.warnings.is_empty());
     }
@@ -1546,71 +1556,62 @@ mod tests {
     #[test]
     fn implication_missing_consequent_is_warning() {
         // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         FACT A has flying
         PREMISE w:
             WHEN A has flying
             THEN A has wing
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Warning);
         assert_eq!(r.warnings.len(), 1);
-        assert_eq!(r.warnings[0].blocked_by, vec![String::from("A has wing")]);
+        assert_eq!(r.warnings[0].blocked_by, vec![String::from("t.A has wing")]);
     }
 
     #[test]
     fn implication_satisfied_is_consistent() {
-        let r = verify_source("<t>", "FACT A has flying\nFACT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = vs("FACT A has flying\nFACT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
     }
 
     #[test]
     fn implication_violated_is_conflict() {
         // antecedent TRUE, consequent FALSE → CONFLICT.
-        let r = verify_source("<t>", "FACT A has flying\nNOT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = vs("FACT A has flying\nNOT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
     }
 
     #[test]
     fn rule_derives_fact() {
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         FACT A has flying
         RULE o:
             WHEN A has flying
             THEN A needs oxygen
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert_eq!(r.derived.len(), 1);
-        assert_eq!(r.derived[0].atom, "A needs oxygen");
+        assert_eq!(r.derived[0].atom, "t.A needs oxygen");
     }
 
     #[test]
     fn rule_derivation_contradiction_is_conflict() {
         // rule derives `A needs oxygen` TRUE, but it's asserted FALSE.
-        let r = verify_source("<t>", "FACT A has flying\nNOT A needs oxygen\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n").unwrap();
+        let r = vs("FACT A has flying\nNOT A needs oxygen\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
     }
 
     #[test]
     fn bidirectional_finds_alternative_model_underdetermined() {
         // EXCLUSIVE(a,b) with no facts: {FF, TF, FT} all satisfy → not unique.
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         PREMISE e:
             EXCLUSIVE
                 x a
                 x b
         CHECK x BIDIRECTIONAL
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Underdetermined);
     }
@@ -1618,17 +1619,14 @@ mod tests {
     #[test]
     fn fact_pins_unique_model_consistent() {
         // Same premise, but FACT x a forces b false → the only model → CONSISTENT.
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         FACT x a
         PREMISE e:
             EXCLUSIVE
                 x a
                 x b
         CHECK x BIDIRECTIONAL
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
     }
@@ -1636,16 +1634,13 @@ mod tests {
     #[test]
     fn no_bidirectional_skips_backward_pass() {
         // Plain CHECK: alternatives are not searched → stays CONSISTENT, not UNDERDETERMINED.
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         PREMISE e:
             EXCLUSIVE
                 x a
                 x b
         CHECK x
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
     }
@@ -1660,7 +1655,7 @@ mod tests {
         assert!(r.conflicts.is_empty());
         assert_eq!(r.warnings.len(), 2);
         assert_eq!(r.derived.len(), 1);
-        assert_eq!(r.derived[0].atom, "Creature.A needs oxygen");
+        assert_eq!(r.derived[0].atom, "creatures.Creature_A needs oxygen");
     }
 
     #[test]
@@ -1707,9 +1702,7 @@ mod tests {
 
     #[test]
     fn forward_conflict_carries_a_trace_of_its_facts() {
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         FACT x a
         FACT x b
         PREMISE e:
@@ -1717,13 +1710,12 @@ mod tests {
                 x a
                 x b
         CHECK x
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(r.status, Status::Conflict);
         let t = &r.conflicts[0].trace;
         assert_eq!(t.len(), 2);
-        assert_eq!(t[0].atom, "x a");
+        assert_eq!(t[0].atom, "t.x a");
         assert_eq!(t[0].value, Value::True);
         assert!(matches!(t[0].reason, TraceReason::Asserted(_)));
         assert!(r.unsat_core.is_empty());
@@ -1738,12 +1730,15 @@ mod tests {
         // human (fact) + animal, living, mortal (derived) + immortal (fact) = 5 steps,
         // supports before dependents.
         assert_eq!(t.len(), 5);
-        assert_eq!(t[0].atom, "socrates is human");
+        assert_eq!(t[0].atom, "philosophy.socrates is human");
         assert!(matches!(t[0].reason, TraceReason::Asserted(_)));
-        let mortal = t.iter().find(|s| s.atom == "socrates is mortal").unwrap();
+        let mortal = t
+            .iter()
+            .find(|s| s.atom == "philosophy.socrates is mortal")
+            .unwrap();
         match &mortal.reason {
             TraceReason::Derived { from, .. } => {
-                assert_eq!(from, &vec![String::from("socrates is living")]);
+                assert_eq!(from, &vec![String::from("philosophy.socrates is living")]);
             }
             _ => panic!("mortal should be derived, not asserted"),
         }
@@ -1751,7 +1746,7 @@ mod tests {
 
     #[test]
     fn direct_fact_contradiction_has_no_trace() {
-        let r = verify_source("<t>", "FACT x a\nNOT x a\nCHECK x\n").unwrap();
+        let r = vs("FACT x a\nNOT x a\nCHECK x\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert!(r.conflicts[0].trace.is_empty());
     }
@@ -1774,13 +1769,13 @@ mod tests {
         NOT x c
         CHECK x BIDIRECTIONAL
         "#;
-        let r = verify_source("<t>", src).unwrap();
+        let r = vs(src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.conflicts[0].origin.kind, "UNSAT");
         assert_eq!(r.unsat_core.len(), 4);
         let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"one"));
-        assert!(labels.contains(&"x c")); // the bare NOT fact is labelled by its atom
+        assert!(labels.contains(&"t.x c")); // the bare NOT fact is labelled by its atom
     }
 
     #[test]
@@ -1806,7 +1801,7 @@ mod tests {
                 z gone
         CHECK x BIDIRECTIONAL
         "#;
-        let r = verify_source("<t>", src).unwrap();
+        let r = vs(src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.unsat_core.len(), 4);
         let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
@@ -1816,7 +1811,7 @@ mod tests {
 
     #[test]
     fn consistent_report_has_empty_core_and_no_trace() {
-        let r = verify_source("<t>", "FACT x a\nCHECK x BIDIRECTIONAL\n").unwrap();
+        let r = vs("FACT x a\nCHECK x BIDIRECTIONAL\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.unsat_core.is_empty());
         assert!(r.conflicts.is_empty());
@@ -1828,7 +1823,7 @@ mod tests {
     fn compatible_assumptions_behave_like_facts() {
         // ASSUME that does not clash with anything → ordinary CONSISTENT, and the
         // assumption participates like a fact (no retract, no conflict).
-        let r = verify_source("<t>", "ASSUME rel in_prod\nFACT rel reviewed\nCHECK rel\n").unwrap();
+        let r = vs("ASSUME rel in_prod\nFACT rel reviewed\nCHECK rel\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.retract.is_empty());
         assert!(r.conflicts.is_empty());
@@ -1837,14 +1832,13 @@ mod tests {
     #[test]
     fn assume_drives_a_rule_like_a_fact() {
         // A soft assumption fires forward chaining just like a hard fact.
-        let r = verify_source(
-            "<t>",
+        let r = vs(
             "ASSUME A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\nCHECK A\n",
         )
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert_eq!(r.derived.len(), 1);
-        assert_eq!(r.derived[0].atom, "A needs oxygen");
+        assert_eq!(r.derived[0].atom, "t.A needs oxygen");
     }
 
     #[test]
@@ -1862,15 +1856,15 @@ mod tests {
         ASSUME NOT rel has_feature_flag
         CHECK rel
         "#;
-        let r = verify_source("<t>", src).unwrap();
+        let r = vs(src).unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.exit_code(), 2);
         // All three guesses are jointly to blame: dropping any one fixes it.
         assert_eq!(r.retract.len(), 3, "{:?}", r.retract);
         let labels: Vec<&str> = r.retract.iter().map(|it| it.label.as_str()).collect();
-        assert!(labels.contains(&"rel in_prod"));
-        assert!(labels.contains(&"NOT rel has_rollback"));
-        assert!(labels.contains(&"NOT rel has_feature_flag"));
+        assert!(labels.contains(&"t.rel in_prod"));
+        assert!(labels.contains(&"NOT t.rel has_rollback"));
+        assert!(labels.contains(&"NOT t.rel has_feature_flag"));
         // Every retract item is an ASSUME — a FACT/PREMISE is never blamed.
         assert!(r.retract.iter().all(|it| it.origin.kind == "ASSUME"));
         // The human report leads with RETRACT and hides the raw conflict pool.
@@ -1882,10 +1876,10 @@ mod tests {
     #[test]
     fn assume_vs_fact_retracts_only_the_assumption() {
         // FACT x a is ground truth; ASSUME NOT x a is the only removable thing.
-        let r = verify_source("<t>", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        let r = vs("FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.retract.len(), 1);
-        assert_eq!(r.retract[0].label, "NOT x a");
+        assert_eq!(r.retract[0].label, "NOT t.x a");
         assert_eq!(r.retract[0].origin.kind, "ASSUME");
     }
 
@@ -1893,25 +1887,25 @@ mod tests {
     fn hard_conflict_is_not_blamed_on_assumptions() {
         // The FACTs themselves contradict; an unrelated ASSUME must NOT appear in
         // a retract set (the hard program is already broken).
-        let r = verify_source("<t>", "FACT x a\nNOT x a\nASSUME y b\nCHECK x\n").unwrap();
+        let r = vs("FACT x a\nNOT x a\nASSUME y b\nCHECK x\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert!(r.retract.is_empty(), "{:?}", r.retract);
     }
 
     #[test]
     fn two_assumptions_directly_contradict() {
-        let r = verify_source("<t>", "ASSUME x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        let r = vs("ASSUME x a\nASSUME NOT x a\nCHECK x\n").unwrap();
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.retract.len(), 2, "{:?}", r.retract);
     }
 
     #[test]
     fn assume_retract_is_in_json() {
-        let r = verify_source("<t>", "FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
+        let r = vs("FACT x a\nASSUME NOT x a\nCHECK x\n").unwrap();
         let j = r.to_json();
         assert!(j.contains("\"retract\":["), "{j}");
         assert!(j.contains("\"kind\":\"ASSUME\""), "{j}");
-        assert!(j.contains("NOT x a"), "{j}");
+        assert!(j.contains("NOT t.x a"), "{j}");
     }
 
     // --- near-duplicate atom hints (advisory typo detector) ----------------
@@ -1921,14 +1915,11 @@ mod tests {
         // The real trap: `is rolled_back` (obj) vs `is_rolled_back` (pred) are
         // DIFFERENT atoms — no contradiction, so the verdict stays CONSISTENT —
         // but the hint warns they were probably meant to be one atom.
-        let r = verify_source(
-            "<t>",
-            r#"
+        let r = vs(r#"
         FACT auth is rolled_back
         NOT auth is_rolled_back
         CHECK
-        "#,
-        )
+        "#)
         .unwrap();
         assert_eq!(
             r.status,
@@ -1942,40 +1933,40 @@ mod tests {
 
     #[test]
     fn hint_flags_case_only_difference() {
-        let r = verify_source("<t>", "FACT Engine has_fuel\nNOT Engine Has_fuel\nCHECK\n").unwrap();
+        let r = vs("FACT Engine has_fuel\nNOT Engine Has_fuel\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 
     #[test]
     fn hint_flags_single_char_typo_same_subject() {
         // alphabetic, same subject, edit distance 1, len >= 5 → signal B.
-        let r = verify_source("<t>", "FACT svc deployed\nNOT svc deployd\nCHECK\n").unwrap();
+        let r = vs("FACT svc deployed\nNOT svc deployd\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 
     #[test]
     fn no_hint_for_short_distinct_atoms() {
         // `x a` vs `x b`: distance 1 but intentionally different — must NOT flag.
-        let r = verify_source("<t>", "FACT x a\nNOT x b\nCHECK\n").unwrap();
+        let r = vs("FACT x a\nNOT x b\nCHECK\n").unwrap();
         assert!(r.hints.is_empty(), "{:?}", r.hints);
     }
 
     #[test]
     fn no_hint_for_distinct_words() {
-        let r = verify_source("<t>", "FACT p is lead\nNOT p is dev\nNOT p is qa\nCHECK\n").unwrap();
+        let r = vs("FACT p is lead\nNOT p is dev\nNOT p is qa\nCHECK\n").unwrap();
         assert!(r.hints.is_empty(), "{:?}", r.hints);
     }
 
     #[test]
     fn russian_case_typo_is_flagged() {
         // Signal A is script-agnostic: lowercasing works for Cyrillic too.
-        let r = verify_source("<t>", "FACT кот спит\nNOT Кот спит\nCHECK\n").unwrap();
+        let r = vs("FACT кот спит\nNOT Кот спит\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 
     #[test]
     fn russian_single_char_typo_is_flagged() {
-        let r = verify_source("<t>", "FACT кот пушистый\nNOT кот пушстый\nCHECK\n").unwrap();
+        let r = vs("FACT кот пушистый\nNOT кот пушстый\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 
@@ -1983,7 +1974,7 @@ mod tests {
     fn cjk_one_char_difference_is_not_flagged() {
         // Caseless script: a one-character change is a different word, not a typo,
         // so the edit-distance signal is skipped (only exact fold-equality fires).
-        let r = verify_source("<t>", "FACT a 是黑\nNOT a 是白\nCHECK\n").unwrap();
+        let r = vs("FACT a 是黑\nNOT a 是白\nCHECK\n").unwrap();
         assert!(r.hints.is_empty(), "{:?}", r.hints);
     }
 
@@ -1991,7 +1982,7 @@ mod tests {
     fn cjk_underscore_vs_space_is_flagged() {
         // Signal A still applies to any script: `a 猫_黑` (pred) vs `a 猫 黑`
         // (pred+obj) fold to the same name.
-        let r = verify_source("<t>", "FACT a 猫_黑\nNOT a 猫 黑\nCHECK\n").unwrap();
+        let r = vs("FACT a 猫_黑\nNOT a 猫 黑\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
     }
 
@@ -2001,7 +1992,7 @@ mod tests {
     fn orphan_fact_is_flagged_but_advisory_only() {
         // `x a` is asserted but never referenced by a premise or rule: inert.
         // The verdict stays CONSISTENT and the exit code stays 0.
-        let r = verify_source("<t>", "FACT x a\nCHECK\n").unwrap();
+        let r = vs("FACT x a\nCHECK\n").unwrap();
         assert_eq!(
             r.status,
             Status::Consistent,
@@ -2009,28 +2000,21 @@ mod tests {
         );
         assert_eq!(r.exit_code(), 0, "orphan must not change exit code");
         assert_eq!(r.orphans.len(), 1, "{:?}", r.orphans);
-        assert_eq!(r.orphans[0].atom, "x a");
+        assert_eq!(r.orphans[0].atom, "t.x a");
         assert_eq!(r.orphans[0].origin.kind, "FACT");
     }
 
     #[test]
     fn fact_used_by_a_premise_is_not_orphan() {
         // `x a` feeds an EXCLUSIVE constraint → referenced → not an orphan.
-        let r = verify_source(
-            "<t>",
-            "FACT x a\nPREMISE p:\n    EXCLUSIVE\n        x a\n        x b\nCHECK\n",
-        )
-        .unwrap();
+        let r =
+            vs("FACT x a\nPREMISE p:\n    EXCLUSIVE\n        x a\n        x b\nCHECK\n").unwrap();
         assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }
 
     #[test]
     fn fact_used_by_a_rule_antecedent_is_not_orphan() {
-        let r = verify_source(
-            "<t>",
-            "FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nCHECK\n",
-        )
-        .unwrap();
+        let r = vs("FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nCHECK\n").unwrap();
         assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }
 
@@ -2038,19 +2022,19 @@ mod tests {
     fn negation_and_assumption_orphans_keep_their_surface_polarity() {
         // A `NOT` orphan and an `ASSUME NOT` orphan render with the polarity the
         // model wrote, so the report points at the exact line it typed.
-        let r = verify_source("<t>", "NOT x a\nASSUME NOT y b\nCHECK\n").unwrap();
+        let r = vs("NOT x a\nASSUME NOT y b\nCHECK\n").unwrap();
         assert_eq!(r.orphans.len(), 2, "{:?}", r.orphans);
         let text = alloc::format!("{r}");
-        assert!(text.contains("ORPHAN    NOT x a"), "{text}");
-        assert!(text.contains("ORPHAN    ASSUME NOT y b"), "{text}");
+        assert!(text.contains("ORPHAN    NOT t.x a"), "{text}");
+        assert!(text.contains("ORPHAN    ASSUME NOT t.y b"), "{text}");
     }
 
     #[test]
     fn orphan_is_in_json() {
-        let r = verify_source("<t>", "FACT x a\nCHECK\n").unwrap();
+        let r = vs("FACT x a\nCHECK\n").unwrap();
         let j = r.to_json();
         assert!(j.contains("\"orphans\":["), "{j}");
-        assert!(j.contains("\"atom\":\"x a\""), "{j}");
+        assert!(j.contains("\"atom\":\"t.x a\""), "{j}");
         assert!(j.contains("\"kind\":\"FACT\""), "{j}");
     }
 
@@ -2058,8 +2042,7 @@ mod tests {
     fn a_derived_atom_does_not_make_its_consumer_orphan() {
         // `x c` is derived by the rule and then referenced by the premise; the
         // seeding fact `x a` is referenced by the rule. Nothing is orphan.
-        let r = verify_source(
-            "<t>",
+        let r = vs(
             "FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nPREMISE p:\n    WHEN x c\n    THEN x d\nCHECK\n",
         )
         .unwrap();

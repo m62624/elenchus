@@ -5,7 +5,7 @@ expression: "err(include_str!(\"fixtures/showcase.vrf\"))"
 RESULT: 21 syntax errors
 
 FACT  (3 problems)
-  syntax  : FACT <Subject> <predicate> [<object>]
+  syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
   example : FACT socrates is human
     line 12, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
       | FACT lonely
@@ -32,7 +32,7 @@ ASSUME  (1 problem)
       |        ^^^^^^
 
 IMPORT  (2 problems)
-  syntax  : IMPORT "<path>"
+  syntax  : IMPORT "<path>" [AS <alias>]
   example : IMPORT "physics.vrf"
     line 19, col 8 - IMPORT expects a quoted path, e.g. IMPORT "physics.vrf"
       | IMPORT physics.vrf
@@ -111,16 +111,17 @@ AND  (1 problem)
 
 statement  (2 problems)
   expected one of these statements:
-      FACT <Subject> <predicate> [<object>]
+      DOMAIN <name>
+      FACT [<domain>.]<Subject> <predicate> [<object>]
       NOT <Subject> <predicate> [<object>]
       ASSUME [NOT] <Subject> <predicate> [<object>]
       PREMISE <name>:  then a list body or a WHEN ... THEN implication
       RULE <name>:  then a WHEN ... THEN implication
       CHECK [<subject>] [BIDIRECTIONAL]
-      IMPORT "<path>"
-    line 82, col 1 - expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+      IMPORT "<path>" [AS <alias>]
+    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       | %%% this line starts no keyword
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    line 84, col 1 - expected a statement — a line must start with FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       | 123 numbers cannot start a statement
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -5,16 +5,19 @@ expression: c
 Compiled {
     atoms: [
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "broken",
             object: None,
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "busy",
             object: None,
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "can",
             object: Some(
@@ -22,6 +25,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "checked",
             object: Some(
@@ -29,6 +33,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "checked",
             object: Some(
@@ -36,6 +41,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "mode",
             object: Some(
@@ -43,6 +49,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "mode",
             object: Some(
@@ -50,6 +57,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "mode",
             object: Some(
@@ -57,6 +65,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "mode",
             object: Some(
@@ -64,6 +73,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "notify",
             object: Some(
@@ -71,6 +81,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "owner",
             object: Some(
@@ -78,6 +89,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "owner",
             object: Some(
@@ -85,6 +97,7 @@ Compiled {
             ),
         },
         AtomKey {
+            domain: "sys",
             subject: "Sys",
             predicate: "ready",
             object: None,
@@ -96,7 +109,7 @@ Compiled {
             value: True,
             origin: Origin {
                 source: "complex.vrf",
-                line: 1,
+                line: 2,
                 premise: None,
                 kind: "FACT",
             },
@@ -107,7 +120,7 @@ Compiled {
             value: False,
             origin: Origin {
                 source: "complex.vrf",
-                line: 2,
+                line: 3,
                 premise: None,
                 kind: "NOT",
             },
@@ -128,7 +141,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -148,7 +161,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -168,7 +181,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -188,7 +201,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -208,7 +221,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -228,7 +241,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 4,
+                line: 5,
                 premise: Some(
                     "modes",
                 ),
@@ -248,7 +261,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 11,
+                line: 12,
                 premise: Some(
                     "exactly_one_owner",
                 ),
@@ -268,7 +281,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 11,
+                line: 12,
                 premise: Some(
                     "exactly_one_owner",
                 ),
@@ -288,7 +301,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 16,
+                line: 17,
                 premise: Some(
                     "at_least_one_check",
                 ),
@@ -316,7 +329,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 21,
+                line: 22,
                 premise: Some(
                     "deploy_gate",
                 ),
@@ -344,7 +357,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 21,
+                line: 22,
                 premise: Some(
                     "deploy_gate",
                 ),
@@ -368,7 +381,7 @@ Compiled {
             ],
             origin: Origin {
                 source: "complex.vrf",
-                line: 28,
+                line: 29,
                 premise: Some(
                     "derive_busy",
                 ),

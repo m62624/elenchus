@@ -43,7 +43,8 @@ fn shipped_examples_match_their_verdicts() {
 
 /// The SKILL.md "ship to prod?" capstone (example 8), minus the final CHECK so the
 /// three stages can append their own facts. Kept byte-identical to the skill.
-const CAPSTONE: &str = r#"PREMISE one_stage:
+const CAPSTONE: &str = r#"DOMAIN ship
+PREMISE one_stage:
     ONEOF
         rel in_dev
         rel in_staging

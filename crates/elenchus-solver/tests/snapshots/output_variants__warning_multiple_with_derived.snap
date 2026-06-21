@@ -3,10 +3,10 @@ source: crates/elenchus-solver/tests/output_variants.rs
 expression: "report(r#\"\n        FACT s ready\n        PREMISE need_two:\n            WHEN s ready\n            THEN s checked\n            AND s signed\n        RULE mark:\n            WHEN s ready\n            THEN s seen\n        CHECK s\n        \"#)"
 ---
 RESULT: WARNING
-  WARNING   need_two (PREMISE)  [v.vrf:3]
-      blocked by: s checked
-  WARNING   need_two (PREMISE)  [v.vrf:3]
-      blocked by: s signed
-  DERIVED   s seen = TRUE   from mark (RULE)  [v.vrf:7]
+  WARNING   need_two (PREMISE)  [v.vrf:4]
+      blocked by: d.s checked
+  WARNING   need_two (PREMISE)  [v.vrf:4]
+      blocked by: d.s signed
+  DERIVED   d.s seen = TRUE   from mark (RULE)  [v.vrf:8]
 SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
 EXIT_CODE: 1
