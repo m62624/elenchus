@@ -255,10 +255,12 @@ object, so they are *different atoms*. A typo silently makes a new UNKNOWN atom,
 the constraint you thought you wrote never fires. **Before each run, pick one
 spelling per concept and make every name that should be one atom byte-identical.**
 
-The engine helps: it emits advisory **`HINT`** lines (JSON: `hints`) when two names
-look like the same atom typed two ways. A `HINT` **never changes the verdict or
-exit code** — it's a nudge: fix the spelling if they should be one atom, ignore it
-if they're genuinely different.
+The engine helps with two advisory signals (neither **ever changes the verdict or
+exit code**): a **`HINT`** (JSON: `hints`) when two names look like the same atom
+typed two ways, and an **`ORPHAN`** (JSON: `orphans`) when a `FACT`/`NOT`/`ASSUME`
+is referenced by no premise or rule — the usual sign a typo'd name failed to link
+up, so the constraint you meant never fires. Both are nudges: fix the spelling if a
+name should be one atom, wire up or delete a line that should not dangle.
 
 ## What does NOT exist (model it as booleans)
 
@@ -330,6 +332,17 @@ is never listed here — only your hypotheses (JSON: `retract`, each item tagged
   HINT      possible typo — 'auth is rolled_back' and 'auth is_rolled_back' look like the same atom (...)
 ```
 
+**`ORPHAN`** — advisory: a `FACT`/`NOT`/`ASSUME` whose atom is referenced by **no**
+`PREMISE` and **no** `RULE`. It is logically inert — nothing checks it and nothing
+is derived from it, so it can never produce a CONFLICT, WARNING or DERIVED.
+**Never changes the verdict or exit code** (JSON: `orphans`). Almost always a
+typo'd atom name (so the constraint you meant never links up) or a leftover line:
+```
+  ORPHAN    FACT lonley sits idle — not used by any premise or rule (no effect on the result)
+```
+Fix the spelling so it joins the atom you meant, wire it into a premise/rule, or
+delete the line.
+
 **JSON** (`--format json` / MCP) carries the same data for programmatic reading.
 Always branch on `status`; the rest mirrors the human report:
 ```json
@@ -339,7 +352,7 @@ Always branch on `status`; the rest mirrors the human report:
                   "trace":[ {"atom":"s human","value":true,"how":"asserted","kind":"FACT","from":[]},
                             {"atom":"s mortal","value":false,"how":"asserted","kind":"NOT","from":[]} ] } ],
   "warnings":[], "derived":[], "underdetermined":null, "unsat_core":[],
-  "retract":[], "hints":[] }
+  "retract":[], "hints":[], "orphans":[] }
 ```
 
 **exit code** = the verdict (0 = CONSISTENT, 1 = WARNING/UNDERDETERMINED, 2 =

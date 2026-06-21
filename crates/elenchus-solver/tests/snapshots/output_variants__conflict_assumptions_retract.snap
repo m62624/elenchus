@@ -9,5 +9,6 @@ RESULT: CONFLICT
       ASSUME rel in_prod   [v.vrf:7]
       ASSUME NOT rel has_rollback   [v.vrf:8]
       ASSUME NOT rel has_feature_flag   [v.vrf:9]
+  ORPHAN    FACT rel reviewed — not used by any premise or rule (no effect on the result)
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2

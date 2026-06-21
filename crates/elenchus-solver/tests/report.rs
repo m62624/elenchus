@@ -27,6 +27,25 @@ fn socrates_report_shows_the_derivation_trace() {
 }
 
 #[test]
+fn orphan_fact_appears_as_an_advisory_line_in_a_consistent_report() {
+    // `spare wheel mounted` is referenced by no premise or rule, so the engine
+    // appends an advisory ORPHAN line. `engine has_fuel`/`engine runs` are used by
+    // the premise, so they are not flagged. The verdict stays CONSISTENT — the
+    // ORPHAN is purely informational.
+    let src = "\
+FACT engine has_fuel
+FACT spare wheel mounted
+PREMISE runs_on_fuel:
+    WHEN engine has_fuel
+    THEN engine runs
+FACT engine runs
+CHECK
+";
+    let r = verify_source("garage.vrf", src).unwrap();
+    insta::assert_snapshot!(format!("{r}"));
+}
+
+#[test]
 fn extension_plan_is_consistent_with_a_derivation_chain() {
     // A well-formed design encoded as a SAT problem: the chosen strategy
     // forward-chains four consequences and the plan checks out CONSISTENT.

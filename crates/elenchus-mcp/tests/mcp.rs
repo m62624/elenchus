@@ -103,6 +103,42 @@ fn conflict_program_is_reported() {
 }
 
 #[test]
+fn orphan_fact_rides_through_json_over_mcp() {
+    // `lonely sits idle` is referenced by no premise/rule → an advisory orphan.
+    // The JSON report must carry it in the `orphans` array (parsed back through
+    // serde_json by `roundtrip`, so the wire stays valid), while the verdict
+    // stays CONSISTENT and the call is not an error.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely sits idle\nCHECK\n","format":"json"}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    // The text field holds a JSON document — re-parse it and inspect `orphans`.
+    let report: Value = serde_json::from_str(text).expect("report text must be valid JSON");
+    assert_eq!(report["status"], "CONSISTENT");
+    assert_eq!(report["exit_code"], 0);
+    let orphans = report["orphans"].as_array().expect("orphans array");
+    assert_eq!(orphans.len(), 1, "got: {text}");
+    assert_eq!(orphans[0]["atom"], "lonely sits idle");
+    assert_eq!(orphans[0]["kind"], "FACT");
+    assert_eq!(orphans[0]["value"], true);
+}
+
+#[test]
+fn orphan_fact_renders_in_the_human_report_over_mcp() {
+    // The `human` format: the advisory ORPHAN line reaches the text field.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely sits idle\nCHECK\n","format":"human"}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("ORPHAN    FACT lonely sits idle"),
+        "got: {text}"
+    );
+}
+
+#[test]
 fn parse_error_is_a_tool_error() {
     let resps = roundtrip(&[
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\n"}}}"#,

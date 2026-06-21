@@ -3,5 +3,6 @@ source: crates/elenchus-solver/tests/output_variants.rs
 expression: "report(\"FACT x a\\nCHECK x\\n\")"
 ---
 RESULT: CONSISTENT
+  ORPHAN    FACT x a — not used by any premise or rule (no effect on the result)
 SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 0
