@@ -378,21 +378,6 @@ the skill is loaded and elenchus is installed, it will know to do exactly that.
 The three library crates build for a `no_std` target (`wasm32v1-none`), verified
 in CI.
 
-## Status
-
-**Verified** (in CI and locally): all five crates implemented and tested
-(parser → compiler → solver, plus CLI and MCP); the SAT core is property-tested
-against a brute-force oracle; `clippy`-clean with `-D warnings`; the three library
-crates build for the `no_std` target `wasm32v1-none`. CI runs fmt/clippy/test on
-Linux/Windows/macOS.
-
-**Not yet proven — treat as experimental.** The release pipeline and the
-installers (shell/PowerShell/`.msi`/Homebrew, `cargo binstall`, crates.io publish)
-are *configured* but have **not** been exercised by a real tagged release. Until
-the first release runs green, assume some installer or publish step may fail —
-verify whichever path you use, and expect fixes. `dist plan` passes, but that only
-validates the plan, not an actual build/upload.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -45,6 +45,13 @@ RULE labels_keep_compatibility:
     WHEN numbers are labels
     THEN plan stays compatible
 
+// The goal "add numbers" must be met by the chosen mechanism: numbers are
+// represented as labels (derived above). This ties the goal into the logic so
+// it is actually checked, not left dangling in the void.
+PREMISE numbers_arrive_as_labels:
+    WHEN plan adds numbers
+    THEN numbers are labels
+
 // --- A guard: an SMT core would cost the simplicity we promised ---
 // (Inactive here, since we rejected SMT — but it would fire as a
 // CONFLICT if someone later asserted `FACT strategy is smt_solver`.)

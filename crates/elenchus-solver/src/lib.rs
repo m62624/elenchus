@@ -183,6 +183,11 @@ pub struct Report {
     /// Advisory near-duplicate atom-name hints (possible typos). Never affects
     /// [`Report::status`] or [`Report::exit_code`] — purely informational.
     pub hints: Vec<SimilarAtoms>,
+    /// Advisory "orphan fact" lints: a `FACT`/`NOT`/`ASSUME` whose atom is never
+    /// referenced by any `PREMISE` or `RULE`, so it can neither be checked nor
+    /// derive anything — it has no effect on the verdict. Never affects
+    /// [`Report::status`] or [`Report::exit_code`] — purely informational.
+    pub orphans: Vec<OrphanFact>,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two
@@ -198,6 +203,22 @@ pub struct SimilarAtoms {
     pub b: String,
     /// Why the pair was flagged (a short, fixed explanation).
     pub reason: &'static str,
+}
+
+/// An advisory lint: a `FACT`/`NOT`/`ASSUME` whose atom appears in **no**
+/// `PREMISE` or `RULE`. Such an assertion is logically inert — nothing checks it
+/// and nothing is derived from it, so it can never produce a CONFLICT, WARNING or
+/// DERIVED. It is almost always a typo'd atom name or a leftover line. **Purely
+/// informational** — it never changes the verdict, the warning pool, or the exit
+/// code (a program full of orphans is still perfectly CONSISTENT).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanFact {
+    /// The atom's human label (`subject predicate [object]`), without polarity.
+    pub atom: String,
+    /// The asserted value — `False` means the surface line was `NOT`/`ASSUME NOT`.
+    pub value: Value,
+    /// Provenance of the inert assertion (source, line, kind = `FACT`/`NOT`/`ASSUME`).
+    pub origin: Origin,
 }
 
 /// One construct named in an [`Report::unsat_core`].
@@ -303,6 +324,17 @@ impl Report {
             json_str(&h.b, &mut s);
             s.push_str(",\"reason\":");
             json_str(h.reason, &mut s);
+            s.push('}');
+        }
+        s.push_str("],\"orphans\":[");
+        for (i, o) in self.orphans.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&o.origin, &mut s);
+            s.push_str(",\"atom\":");
+            json_str(&o.atom, &mut s);
+            let _ = write!(s, ",\"value\":{}", matches!(o.value, Value::True));
             s.push('}');
         }
         s.push_str("]}");
@@ -749,6 +781,7 @@ impl<'a> Eval<'a> {
             unsat_core: self.unsat_core,
             retract: Vec::new(), // filled by `solve` when assumptions are to blame
             hints: Vec::new(),   // filled by `solve` (advisory, post-verdict)
+            orphans: Vec::new(), // filled by `solve` (advisory, post-verdict)
         }
     }
 }
@@ -776,7 +809,45 @@ pub fn solve(c: &Compiled) -> Report {
     // Advisory only: surface likely atom-name typos. Computed after the verdict
     // so it can never influence status/exit code.
     report.hints = similar_atom_pairs(c);
+    // Advisory only: surface logically-inert assertions (orphan facts). Also
+    // post-verdict, so it can never influence status/exit code.
+    report.orphans = orphan_facts(c);
     report
+}
+
+/// Collect the **orphan facts**: every `FACT`/`NOT`/`ASSUME` whose atom appears
+/// in no `PREMISE` clause and no `RULE`. Such an assertion is inert — it cannot be
+/// checked and derives nothing, so it has no bearing on the verdict.
+///
+/// An atom is "referenced" if it occurs in any desugared `PREMISE` clause
+/// (`c.clauses`) or in any `RULE`'s antecedent or consequent. (The built-in
+/// non-contradiction is not a clause here — it is enforced during fact seeding —
+/// so it does not mask an orphan.) Deterministic: facts keep source order; the
+/// result is sorted by origin (source, line).
+fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
+    let mut referenced = vec![false; c.atoms.len()];
+    for clause in &c.clauses {
+        for l in &clause.lits {
+            referenced[l.atom as usize] = true;
+        }
+    }
+    for r in &c.rules {
+        for l in r.antecedent.iter().chain(r.consequent.iter()) {
+            referenced[l.atom as usize] = true;
+        }
+    }
+    let mut out: Vec<OrphanFact> = c
+        .facts
+        .iter()
+        .filter(|f| !referenced[f.atom as usize])
+        .map(|f| OrphanFact {
+            atom: label(c, f.atom),
+            value: f.value,
+            origin: f.origin.clone(),
+        })
+        .collect();
+    out.sort_by_key(|o| key(&o.origin));
+    out
 }
 
 /// The minimal set of `ASSUME` hypotheses to retract so an
@@ -1404,6 +1475,21 @@ impl fmt::Display for Report {
                 h.reason
             )?;
         }
+        for o in &self.orphans {
+            // Reconstruct the surface line; `kind` already carries the polarity
+            // except for `ASSUME NOT`, where the value supplies it.
+            let surface = if o.origin.kind == "ASSUME" && matches!(o.value, Value::False) {
+                alloc::format!("ASSUME NOT {}", o.atom)
+            } else {
+                alloc::format!("{} {}", o.origin.kind, o.atom)
+            };
+            emit!(
+                out,
+                SECTION,
+                "ORPHAN    {} — not used by any premise or rule (no effect on the result)",
+                surface
+            )?;
+        }
 
         let underdetermined = usize::from(self.status == Status::Underdetermined);
         emit!(
@@ -1907,5 +1993,76 @@ mod tests {
         // (pred+obj) fold to the same name.
         let r = verify_source("<t>", "FACT a 猫_黑\nNOT a 猫 黑\nCHECK\n").unwrap();
         assert_eq!(r.hints.len(), 1, "{:?}", r.hints);
+    }
+
+    // --- orphan facts (advisory: assertions no premise/rule references) -----
+
+    #[test]
+    fn orphan_fact_is_flagged_but_advisory_only() {
+        // `x a` is asserted but never referenced by a premise or rule: inert.
+        // The verdict stays CONSISTENT and the exit code stays 0.
+        let r = verify_source("<t>", "FACT x a\nCHECK\n").unwrap();
+        assert_eq!(
+            r.status,
+            Status::Consistent,
+            "orphan must not change verdict"
+        );
+        assert_eq!(r.exit_code(), 0, "orphan must not change exit code");
+        assert_eq!(r.orphans.len(), 1, "{:?}", r.orphans);
+        assert_eq!(r.orphans[0].atom, "x a");
+        assert_eq!(r.orphans[0].origin.kind, "FACT");
+    }
+
+    #[test]
+    fn fact_used_by_a_premise_is_not_orphan() {
+        // `x a` feeds an EXCLUSIVE constraint → referenced → not an orphan.
+        let r = verify_source(
+            "<t>",
+            "FACT x a\nPREMISE p:\n    EXCLUSIVE\n        x a\n        x b\nCHECK\n",
+        )
+        .unwrap();
+        assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+    }
+
+    #[test]
+    fn fact_used_by_a_rule_antecedent_is_not_orphan() {
+        let r = verify_source(
+            "<t>",
+            "FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nCHECK\n",
+        )
+        .unwrap();
+        assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+    }
+
+    #[test]
+    fn negation_and_assumption_orphans_keep_their_surface_polarity() {
+        // A `NOT` orphan and an `ASSUME NOT` orphan render with the polarity the
+        // model wrote, so the report points at the exact line it typed.
+        let r = verify_source("<t>", "NOT x a\nASSUME NOT y b\nCHECK\n").unwrap();
+        assert_eq!(r.orphans.len(), 2, "{:?}", r.orphans);
+        let text = alloc::format!("{r}");
+        assert!(text.contains("ORPHAN    NOT x a"), "{text}");
+        assert!(text.contains("ORPHAN    ASSUME NOT y b"), "{text}");
+    }
+
+    #[test]
+    fn orphan_is_in_json() {
+        let r = verify_source("<t>", "FACT x a\nCHECK\n").unwrap();
+        let j = r.to_json();
+        assert!(j.contains("\"orphans\":["), "{j}");
+        assert!(j.contains("\"atom\":\"x a\""), "{j}");
+        assert!(j.contains("\"kind\":\"FACT\""), "{j}");
+    }
+
+    #[test]
+    fn a_derived_atom_does_not_make_its_consumer_orphan() {
+        // `x c` is derived by the rule and then referenced by the premise; the
+        // seeding fact `x a` is referenced by the rule. Nothing is orphan.
+        let r = verify_source(
+            "<t>",
+            "FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nPREMISE p:\n    WHEN x c\n    THEN x d\nCHECK\n",
+        )
+        .unwrap();
+        assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }
 }

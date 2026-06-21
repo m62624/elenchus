@@ -11,5 +11,7 @@ RESULT: CONFLICT
       why:
         x a = TRUE   [FACT v.vrf:4]
         x b = TRUE   [FACT v.vrf:5]
+  ORPHAN    FACT y c — not used by any premise or rule (no effect on the result)
+  ORPHAN    NOT y c — not used by any premise or rule (no effect on the result)
 SUMMARY: 2 conflicts, 0 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 2
