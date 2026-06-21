@@ -100,6 +100,10 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `THEN` | `PREMISE`/`RULE` body | starts the consequent |
 | `AND` | `WHEN`/`THEN` group | conjunction of literals in that group |
 | `OR` | `WHEN`/`THEN` group | disjunction of literals in that group |
+| `SET` | statement | declare a finite set of elements to quantify over (one element per line) |
+| `FOR EACH … IN …` | `PREMISE`/`RULE` header | instantiate the body once per element of a `SET`, binding a name |
+| `FOR EACH … <rel> …` | `PREMISE`/`RULE` header | instantiate the body once per declared `FACT` pair of a relation |
+| `CLOSE` | statement | `CLOSE <rel> TRANSITIVE` — make a relation transitive at compile time; a cycle is an error |
 | `//` | anywhere | line comment (to end of line) |
 
 The line-oriented rules that hold everywhere: **every file begins with `DOMAIN
@@ -241,6 +245,57 @@ RULE flyers_breathe:
     THEN bird needs_oxygen
 ```
 
+### `SET` + `FOR EACH … IN …` — write a premise once, apply it to every element
+- **Syntax:** `SET <name>` then one element per line; then on a `PREMISE`/`RULE`
+  header, `PREMISE <name> FOR EACH <binder> IN <set>:` followed by the usual body.
+- **Why:** instead of copying a premise per item, write it **once** with a binder
+  (`t`). The engine instantiates the whole body once per element, substituting the
+  binder. This is how you state "every X must …" without enumerating by hand.
+- **The one rule to remember:** a header carries **exactly one** `FOR EACH` — you
+  **cannot** nest them (a second `FOR EACH` will not parse). That is deliberate: it
+  guarantees the work stays small (one instance per element, never element×element).
+```vrf
+SET tasks
+    deploy
+    backup
+PREMISE one_slot FOR EACH t IN tasks:
+    ONEOF
+        t slot morning
+        t slot night
+```
+
+### `FOR EACH <a> <relation> <b>` — quantify over declared `FACT` pairs
+- **Syntax:** `PREMISE <name> FOR EACH <a> <relation> <b>:` then the usual body.
+  The relation's pairs are **just facts** you write: `FACT a linked b`.
+- **Why:** the way to relate *two* things (graphs, adjacency, dependencies)
+  without enumerating. The body is instantiated once per matching `FACT`, binding
+  `a`→its subject and `b`→its object. You never write a second binder — the pair
+  comes from data, so it stays cheap.
+```vrf
+FACT n1 linked n2
+FACT n2 linked n3
+PREMISE diff FOR EACH x linked y:    // neighbours can't share a colour
+    FORBIDS
+        x is red
+        y is red
+```
+
+### `CLOSE <relation> TRANSITIVE` — make a relation reach transitively
+- **Syntax:** `CLOSE <relation> TRANSITIVE` (its own line).
+- **Why:** computes the relation's transitive closure at **compile time** (a graph
+  step, no solver cost): if `a→b` and `b→c`, then `a→c` is added, so a relation
+  `FOR EACH` then ranges over *reachability*, not just direct edges. A **cycle**
+  (a node reaching itself) is a **compile error** — so `CLOSE` doubles as an
+  acyclicity (DAG) check on a dependency graph.
+```vrf
+FACT web depends_on api
+FACT api depends_on db
+CLOSE depends_on TRANSITIVE           // now web depends_on db, transitively
+PREMISE safe FOR EACH x depends_on y:
+    WHEN y deprecated
+    THEN NOT x ships
+```
+
 ### `CHECK` / `BIDIRECTIONAL` — run it
 - **Syntax:** `CHECK` · `CHECK <subject>` · `CHECK [<subject>] BIDIRECTIONAL`.
 - **Why:** runs the engine. A bare `CHECK` checks everything; a subject restricts
@@ -308,15 +363,21 @@ name should be one atom, wire up or delete a line that should not dangle.
 If you reach for any of these, the parser will reject it or, worse, silently
 misread it. There is **no**:
 
-- **arithmetic or comparisons** (`>=`, `+`, numbers as math) → turn a threshold
-  into a named atom: `speed >= 100` becomes the atom `motor over_100`, and you
-  reason about the branch. Order them with a premise: `WHEN motor over_200 THEN
-  motor over_100`.
+- **numbers or arithmetic** (`>=`, `+`, counts like "at most 3") → there are **no
+  numbers in the language at all**. Turn a threshold into a named atom:
+  `speed >= 100` becomes the atom `motor over_100`, and you reason about the
+  branch. Order them with a premise: `WHEN motor over_200 THEN motor over_100`.
+  "Exactly one / at least one / at most one" you *do* have (`ONEOF` / `ATLEAST` /
+  `EXCLUSIVE`); counts beyond one do not exist.
 - **operators or `OR`/`AND` *inside* a literal**, and **no parentheses** → group
   logic across `WHEN`/`THEN` lines instead.
 - **mixing `AND` and `OR` in one group** → split into separate premises.
 - **`OR` in a `RULE`'s `THEN`** → use a `PREMISE` (a rule can't derive a disjunction).
-- **quantifiers** (∀/∃), **probabilities**, **nesting**, **else/default branches**.
+- **nested or unbounded quantifiers** → you have **one** `FOR EACH` per premise
+  (over a `SET` or a relation); you **cannot** nest two, and there is no ∀/∃ over
+  anything but a declared `SET`/relation. To relate two things, route through a
+  declared relation (`FACT a linked b` + `FOR EACH x linked y`), never two binders.
+- **probabilities**, **else/default branches**.
 - list bodies don't take `NOT` items; negate in `WHEN…THEN` bodies via `NOT <atom>`.
 
 ## Reading the report
@@ -617,51 +678,57 @@ backtracking for you: it tells you exactly which guess to revise.
 
 elenchus *is* a SAT checker, so problems shaped like "assign values to variables
 subject to constraints" (graph colouring, scheduling, seating, Sudoku-style grids
-— the classic NP-complete family) map onto it directly. The recipe is always the
-same three moves:
+— the classic NP-complete family) map onto it directly. With `SET` + `FOR EACH`
+you state each rule **once** instead of copying it per element. The recipe:
 
-1. **Each variable → one `ONEOF`** over its possible values (this both states "it
-   takes exactly one value" *and* closes the variable, so a mistyped value is a
-   hard error, not a silent bug).
-2. **Each constraint → a `PREMISE`** (`EXCLUSIVE`/`FORBIDS` for "not these
-   together", `WHEN…THEN` for "if this then that", `ATLEAST` for "at least one").
+1. **The things → a `SET`**; **each one's value → a `ONEOF`** under
+   `FOR EACH … IN <set>` (states "exactly one value" *and* closes the variable, so
+   a mistyped value is a hard error, not a silent bug).
+2. **Relations (edges, "depends on") → plain `FACT`s**; **each constraint over a
+   pair → a `PREMISE FOR EACH x <rel> y`**. To follow a chain transitively, add
+   `CLOSE <rel> TRANSITIVE` (which also rejects cycles).
 3. **`CHECK BIDIRECTIONAL`** — `CONFLICT` = no valid assignment exists;
    `UNDERDETERMINED` = solvable but more than one assignment fits (not unique);
    `CONSISTENT` = exactly one.
 
-Graph 3-colouring of a triangle (three nodes, every pair adjacent — so it needs 3
-colours and the solution is not unique):
+Graph 3-colouring of a triangle — three nodes, every pair adjacent (so it needs 3
+colours and the colouring is not unique). Note how the colour rule is written
+once with `FOR EACH`, and the edges are just facts:
 
 ```vrf
 DOMAIN graph
-PREMISE n1_color:                  // variable: node 1's colour
+SET nodes
+    n1
+    n2
+    n3
+PREMISE colour FOR EACH n IN nodes:      // each node takes exactly one colour
     ONEOF
-        n1 is red
-        n1 is green
-        n1 is blue
-PREMISE n2_color:
-    ONEOF
-        n2 is red
-        n2 is green
-        n2 is blue
-PREMISE n3_color:
-    ONEOF
-        n3 is red
-        n3 is green
-        n3 is blue
-PREMISE edge_12:                   // adjacent nodes can't share a colour
+        n is red
+        n is green
+        n is blue
+FACT n1 linked n2                        // the edges — plain facts
+FACT n2 linked n3
+FACT n1 linked n3
+PREMISE diff_red FOR EACH x linked y:    // adjacent nodes can't share a colour
     FORBIDS
-        n1 is red
-        n2 is red
-// ... one FORBIDS per (edge, colour); shown trimmed for brevity
+        x is red
+        y is red
+PREMISE diff_green FOR EACH x linked y:
+    FORBIDS
+        x is green
+        y is green
+PREMISE diff_blue FOR EACH x linked y:
+    FORBIDS
+        x is blue
+        y is blue
 CHECK BIDIRECTIONAL
 ```
 
-Add an edge that makes it unsatisfiable (e.g. force all three the same colour via
-`WHEN…THEN` premises) and the verdict flips to `CONFLICT` with a `CORE` naming the
-clashing constraints. **Note the scale limit:** the backward (`BIDIRECTIONAL`)
-pass explores assignments, so keep variable/value counts modest — elenchus is for
-*checking the logic of* a constraint problem, not an industrial-scale solver.
+Drop a colour from the `ONEOF` (2-colour a triangle) and the verdict flips to
+`CONFLICT` with a `CORE` naming the clashing constraints. **Note the scale limit:**
+the backward (`BIDIRECTIONAL`) pass explores assignments, so keep element/value
+counts modest — elenchus is for *checking the logic of* a constraint problem, not
+an industrial-scale solver.
 
 ## Run it — do these three steps first, in order (every session)
 
@@ -711,7 +778,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.8.0 -->
+<!-- skill-version: 0.9.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

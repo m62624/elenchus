@@ -360,6 +360,9 @@ namespacing and reuse.
 | `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
+| `SET` | declare a finite set of elements to quantify over | quantification |
+| `FOR EACH … IN …` / `FOR EACH … <rel> …` | quantifier on a `PREMISE`/`RULE` header (over a `SET` or a relation's `FACT` pairs) | quantification |
+| `CLOSE … TRANSITIVE` | make a relation transitive at compile time (cycle = error) | quantification |
 | `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
 | `AS` | local alias for an imported domain | reuse |
 | `CHECK` / `BIDIRECTIONAL` | a query | query |
@@ -417,6 +420,52 @@ CHECK <Subject> BIDIRECTIONAL    // enables the backward pass
 
 The difference between `PREMISE` and `RULE` with an identical WHEN/THEN body:
 `PREMISE` **checks** (no convergence → CONFLICT), `RULE` **produces** a new fact.
+
+## Bounded quantification: `SET`, `FOR EACH`, `CLOSE`
+
+So a small model can write a constraint **once** instead of copying it per item,
+a `PREMISE`/`RULE` may carry one `FOR EACH` quantifier on its header. This is a
+**pure compile-time desugar**: the body is instantiated once per element, with the
+binder substituted, and the *same* clause emitter runs on each instance. The
+solver is unchanged.
+
+```
+// Declare a finite set, one element per line
+SET <name>
+    <element>
+    <element>
+
+// Quantify over a SET: the body runs once per element, binding <binder>
+PREMISE <name> FOR EACH <binder> IN <set>:
+    ONEOF
+        <binder> <predicate> <value>
+        <binder> <predicate> <value>
+
+// Quantify over a relation's FACT pairs: edges are plain facts
+FACT a linked b
+PREMISE <name> FOR EACH <x> linked <y>:
+    FORBIDS
+        <x> <predicate> <value>
+        <y> <predicate> <value>
+
+// Make a relation transitive at compile time (a->b, b->c => a->c); a cycle errors
+CLOSE <relation> TRANSITIVE
+```
+
+**The one-binder rule (why it stays cheap).** A header carries **exactly one**
+`FOR EACH` — the grammar has no production for a second, so quantifier nesting is
+*unrepresentable* (a second `FOR EACH` does not parse). This is the structural
+guarantee against a combinatorial blow-up: grounding a single quantifier is `|set|`
+(or `|facts|`) repetitions — strictly linear — and a clause can never range over
+the product of two domains. To relate two things, route through a declared
+relation (`FACT a linked b` + `FOR EACH x linked y`), whose pairs are pinned by
+data, never two free binders. There are still **no numbers**: "exactly/at least/at
+most one" exist (`ONEOF`/`ATLEAST`/`EXCLUSIVE`), counts beyond one do not.
+
+`CLOSE <rel> TRANSITIVE` computes the relation's transitive closure as a compile-
+time graph step (zero solver cost), so a relation `FOR EACH` then ranges over
+*reachability*; a node that reaches itself is a **compile error**, making `CLOSE`
+double as an acyclicity (DAG) check.
 
 ## IMPORT — reuse over a source-agnostic engine
 
@@ -515,17 +564,23 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = domain | import | fact | negation | assume | premise | rule | check ;
+statement   = domain | import | set | close | fact | negation | assume | premise | rule | check ;
 
 domain      = "DOMAIN" , name , NEWLINE ;      (* required, first statement of a file *)
 import      = "IMPORT" , string , [ "AS" , name ] , NEWLINE ;
+set         = "SET" , name , NEWLINE , element_line , { element_line } ;  (* >= 1 *)
+element_line = identifier , NEWLINE ;
+close       = "CLOSE" , name , "TRANSITIVE" , NEWLINE ;
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
-premise       = "PREMISE" , name , ":" , NEWLINE , ( list_body | impl_body ) ;
-rule        = "RULE"  , name , ":" , NEWLINE , impl_body ;
+premise       = "PREMISE" , name , [ for_each ] , ":" , NEWLINE , ( list_body | impl_body ) ;
+rule        = "RULE"  , name , [ for_each ] , ":" , NEWLINE , impl_body ;
+for_each    = "FOR" , "EACH" , name , ( "IN" , name | name , name ) ;
+            (* one binder over a SET, or `<a> <relation> <b>` over a relation's facts;
+               exactly one per header — there is no production for a second *)
 
 list_body   = list_op , NEWLINE , atom_line , atom_line , { atom_line } ;  (* >= 2 *)
 list_op     = "EXCLUSIVE" | "FORBIDS" | "ONEOF" | "ATLEAST" ;
@@ -562,12 +617,12 @@ names are yours.
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
 identifier (list atoms), and ends at the first line with a top-level word
-(`DOMAIN`/`IMPORT`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
+(`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
 Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME PREMISE
-RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST`. An
-identifier may not coincide with a reserved word.
+RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST SET FOR
+EACH IN CLOSE TRANSITIVE`. An identifier may not coincide with a reserved word.
 
 ## Name normalization
 
