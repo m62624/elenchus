@@ -24,7 +24,7 @@ use nom::{
 
 use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
 use crate::diag::{Diagnostic, Diagnostics};
-use crate::reserved::{RESERVED, is_reserved, is_top_level};
+use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
 
 // --- Parser primitives -----------------------------------------------------
 
@@ -158,7 +158,7 @@ fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
 /// An optionally `NOT`-prefixed [`atom`] — a literal inside a `WHEN`/`THEN` body.
 fn literal<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
     let start = input;
-    let (input, neg) = opt(terminated(tag("NOT"), space1)).parse(input)?;
+    let (input, neg) = opt(terminated(tag(kw::NOT), space1)).parse(input)?;
     let (input, a) = atom(input)?;
     Ok((
         input,
@@ -185,10 +185,10 @@ fn atom_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
 /// One of the list-constraint keywords (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`).
 fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
     alt((
-        value(ListOp::Exclusive, tag("EXCLUSIVE")),
-        value(ListOp::Forbids, tag("FORBIDS")),
-        value(ListOp::OneOf, tag("ONEOF")),
-        value(ListOp::AtLeast, tag("ATLEAST")),
+        value(ListOp::Exclusive, tag(kw::EXCLUSIVE)),
+        value(ListOp::Forbids, tag(kw::FORBIDS)),
+        value(ListOp::OneOf, tag(kw::ONEOF)),
+        value(ListOp::AtLeast, tag(kw::ATLEAST)),
     ))
     .parse(input)
 }
@@ -237,7 +237,7 @@ fn cont_line<'a>(input: Span<'a>) -> PResult<'a, (Conn, Located<'a, Literal<'a>>
     let (input, _) = space0(input)?;
     // Not an AND/OR line → Error so many0 stops cleanly.
     let (input, conn) =
-        alt((value(Conn::And, tag("AND")), value(Conn::Or, tag("OR")))).parse(input)?;
+        alt((value(Conn::And, tag(kw::AND)), value(Conn::Or, tag(kw::OR)))).parse(input)?;
     let (input, _) = space1(input)?;
     let at = input;
     let (input, lit) = promote(
@@ -284,7 +284,7 @@ fn fail_at<'a, T>(at: Span<'a>, msg: &str) -> PResult<'a, T> {
 fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // No WHEN → Error so the PREMISE alt can fall through to a list body.
-    let (input, _) = (tag("WHEN"), space1).parse(input)?;
+    let (input, _) = (tag(kw::WHEN), space1).parse(input)?;
     // Committed to an implication body now.
     let at = input;
     let (input, when) = promote(
@@ -307,7 +307,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     let at = input;
     let (input, _) = promote(
-        tag("THEN").parse(input),
+        tag(kw::THEN).parse(input),
         at,
         "expected THEN to complete the WHEN ... THEN implication",
     )?;
@@ -349,7 +349,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
 /// `IMPORT "<path>" [AS <alias>]` — a quoted path, optionally bound to a local
 /// domain alias, on one line.
 fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("IMPORT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::IMPORT), space1).parse(input)?;
     let start = input;
     let (input, path) = promote(
         delimited(char('"'), take_while(|c| c != '"' && c != '\n'), char('"')).parse(input),
@@ -357,7 +357,7 @@ fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         "IMPORT expects a quoted path, e.g. IMPORT \"physics.vrf\"",
     )?;
     // Optional `AS <alias>`: a local name for the imported domain.
-    let (input, alias) = opt(preceded((space1, tag("AS"), space1), identifier)).parse(input)?;
+    let (input, alias) = opt(preceded((space1, tag(kw::AS), space1), identifier)).parse(input)?;
     let (input, _) = promote(
         eol(input),
         input,
@@ -377,7 +377,7 @@ fn stmt_import<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `DOMAIN <name>` — declare this file's domain on one line.
 fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("DOMAIN"), space1).parse(input)?;
+    let (input, _) = (tag(kw::DOMAIN), space1).parse(input)?;
     let at = input;
     let (input, name) = promote(
         identifier(input),
@@ -390,7 +390,7 @@ fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `FACT <atom>` — a TRUE assertion.
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("FACT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::FACT), space1).parse(input)?;
     let at = input;
     let (input, a) = promote(
         atom(input),
@@ -404,7 +404,7 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// `ASSUME [NOT] <atom>` — a soft (retractable) assertion. Accepts a leading
 /// `NOT` (like a `WHEN`/`THEN` literal), so `ASSUME NOT x a` is FALSE-by-default.
 fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("ASSUME"), space1).parse(input)?;
+    let (input, _) = (tag(kw::ASSUME), space1).parse(input)?;
     let at = input;
     let (input, lit) = promote(
         literal(input),
@@ -418,7 +418,7 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
 /// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("NOT"), space1).parse(input)?;
+    let (input, _) = (tag(kw::NOT), space1).parse(input)?;
     let at = input;
     let (input, a) = promote(
         atom(input),
@@ -431,9 +431,9 @@ fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `CHECK [<subject>] [BIDIRECTIONAL]` — both modifiers optional.
 fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = tag("CHECK").parse(input)?;
+    let (input, _) = tag(kw::CHECK).parse(input)?;
     let (input, subject) = opt(preceded(space1, identifier)).parse(input)?;
-    let (input, bidir) = opt(preceded(space1, tag("BIDIRECTIONAL"))).parse(input)?;
+    let (input, bidir) = opt(preceded(space1, tag(kw::BIDIRECTIONAL))).parse(input)?;
     let (input, _) = eol(input)?;
     Ok((
         input,
@@ -446,7 +446,7 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `PREMISE <name>: <body>` where the body is a list or an implication.
 fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("PREMISE"), space1).parse(input)?;
+    let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
     // Committed to a premise now.
     let at = input;
     let (input, name) = promote(
@@ -472,7 +472,7 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 /// `RULE <name>: <implication>` — like a premise but the body must be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag("RULE"), space1).parse(input)?;
+    let (input, _) = (tag(kw::RULE), space1).parse(input)?;
     let at = input;
     let (input, name) = promote(
         identifier(input),
@@ -584,11 +584,7 @@ fn make_diag(src: &str, at: Span<'_>, message: String, general: bool) -> Diagnos
     // not the line the parser stalled on — a stall often lands on the *next*
     // line (e.g. "expected THEN …" points at the CHECK after a bodyless WHEN),
     // whose leading word would be a misleading card.
-    let keyword = if general {
-        None
-    } else {
-        keyword_from_message(&message)
-    };
+    let keyword = if general { None } else { keyword_in(&message) };
     Diagnostic {
         line,
         col,
@@ -598,14 +594,6 @@ fn make_diag(src: &str, at: Span<'_>, message: String, general: bool) -> Diagnos
         general,
         line_text: line_text.to_string(),
     }
-}
-
-/// The first reserved keyword named anywhere in `message`, if any — selects the
-/// syntax card. Returns a `'static` slice from [`RESERVED`].
-fn keyword_from_message(message: &str) -> Option<&'static str> {
-    message
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .find_map(|w| RESERVED.iter().copied().find(|k| *k == w))
 }
 
 /// Caret length: from `col` to the last non-whitespace character of the line (at

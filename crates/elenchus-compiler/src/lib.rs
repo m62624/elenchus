@@ -47,7 +47,7 @@ use core::fmt::Write as _;
 /// Re-exported so downstream crates can name the syntax diagnostics carried by
 /// [`CompileError::Parse`] (and render them with a custom error limit).
 pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement};
+use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement, kw};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -400,8 +400,10 @@ impl Compiler {
         match stmt {
             // Handled by `add_source` / `load_recursive`, never reach here.
             Statement::Import { .. } | Statement::Domain(_) => {}
-            Statement::Fact(a) => self.add_fact(source, a, Value::True, "FACT", false, ctx)?,
-            Statement::Negation(a) => self.add_fact(source, a, Value::False, "NOT", false, ctx)?,
+            Statement::Fact(a) => self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?,
+            Statement::Negation(a) => {
+                self.add_fact(source, a, Value::False, kw::NOT, false, ctx)?
+            }
             Statement::Assume(l) => {
                 let value = if l.data.negated {
                     Value::False
@@ -415,7 +417,7 @@ impl Compiler {
                     data: l.data.atom.clone(),
                     span: l.span,
                 };
-                self.add_fact(source, &located, value, "ASSUME", true, ctx)?;
+                self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
             }
             Statement::Check {
                 subject,
@@ -527,7 +529,7 @@ impl Compiler {
                 for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
-                let origin = self.origin(source, line, Some(name), "RULE");
+                let origin = self.origin(source, line, Some(name), kw::RULE);
                 match ante_conn {
                     // a ∧ b → C : one rule firing on the whole antecedent.
                     Conn::And => self.rules.push(RawRule {
@@ -595,7 +597,7 @@ impl Compiler {
                 for l in ante.iter().chain(cons.iter()) {
                     self.intern(&l.key);
                 }
-                let origin = self.origin(source, line, Some(name), "PREMISE");
+                let origin = self.origin(source, line, Some(name), kw::PREMISE);
 
                 let ante_groups: Vec<Vec<RawLit>> = match ante_conn {
                     Conn::And => vec![ante.clone()],
@@ -996,10 +998,10 @@ fn raw_lits(
 /// The surface keyword for a list op, used as [`Origin::kind`] in the report.
 fn list_kind(op: ListOp) -> &'static str {
     match op {
-        ListOp::Exclusive => "EXCLUSIVE",
-        ListOp::Forbids => "FORBIDS",
-        ListOp::OneOf => "ONEOF",
-        ListOp::AtLeast => "ATLEAST",
+        ListOp::Exclusive => kw::EXCLUSIVE,
+        ListOp::Forbids => kw::FORBIDS,
+        ListOp::OneOf => kw::ONEOF,
+        ListOp::AtLeast => kw::ATLEAST,
     }
 }
 

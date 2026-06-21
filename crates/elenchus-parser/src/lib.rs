@@ -15,10 +15,10 @@
 //! pass, each rendered as a caret block with the keyword's correct syntax (see
 //! [`diag`] and [`syntax`]).
 //!
-//! The crate is split into focused modules — [`ast`] (the tree), [`reserved`]
-//! (keywords), [`syntax`] (per-keyword cards), [`diag`] (error rendering), and
-//! `grammar` (the nom parser + recovering driver) — re-exported here as a flat
-//! public surface.
+//! The crate is split into focused modules — [`ast`] (the tree), [`keywords`]
+//! (the single keyword table: spellings, roles, syntax cards), [`diag`] (error
+//! rendering), and `grammar` (the nom parser + recovering driver) — re-exported
+//! here as a flat public surface.
 //!
 //! # Example
 //!
@@ -39,14 +39,12 @@ extern crate alloc;
 pub mod ast;
 pub mod diag;
 mod grammar;
-pub mod reserved;
-pub mod syntax;
+pub mod keywords;
 
 pub use ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;
-pub use reserved::{RESERVED, is_reserved};
-pub use syntax::{KeywordSyntax, syntax_for};
+pub use keywords::{Card, KEYWORDS, Keyword, card_for, is_reserved, kw};
 
 #[cfg(test)]
 mod tests {

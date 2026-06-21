@@ -5,7 +5,7 @@
 //! Sections: per-keyword cards · multi-error (all at once) · the N-error limit ·
 //! the recovery invariant · a smoke test on a real large file.
 
-use elenchus_parser::{Diagnostics, RESERVED, parse, syntax_for};
+use elenchus_parser::{Diagnostics, KEYWORDS, card_for, parse};
 
 /// The diagnostics of a source expected to fail (panics if it parsed).
 fn diags(src: &str) -> Diagnostics {
@@ -222,22 +222,26 @@ fn showcase_every_failure_mode() {
     insta::assert_snapshot!(err(include_str!("fixtures/showcase.vrf")));
 }
 
-// --- syntax-card coverage: all 17 keywords -------------------------------
+// --- syntax-card coverage: every keyword in the single table -------------
 
 #[test]
 fn every_reserved_word_has_a_complete_card() {
-    for kw in RESERVED {
-        let card = syntax_for(kw).unwrap_or_else(|| panic!("no syntax card for {kw}"));
-        assert!(!card.form().is_empty(), "{kw}: empty form");
-        assert!(!card.gloss().is_empty(), "{kw}: empty gloss");
-        assert!(!card.example().is_empty(), "{kw}: empty example");
-        assert!(card.form().contains(kw), "{kw}: form must name the keyword");
+    for k in KEYWORDS {
+        let card = card_for(k.text).unwrap_or_else(|| panic!("no syntax card for {}", k.text));
+        assert!(!card.form.is_empty(), "{}: empty form", k.text);
+        assert!(!card.gloss.is_empty(), "{}: empty gloss", k.text);
+        assert!(!card.example.is_empty(), "{}: empty example", k.text);
+        assert!(
+            card.form.contains(k.text),
+            "{}: form must name the keyword",
+            k.text
+        );
     }
 }
 
 #[test]
 fn unknown_keyword_has_no_card() {
-    assert!(syntax_for("DEFINITELY_NOT_A_KEYWORD").is_none());
+    assert!(card_for("DEFINITELY_NOT_A_KEYWORD").is_none());
 }
 
 #[test]
@@ -247,7 +251,7 @@ fn top_level_card_examples_actually_parse() {
     for kw in [
         "FACT", "NOT", "ASSUME", "IMPORT", "CHECK", "PREMISE", "RULE",
     ] {
-        let example = syntax_for(kw).unwrap().example();
+        let example = card_for(kw).unwrap().example;
         assert!(
             parse(example).is_ok(),
             "{kw} card example must parse:\n{example}"

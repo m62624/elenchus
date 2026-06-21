@@ -15,7 +15,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::{self, Write as _};
 
-use crate::syntax::{TOP_LEVEL_FORMS, syntax_for};
+use crate::keywords::{card_for, top_level_forms};
 
 /// One syntax error, fully owned (no borrow of the source) so it can flow into
 /// `CompileError` and be rendered later with any limit.
@@ -186,17 +186,15 @@ fn render_class(
     // The correct-syntax reference, shown once for the whole class.
     match class {
         Class::Keyword(kw) => {
-            if let Some(card) = syntax_for(kw) {
-                label(out, "syntax", card.form());
-                label(out, "example", card.example());
+            if let Some(card) = card_for(kw) {
+                label(out, "syntax", card.form);
+                label(out, "example", card.example);
             }
         }
         Class::Statement => {
             out.push_str("  expected one of these statements:");
-            for kw in TOP_LEVEL_FORMS {
-                if let Some(card) = syntax_for(kw) {
-                    let _ = write!(out, "\n      {}", card.form());
-                }
+            for k in top_level_forms() {
+                let _ = write!(out, "\n      {}", k.card.form);
             }
             out.push('\n');
         }
