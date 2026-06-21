@@ -199,6 +199,30 @@ jobs:
           } > "$RUNNER_TEMP/combined.md"
           gh release edit "$TAG" --notes-file "$RUNNER_TEMP/combined.md"
 
+  # Attach the companion Agent Skill to the release. cargo-dist owns the binary /
+  # installer assets; this adds SKILL.md alongside them so an agent can pull the
+  # skill matching its installed engine version from a stable URL:
+  #   https://github.com/<repo>/releases/download/vX.Y.Z/SKILL.md   (pinned)
+  #   https://github.com/<repo>/releases/latest/download/SKILL.md   (latest)
+  # `skill-check` (above) already guarantees the SKILL.md marker == release version.
+  skill-asset:
+    name: Attach SKILL.md to the release
+    needs: [prepare, dist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Upload SKILL.md as a release asset
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          # --clobber keeps this idempotent if the release job is re-run.
+          gh release upload "$TAG" skill/SKILL.md --clobber
+
   # crates.io publish waits for `dist`, so a failed binary/installer release
   # cannot burn immutable crate versions. This is what makes `cargo install
   # <crate>` / `cargo binstall <crate>` resolve by name. `cargo publish
