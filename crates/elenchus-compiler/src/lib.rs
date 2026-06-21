@@ -374,73 +374,19 @@ impl Compiler {
         Ok(())
     }
 
-    /// Resolve `path` and its transitive imports, compiling each file under its
-    /// own domain. Returns the file's declared domain (so a parent can bind it).
-    /// `cache` maps a content hash to the domain of an already-compiled source
-    /// (dedup); `stack` holds the hashes on the current path (cycle detection).
-    /// Loading is transitive (every dependency's clauses participate), but naming
-    /// is file-local: a file may reference only domains it imports itself.
-    fn load_recursive<R: Resolver>(
-        &mut self,
-        path: &str,
-        resolver: &R,
-        cache: &mut BTreeMap<String, String>,
-        stack: &mut Vec<String>,
-    ) -> Result<String, CompileError> {
-        let content = resolver.load(path)?;
-        let hash = hash_hex(content.as_bytes());
-        if let Some(domain) = cache.get(&hash) {
-            return Ok(domain.clone()); // already compiled — reuse its domain
-        }
-        if stack.contains(&hash) {
-            return Err(CompileError::CircularImport(path.to_string()));
-        }
-        stack.push(hash.clone());
-
-        let program = elenchus_parser::parse(&content).map_err(|mut diag| {
-            diag.set_file(path);
+    /// Compile one already-resolved file's statements under its domain context.
+    fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
+        let program = elenchus_parser::parse(&file.content).map_err(|mut diag| {
+            diag.set_file(&file.path);
             CompileError::Parse(diag)
         })?;
-        let domain = extract_domain(&program, path)?;
-
-        // Build this file's domain context: its own domain, plus one local name
-        // per import (the alias, or the imported file's own domain name).
-        let mut aliases = BTreeMap::new();
-        aliases.insert(domain.clone(), domain.clone());
-        for stmt in &program.statements {
-            if let Statement::Import { path: p, alias } = stmt {
-                let resolved = resolver.resolve(path, p.data);
-                let imported = self.load_recursive(&resolved, resolver, cache, stack)?;
-                let bind = alias
-                    .as_ref()
-                    .map(|a| a.data.to_string())
-                    .unwrap_or_else(|| imported.clone());
-                match aliases.get(&bind) {
-                    Some(existing) if *existing != imported => {
-                        return Err(CompileError::DomainAliasClash { alias: bind });
-                    }
-                    _ => {
-                        aliases.insert(bind, imported);
-                    }
-                }
-            }
-        }
-        let ctx = DomainCtx {
-            current: domain.clone(),
-            aliases,
-        };
-
-        // Compile this file's own statements (imports already loaded above).
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
-                other => self.add_statement(path, other, &ctx)?,
+                other => self.add_statement(&file.path, other, &file.ctx)?,
             }
         }
-
-        stack.pop();
-        cache.insert(hash, domain.clone());
-        Ok(domain)
+        Ok(())
     }
 
     /// Route one statement (never `IMPORT`/`DOMAIN` — handled by the loaders) to
@@ -868,21 +814,144 @@ impl Resolver for FileResolver {
     }
 }
 
+/// One resolved source ready to compile: its provenance path, raw text, and the
+/// domain context (own domain + import-alias bindings) its atoms resolve against.
+struct ResolvedFile {
+    path: String,
+    content: String,
+    ctx: DomainCtx,
+}
+
 /// Compile a root source and all its transitive `IMPORT`s into one IR.
 ///
-/// Imports are flat-merged into a single shared atom universe (atoms unify by
-/// identity across files). Sources are content-addressed (sha256): a source
-/// already merged is skipped (dedup), and an import cycle is an error.
+/// Each file is keyed by `DOMAIN`; atoms unify only within a domain. Imports are
+/// referenced by `<domain>.<atom>` and visibility is file-local (naming is not
+/// transitive, though a dependency's clauses still participate). Sources are
+/// content-addressed (sha256): a source reached by several paths is compiled once
+/// (so a diamond — or an exponential fan-out — stays linear, never blowing up),
+/// and an import cycle is an error.
+///
+/// Resolution is **iterative** (an explicit work stack, not native recursion), so
+/// an arbitrarily deep import chain cannot overflow the call stack.
 ///
 /// Premise/rule names are per-source labels, not global identifiers: different
-/// files (domains) may reuse a name, and the report qualifies them by source. A
-/// name reused with a different body is an error only *within the same source*.
+/// files may reuse a name, and the report qualifies them by source. A name reused
+/// with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
+    let files = resolve_graph(root, resolver)?;
     let mut c = Compiler::new();
-    let mut cache = BTreeMap::new();
-    let mut stack = Vec::new();
-    c.load_recursive(root, resolver, &mut cache, &mut stack)?;
+    for file in &files {
+        c.add_resolved(file)?;
+    }
     Ok(c.finalize())
+}
+
+/// A discovered source during graph resolution: its first-seen path, raw text,
+/// declared domain, and import edges `(local alias?, resolved child path)`.
+struct DiscoveredFile {
+    path: String,
+    content: String,
+    domain: String,
+    edges: Vec<(Option<String>, String)>,
+}
+
+/// Resolve the whole import graph reachable from `root` into a flat list of
+/// [`ResolvedFile`]s, each distinct source appearing once.
+///
+/// Iterative depth-first traversal with an explicit work stack (`Enter`/`Exit`
+/// frames) — no native recursion, so depth is unbounded without risking a stack
+/// overflow. Memoized by content hash (a diamond/repeat is visited once); a hash
+/// re-encountered while still on the active path is a [`CompileError::CircularImport`].
+fn resolve_graph<R: Resolver>(root: &str, resolver: &R) -> Result<Vec<ResolvedFile>, CompileError> {
+    /// One unit of pending work on the traversal stack.
+    enum Step {
+        /// Visit a file at this resolved path (load, parse, enqueue its imports).
+        Enter(String),
+        /// Mark this content hash finished (pop it off the active path).
+        Exit(String),
+    }
+
+    let mut discovered: BTreeMap<String, DiscoveredFile> = BTreeMap::new(); // by hash
+    let mut path_hash: BTreeMap<String, String> = BTreeMap::new(); // resolved path → hash
+    let mut order: Vec<String> = Vec::new(); // finish order, by hash
+    let mut active: BTreeSet<String> = BTreeSet::new(); // hashes on the current DFS path
+    let mut work: Vec<Step> = vec![Step::Enter(root.to_string())];
+
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Exit(hash) => {
+                active.remove(&hash);
+                order.push(hash);
+            }
+            Step::Enter(path) => {
+                let content = resolver.load(&path)?;
+                let hash = hash_hex(content.as_bytes());
+                path_hash.insert(path.clone(), hash.clone());
+                if active.contains(&hash) {
+                    return Err(CompileError::CircularImport(path)); // back-edge to an ancestor
+                }
+                if discovered.contains_key(&hash) {
+                    continue; // already fully resolved by another path — dedup
+                }
+                let program = elenchus_parser::parse(&content).map_err(|mut diag| {
+                    diag.set_file(&path);
+                    CompileError::Parse(diag)
+                })?;
+                let domain = extract_domain(&program, &path)?;
+                let mut edges = Vec::new();
+                for stmt in &program.statements {
+                    if let Statement::Import { path: p, alias } = stmt {
+                        let child = resolver.resolve(&path, p.data);
+                        edges.push((alias.as_ref().map(|a| a.data.to_string()), child));
+                    }
+                }
+                drop(program); // release the borrow on `content` before moving it
+                active.insert(hash.clone());
+                work.push(Step::Exit(hash.clone()));
+                for (_, child) in edges.iter().rev() {
+                    work.push(Step::Enter(child.clone()));
+                }
+                discovered.insert(
+                    hash,
+                    DiscoveredFile {
+                        path,
+                        content,
+                        domain,
+                        edges,
+                    },
+                );
+            }
+        }
+    }
+
+    // Build each file's domain context now that every domain is known.
+    let mut out = Vec::with_capacity(order.len());
+    for hash in &order {
+        let file = &discovered[hash];
+        let mut aliases = BTreeMap::new();
+        aliases.insert(file.domain.clone(), file.domain.clone());
+        for (alias, child_path) in &file.edges {
+            let child_domain = &discovered[&path_hash[child_path]].domain;
+            let bind = alias.clone().unwrap_or_else(|| child_domain.clone());
+            match aliases.get(&bind) {
+                Some(existing) if existing != child_domain => {
+                    return Err(CompileError::DomainAliasClash { alias: bind });
+                }
+                _ => {
+                    aliases.insert(bind, child_domain.clone());
+                }
+            }
+        }
+        out.push(ResolvedFile {
+            path: file.path.clone(),
+            content: file.content.clone(),
+            ctx: DomainCtx {
+                current: file.domain.clone(),
+                aliases,
+            },
+        });
+    }
+    Ok(out)
 }
 
 /// The single `DOMAIN` a source declares, or an error if it has none or several.
@@ -1518,6 +1587,75 @@ mod tests {
         r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\n");
         let err = compile("a.vrf", &r).unwrap_err();
         assert!(matches!(err, CompileError::CircularImport(_)));
+    }
+
+    #[test]
+    fn three_node_cycle_errors() {
+        // a → b → c → a. The back-edge to the on-path ancestor is detected.
+        let mut r = MemoryResolver::new();
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\n");
+        r.add("b.vrf", "DOMAIN b\nIMPORT \"c.vrf\"\n");
+        r.add("c.vrf", "DOMAIN c\nIMPORT \"a.vrf\"\n");
+        let err = compile("a.vrf", &r).unwrap_err();
+        assert!(matches!(err, CompileError::CircularImport(_)));
+    }
+
+    #[test]
+    fn shared_grandchild_diamond_loads_once() {
+        // The user's case: a imports B and C; C ALSO imports B. B must be compiled
+        // exactly once (its single clause is not duplicated by the two paths to it).
+        let mut r = MemoryResolver::new();
+        r.add(
+            "b.vrf",
+            "DOMAIN b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+        );
+        r.add("c.vrf", "DOMAIN c\nIMPORT \"b.vrf\"\n");
+        r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\nIMPORT \"c.vrf\"\n");
+        let c = compile("a.vrf", &r).unwrap();
+        assert_eq!(
+            c.clauses.len(),
+            1,
+            "b.vrf's clause must appear exactly once"
+        );
+    }
+
+    #[test]
+    fn exponential_fan_out_is_memoized_not_blown_up() {
+        // f_k imports f_{k-1} TWICE. Without content-hash memoization the visit
+        // count is 2^k (2^40 ≈ a trillion); with it, the work is linear, so this
+        // finishes instantly. A guard against any combinatorial blow-up / DoS.
+        let mut r = MemoryResolver::new();
+        r.add("f0.vrf", "DOMAIN d0\nFACT x a\n");
+        let n = 40;
+        for k in 1..=n {
+            r.add(
+                &alloc::format!("f{k}.vrf"),
+                &alloc::format!(
+                    "DOMAIN d{k}\nIMPORT \"f{}.vrf\"\nIMPORT \"f{}.vrf\"\n",
+                    k - 1,
+                    k - 1
+                ),
+            );
+        }
+        let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+        assert_eq!(c.facts.len(), 1); // the single fact from f0, reached once
+    }
+
+    #[test]
+    fn very_deep_linear_chain_does_not_overflow() {
+        // A long non-cyclic chain. Resolution is iterative (explicit work stack),
+        // so a depth that would overflow a recursive loader compiles cleanly.
+        let mut r = MemoryResolver::new();
+        r.add("f0.vrf", "DOMAIN d0\nFACT x a\n");
+        let n = 10_000;
+        for k in 1..=n {
+            r.add(
+                &alloc::format!("f{k}.vrf"),
+                &alloc::format!("DOMAIN d{k}\nIMPORT \"f{}.vrf\"\n", k - 1),
+            );
+        }
+        let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+        assert_eq!(c.facts.len(), 1);
     }
 
     #[test]
