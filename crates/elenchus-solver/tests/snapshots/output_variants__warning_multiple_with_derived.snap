@@ -5,8 +5,10 @@ expression: "report(r#\"\n        FACT s ready\n        PREMISE need_two:\n     
 RESULT: WARNING
   WARNING   need_two (PREMISE)  [v.vrf:4]
       blocked by: d.s checked
+      fix: nothing determines `d.s checked` — add `FACT d.s checked` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   WARNING   need_two (PREMISE)  [v.vrf:4]
       blocked by: d.s signed
+      fix: nothing determines `d.s signed` — add `FACT d.s signed` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   DERIVED   d.s seen = TRUE   from mark (RULE)  [v.vrf:8]
 SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
 EXIT_CODE: 1
