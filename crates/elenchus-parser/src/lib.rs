@@ -729,6 +729,27 @@ FACT c d
     }
 
     #[test]
+    fn for_each_relation_header_parses_into_a_quant() {
+        let p = prog("PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x a\n        y a\n");
+        match &p.statements[0] {
+            Statement::Premise {
+                quant:
+                    Some(Quant::Relation {
+                        left,
+                        predicate,
+                        right,
+                    }),
+                ..
+            } => {
+                assert_eq!(left.data, "x");
+                assert_eq!(predicate.data, "linked");
+                assert_eq!(right.data, "y");
+            }
+            other => panic!("expected a relation-quantified premise, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn an_unquantified_premise_has_no_quant() {
         let p = prog("PREMISE p:\n    ONEOF\n        x s a\n        x s b\n");
         assert!(matches!(

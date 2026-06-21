@@ -477,9 +477,12 @@ fn stmt_set<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Set { name, elements }))
 }
 
-/// `FOR EACH <binder> IN <set>` — the optional quantifier tail on a `PREMISE`/
-/// `RULE` header (between the name and the `:`). There is exactly one binder and
-/// no production for a second, so quantifier nesting is unrepresentable.
+/// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
+/// and the `:`). One of two forms:
+///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
+///   `FOR EACH <left> <relation> <right>` — over the declared FACT pairs.
+/// There is exactly one quantifier and no production for a second, so nesting is
+/// unrepresentable.
 fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
     // No FOR → recoverable Error so `opt` yields None and the `:` is parsed next.
     let (input, _) = tag(kw::FOR).parse(input)?;
@@ -488,23 +491,51 @@ fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
     let (input, _) = promote(
         (space1, tag(kw::EACH), space1).parse(input),
         at,
-        "FOR must be followed by EACH: FOR EACH <binder> IN <set>",
+        "FOR must be followed by EACH: FOR EACH <binder> IN <set>  (or  FOR EACH <a> <relation> <b>)",
     )?;
     let at = input;
-    let (input, binder) = promote(
+    let (input, first) = promote(
         identifier(input),
         at,
         "expected a binder name after FOR EACH",
     )?;
-    let at = input;
     let (input, _) = promote(
-        (space1, tag(kw::IN), space1).parse(input),
+        space1(input),
+        input,
+        "expected `IN <set>` or a relation `<rel> <binder>` after the FOR EACH binder",
+    )?;
+    // `IN <set>` → set quantifier; otherwise `<predicate> <right>` → relation.
+    let after_in: PResult<'a, (Span<'a>, Span<'a>)> = (tag(kw::IN), space1).parse(input);
+    if let Ok((rest, _)) = after_in {
+        let at = rest;
+        let (rest, set) = promote(identifier(rest), at, "expected a set name after IN")?;
+        return Ok((rest, Quant::InSet { binder: first, set }));
+    }
+    let at = input;
+    let (input, predicate) = promote(
+        identifier(input),
         at,
-        "expected IN <set> after the FOR EACH binder",
+        "expected a relation name (FOR EACH <a> <relation> <b>)",
+    )?;
+    let (input, _) = promote(
+        space1(input),
+        input,
+        "expected the second binder after the relation (FOR EACH <a> <relation> <b>)",
     )?;
     let at = input;
-    let (input, set) = promote(identifier(input), at, "expected a set name after IN")?;
-    Ok((input, Quant::InSet { binder, set }))
+    let (input, right) = promote(
+        identifier(input),
+        at,
+        "expected the second binder (FOR EACH <a> <relation> <b>)",
+    )?;
+    Ok((
+        input,
+        Quant::Relation {
+            left: first,
+            predicate,
+            right,
+        },
+    ))
 }
 
 /// `PREMISE <name> [FOR EACH …]: <body>` where the body is a list or an implication.

@@ -230,6 +230,10 @@ pub struct Compiled {
     /// it never affects the solve. Only populated by [`compile`] (an unresolved
     /// import in [`compile_source`] cannot be classified). See [`UnusedImport`].
     pub unused_imports: Vec<UnusedImport>,
+    /// Atoms consumed as data by a relation `FOR EACH` (the edge facts, e.g. each
+    /// `a linked b`). They are read by the quantifier, so the solver must not
+    /// report them as ORPHAN facts even though no clause references them.
+    pub consumed: Vec<AtomId>,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an
@@ -416,6 +420,15 @@ pub struct Compiler {
     /// per element. Populated in a pre-pass so a `FOR EACH` may reference a set
     /// declared later in the file.
     sets: BTreeMap<String, Vec<String>>,
+    /// Declared relation pairs: predicate → `(subject, object)` of every 3-part
+    /// `FACT`, used to ground a `FOR EACH <a> <predicate> <b>` quantifier. Also a
+    /// pre-pass, so the edges may be declared after the quantifier.
+    relations: BTreeMap<String, Vec<(String, String)>>,
+    /// Edge atoms consumed by a relation `FOR EACH` (e.g. each `a linked b`).
+    /// They are *read as data* by the quantifier, so they are not idle facts —
+    /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
+    /// lint.
+    relation_consumed: BTreeSet<AtomKey>,
 }
 
 impl Compiler {
@@ -441,7 +454,7 @@ impl Compiler {
             current: domain,
             aliases,
         };
-        self.collect_sets(&program);
+        self.collect_decls(&program);
         for stmt in &program.statements {
             match stmt {
                 Statement::Domain(_) => {}
@@ -454,15 +467,27 @@ impl Compiler {
         Ok(())
     }
 
-    /// Pre-pass: record every `SET` so a `FOR EACH … IN <set>` may reference a set
-    /// declared anywhere in the same source (including after the quantifier).
-    fn collect_sets(&mut self, program: &elenchus_parser::Program) {
+    /// Pre-pass: record every `SET` and every relation pair (3-part `FACT`) so a
+    /// `FOR EACH` may reference a set or relation declared anywhere in the same
+    /// source, including after the quantifier.
+    fn collect_decls(&mut self, program: &elenchus_parser::Program) {
         for stmt in &program.statements {
-            if let Statement::Set { name, elements } = stmt {
-                self.sets.insert(
-                    name.data.to_string(),
-                    elements.iter().map(|e| e.data.to_string()).collect(),
-                );
+            match stmt {
+                Statement::Set { name, elements } => {
+                    self.sets.insert(
+                        name.data.to_string(),
+                        elements.iter().map(|e| e.data.to_string()).collect(),
+                    );
+                }
+                Statement::Fact(a) => {
+                    if let Some(obj) = a.data.object {
+                        self.relations
+                            .entry(a.data.predicate.to_string())
+                            .or_default()
+                            .push((a.data.subject.to_string(), obj.to_string()));
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -473,7 +498,7 @@ impl Compiler {
             diag.set_file(&file.path);
             CompileError::Parse(diag)
         })?;
-        self.collect_sets(&program);
+        self.collect_decls(&program);
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
@@ -631,8 +656,38 @@ impl Compiler {
                     }
                 };
                 for el in &elements {
-                    let grounded = subst_body(body, binder.data, el);
+                    let grounded = subst_body(body, &[(binder.data, el)]);
                     self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                }
+                Ok(())
+            }
+            // `FOR EACH <a> <relation> <b>`: instantiate the body once per declared
+            // FACT pair of that relation, binding `a`→subject, `b`→object. The pair
+            // is pinned by data, so this is linear in the number of facts — never a
+            // product of the domain with itself.
+            Some(Quant::Relation {
+                left,
+                predicate,
+                right,
+            }) => {
+                let pairs = self
+                    .relations
+                    .get(predicate.data)
+                    .cloned()
+                    .unwrap_or_default();
+                for (subj, obj) in &pairs {
+                    let grounded = subst_body(body, &[(left.data, subj), (right.data, obj)]);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                    // The edge atom is read as data by the quantifier, not idle —
+                    // record it so the ORPHAN lint does not flag it.
+                    if let Ok(k) = ctx.key(&Atom {
+                        domain: None,
+                        subject: subj,
+                        predicate: predicate.data,
+                        object: Some(obj),
+                    }) {
+                        self.relation_consumed.insert(k);
+                    }
                 }
                 Ok(())
             }
@@ -948,6 +1003,12 @@ impl Compiler {
             })
             .collect();
 
+        let consumed = self
+            .relation_consumed
+            .iter()
+            .filter_map(|k| id_of.get(k).copied())
+            .collect();
+
         Compiled {
             atoms,
             facts,
@@ -956,6 +1017,7 @@ impl Compiler {
             checks: self.checks,
             pending_imports: self.pending_imports,
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
+            consumed,
         }
     }
 }
@@ -1265,6 +1327,11 @@ fn resolve_graph<R: Resolver>(
 fn quant_sig(q: &Quant) -> String {
     match q {
         Quant::InSet { binder, set } => alloc::format!("|FOREACH {} IN {}", binder.data, set.data),
+        Quant::Relation {
+            left,
+            predicate,
+            right,
+        } => alloc::format!("|FOREACH {} {} {}", left.data, predicate.data, right.data),
     }
 }
 
@@ -1278,47 +1345,50 @@ fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> St
     }
 }
 
-/// Replace the `FOR EACH` binder with one element in an atom (in subject,
-/// predicate, and object positions). Non-matching identifiers pass through.
-fn subst_atom<'s>(a: &Atom<'s>, binder: &str, el: &'s str) -> Atom<'s> {
-    fn pick<'s>(s: &'s str, binder: &str, el: &'s str) -> &'s str {
-        if s == binder { el } else { s }
-    }
+/// A list of binder substitutions `(name, value)` applied during grounding: one
+/// entry for an `IN <set>` quantifier, two for a `<a> <rel> <b>` relation.
+type Subs<'s> = [(&'s str, &'s str)];
+
+/// Replace any binder with its value in one identifier; non-matching pass through.
+fn subst_ident<'s>(s: &'s str, subs: &Subs<'s>) -> &'s str {
+    subs.iter()
+        .find_map(|&(b, v)| (s == b).then_some(v))
+        .unwrap_or(s)
+}
+
+/// Replace the binders in an atom (subject, predicate, and object positions).
+fn subst_atom<'s>(a: &Atom<'s>, subs: &Subs<'s>) -> Atom<'s> {
     Atom {
         domain: a.domain,
-        subject: pick(a.subject, binder, el),
-        predicate: pick(a.predicate, binder, el),
-        object: a.object.map(|o| pick(o, binder, el)),
+        subject: subst_ident(a.subject, subs),
+        predicate: subst_ident(a.predicate, subs),
+        object: a.object.map(|o| subst_ident(o, subs)),
     }
 }
 
-/// Replace the binder in one located literal (preserving its span and `NOT`).
-fn subst_lit<'s>(
-    ll: &Located<'s, Literal<'s>>,
-    binder: &str,
-    el: &'s str,
-) -> Located<'s, Literal<'s>> {
+/// Replace the binders in one located literal (preserving its span and `NOT`).
+fn subst_lit<'s>(ll: &Located<'s, Literal<'s>>, subs: &Subs<'s>) -> Located<'s, Literal<'s>> {
     Located {
         data: Literal {
             negated: ll.data.negated,
-            atom: subst_atom(&ll.data.atom, binder, el),
+            atom: subst_atom(&ll.data.atom, subs),
         },
         span: ll.span,
     }
 }
 
-/// Build a grounded copy of a body with the `FOR EACH` binder replaced by `el`.
+/// Build a grounded copy of a body with the `FOR EACH` binders substituted.
 /// Spans are preserved so any error still points at the original source line. The
-/// result borrows from the original body and from `el`, so it is consumed
-/// immediately (its keys interned) and never stored.
-fn subst_body<'s>(body: &Body<'s>, binder: &str, el: &'s str) -> Body<'s> {
+/// result borrows from the original body and from the substitution values, so it
+/// is consumed immediately (its keys interned) and never stored.
+fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
     match body {
         Body::List { op, atoms } => Body::List {
             op: *op,
             atoms: atoms
                 .iter()
                 .map(|la| Located {
-                    data: subst_atom(&la.data, binder, el),
+                    data: subst_atom(&la.data, subs),
                     span: la.span,
                 })
                 .collect(),
@@ -1329,15 +1399,9 @@ fn subst_body<'s>(body: &Body<'s>, binder: &str, el: &'s str) -> Body<'s> {
             consequent,
             cons_conn,
         } => Body::Impl {
-            antecedent: antecedent
-                .iter()
-                .map(|l| subst_lit(l, binder, el))
-                .collect(),
+            antecedent: antecedent.iter().map(|l| subst_lit(l, subs)).collect(),
             ante_conn: *ante_conn,
-            consequent: consequent
-                .iter()
-                .map(|l| subst_lit(l, binder, el))
-                .collect(),
+            consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
             cons_conn: *cons_conn,
         },
     }
@@ -2623,6 +2687,30 @@ mod tests {
         let src = "SET xs\n    a\n\
                    PREMISE p FOR EACH x IN xs FOR EACH y IN xs:\n    ONEOF\n        x r y\n        x s y\n";
         assert!(matches!(cs(src), Err(CompileError::Parse(_))));
+    }
+
+    #[test]
+    fn relation_for_each_grounds_per_fact_pair() {
+        // Two declared edges → the body is instantiated once per edge (two
+        // pairwise clauses), and both edge atoms are recorded as consumed so the
+        // ORPHAN lint will not flag them.
+        let src = "FACT a linked b\nFACT b linked c\n\
+                   PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 2);
+        assert_eq!(c.consumed.len(), 2);
+        assert!(c.consumed.contains(&id(&c, &key("a", "linked", Some("b")))));
+    }
+
+    #[test]
+    fn relation_for_each_over_no_edges_is_inert() {
+        // A relation with no matching facts grounds to nothing (vacuous), not an
+        // error — unlike an undeclared SET.
+        let src =
+            "PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 0);
+        assert!(c.consumed.is_empty());
     }
 
     #[test]

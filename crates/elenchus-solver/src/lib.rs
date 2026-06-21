@@ -911,6 +911,10 @@ fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
             referenced[l.atom as usize] = true;
         }
     }
+    // Edges consumed by a relation `FOR EACH` are read as data, not idle facts.
+    for &a in &c.consumed {
+        referenced[a as usize] = true;
+    }
     let mut out: Vec<OrphanFact> = c
         .facts
         .iter()
@@ -1012,9 +1016,21 @@ fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
 fn similar_atom_pairs(c: &Compiled) -> Vec<SimilarAtoms> {
     let folded: Vec<Vec<char>> = c.atoms.iter().map(fold_atom).collect();
     let cased: Vec<bool> = folded.iter().map(|f| is_cased_alphabetic(f)).collect();
+    // Edge atoms consumed by a relation FOR EACH (e.g. `a linked b`, `a linked c`)
+    // legitimately differ by one character — never flag them as look-alike typos.
+    let mut consumed = vec![false; c.atoms.len()];
+    for &a in &c.consumed {
+        consumed[a as usize] = true;
+    }
     let mut out = Vec::new();
     for i in 0..c.atoms.len() {
+        if consumed[i] {
+            continue;
+        }
         for j in (i + 1)..c.atoms.len() {
+            if consumed[j] {
+                continue;
+            }
             if let Some(reason) = atoms_look_similar(
                 &c.atoms[i],
                 &folded[i],

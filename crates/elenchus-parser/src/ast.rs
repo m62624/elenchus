@@ -92,6 +92,19 @@ pub enum Quant<'a> {
         /// The declared set this ranges over.
         set: Located<'a, &'a str>,
     },
+    /// `FOR EACH <left> <predicate> <right>` — range over the declared `FACT`
+    /// pairs of that relation (e.g. every `FACT a linked b`), binding `left` to a
+    /// pair's subject and `right` to its object. This is the channel for
+    /// multi-element constraints (graphs, dependencies): the pair is *pinned by
+    /// data*, so the desugar is linear in the number of facts, never a product.
+    Relation {
+        /// Bound to each matching fact's subject.
+        left: Located<'a, &'a str>,
+        /// The relation predicate whose facts are ranged over.
+        predicate: Located<'a, &'a str>,
+        /// Bound to each matching fact's object.
+        right: Located<'a, &'a str>,
+    },
 }
 
 /// The body of an `PREMISE` or `RULE`.
