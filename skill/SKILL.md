@@ -613,6 +613,56 @@ premise were never in question — only the hypotheses. Drop or flip any one (e.
 `ASSUME rel has_feature_flag`) → `CONSISTENT`. That is the engine doing the
 backtracking for you: it tells you exactly which guess to revise.
 
+### 10. Encode a constraint / NP problem (the recipe)
+
+elenchus *is* a SAT checker, so problems shaped like "assign values to variables
+subject to constraints" (graph colouring, scheduling, seating, Sudoku-style grids
+— the classic NP-complete family) map onto it directly. The recipe is always the
+same three moves:
+
+1. **Each variable → one `ONEOF`** over its possible values (this both states "it
+   takes exactly one value" *and* closes the variable, so a mistyped value is a
+   hard error, not a silent bug).
+2. **Each constraint → a `PREMISE`** (`EXCLUSIVE`/`FORBIDS` for "not these
+   together", `WHEN…THEN` for "if this then that", `ATLEAST` for "at least one").
+3. **`CHECK BIDIRECTIONAL`** — `CONFLICT` = no valid assignment exists;
+   `UNDERDETERMINED` = solvable but more than one assignment fits (not unique);
+   `CONSISTENT` = exactly one.
+
+Graph 3-colouring of a triangle (three nodes, every pair adjacent — so it needs 3
+colours and the solution is not unique):
+
+```vrf
+DOMAIN graph
+PREMISE n1_color:                  // variable: node 1's colour
+    ONEOF
+        n1 is red
+        n1 is green
+        n1 is blue
+PREMISE n2_color:
+    ONEOF
+        n2 is red
+        n2 is green
+        n2 is blue
+PREMISE n3_color:
+    ONEOF
+        n3 is red
+        n3 is green
+        n3 is blue
+PREMISE edge_12:                   // adjacent nodes can't share a colour
+    FORBIDS
+        n1 is red
+        n2 is red
+// ... one FORBIDS per (edge, colour); shown trimmed for brevity
+CHECK BIDIRECTIONAL
+```
+
+Add an edge that makes it unsatisfiable (e.g. force all three the same colour via
+`WHEN…THEN` premises) and the verdict flips to `CONFLICT` with a `CORE` naming the
+clashing constraints. **Note the scale limit:** the backward (`BIDIRECTIONAL`)
+pass explores assignments, so keep variable/value counts modest — elenchus is for
+*checking the logic of* a constraint problem, not an industrial-scale solver.
+
 ## Run it — do these three steps first, in order (every session)
 
 Before you write a single program, set up and verify the engine. Do **not** skip
