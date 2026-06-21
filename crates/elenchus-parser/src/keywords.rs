@@ -29,6 +29,10 @@ pub mod kw {
     pub const FORBIDS: &str = "FORBIDS";
     pub const ONEOF: &str = "ONEOF";
     pub const ATLEAST: &str = "ATLEAST";
+    pub const SET: &str = "SET";
+    pub const FOR: &str = "FOR";
+    pub const EACH: &str = "EACH";
+    pub const IN: &str = "IN";
 }
 
 /// The correct-syntax reference for one keyword: its canonical written form (with
@@ -133,6 +137,15 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::SET,
+        top_level: true,
+        card: card(
+            "SET <name>  then one element per line (>= 1)",
+            "declare a finite set of elements to quantify a PREMISE/RULE over (FOR EACH ... IN)",
+            "SET tasks\n    deploy\n    backup",
+        ),
+    },
+    Keyword {
         text: kw::IMPORT,
         top_level: true,
         card: card(
@@ -148,6 +161,33 @@ pub const KEYWORDS: &[Keyword] = &[
             "IMPORT \"<path>\" AS <alias>",
             "give the imported domain a local name to reference it by",
             "IMPORT \"physics.vrf\" AS phys",
+        ),
+    },
+    Keyword {
+        text: kw::FOR,
+        top_level: false,
+        card: card(
+            "PREMISE <name> FOR EACH <binder> IN <set>:  then the usual body",
+            "quantify a PREMISE/RULE: instantiate its body once per element of <set>, binding <binder>",
+            "PREMISE colored FOR EACH n IN nodes:\n    ONEOF\n        n is red\n        n is blue",
+        ),
+    },
+    Keyword {
+        text: kw::EACH,
+        top_level: false,
+        card: card(
+            "FOR EACH <binder> IN <set>",
+            "part of the FOR EACH ... IN quantifier on a PREMISE/RULE header",
+            "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::IN,
+        top_level: false,
+        card: card(
+            "FOR EACH <binder> IN <set>",
+            "names the declared SET a FOR EACH quantifier ranges over",
+            "FOR EACH t IN tasks",
         ),
     },
     Keyword {

@@ -118,10 +118,11 @@ statement  (2 problems)
       PREMISE <name>:  then a list body or a WHEN ... THEN implication
       RULE <name>:  then a WHEN ... THEN implication
       CHECK [<subject>] [BIDIRECTIONAL]
+      SET <name>  then one element per line (>= 1)
       IMPORT "<path>" [AS <alias>]
-    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 82, col 1 - expected a statement — a line must start with DOMAIN, SET, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       | %%% this line starts no keyword
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 84, col 1 - expected a statement — a line must start with DOMAIN, SET, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       | 123 numbers cannot start a statement
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

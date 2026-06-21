@@ -76,6 +76,24 @@ pub enum Conn {
     Or,
 }
 
+/// A `FOR EACH` quantifier on a `PREMISE`/`RULE` header. It instantiates the
+/// premise's whole body **once per element**, substituting the binder. The
+/// quantifier lives in the *header* (not the body), so there is exactly one per
+/// statement and the body grammar is untouched — a second `FOR EACH` is
+/// structurally unrepresentable, which is what bounds the desugar to a linear
+/// number of clauses (no domain products).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Quant<'a> {
+    /// `FOR EACH <binder> IN <set>` — range over the elements of a declared
+    /// [`Statement::Set`]. The binder is the name the body's atoms refer to.
+    InSet {
+        /// The name bound inside the body (substituted per element).
+        binder: Located<'a, &'a str>,
+        /// The declared set this ranges over.
+        set: Located<'a, &'a str>,
+    },
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -126,17 +144,30 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
-    /// `PREMISE <name>: ...` — a checked first principle.
+    /// `SET <name>` then one element identifier per line — declare a finite set
+    /// to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
+    Set {
+        /// The set's name (referenced by `FOR EACH … IN <name>`).
+        name: Located<'a, &'a str>,
+        /// Its elements, one per line (at least one).
+        elements: Vec<Located<'a, &'a str>>,
+    },
+    /// `PREMISE <name> [FOR EACH …]: ...` — a checked first principle, optionally
+    /// quantified over a declared set.
     Premise {
         /// The premise's label (a per-source name, not a global identifier).
         name: Located<'a, &'a str>,
+        /// An optional `FOR EACH … IN …` header quantifier (at most one).
+        quant: Option<Quant<'a>>,
         /// The constraint itself: a list body or a `WHEN … THEN` implication.
         body: Body<'a>,
     },
-    /// `RULE <name>: ...` — a fact-producing inference rule.
+    /// `RULE <name> [FOR EACH …]: ...` — a fact-producing inference rule.
     Rule {
         /// The rule's label.
         name: Located<'a, &'a str>,
+        /// An optional `FOR EACH … IN …` header quantifier (at most one).
+        quant: Option<Quant<'a>>,
         /// Always an implication body (the grammar forbids a list body here).
         body: Body<'a>,
     },

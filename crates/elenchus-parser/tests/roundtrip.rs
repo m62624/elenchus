@@ -121,6 +121,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
             Statement::Premise {
                 name,
                 body: Body::List { op, atoms },
+                ..
             },
             Stmt::PremiseList {
                 name: n,
@@ -142,6 +143,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                         consequent,
                         ..
                     },
+                ..
             },
             Stmt::Impl {
                 rule: false,
@@ -159,6 +161,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                         consequent,
                         ..
                     },
+                ..
             },
             Stmt::Impl {
                 rule: true,

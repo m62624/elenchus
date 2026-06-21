@@ -22,7 +22,7 @@ use nom::{
     sequence::{delimited, preceded, terminated},
 };
 
-use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
+use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement};
 use crate::diag::{Diagnostic, Diagnostics};
 use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
 
@@ -178,6 +178,16 @@ fn atom_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     let (input, a) = atom(input)?;
     let (input, _) = eol(input)?;
     Ok((input, a))
+}
+
+/// A single identifier on its own (possibly indented) line: a `SET` element. A
+/// reserved word or a non-identifier line yields a recoverable `Error` so `many0`
+/// stops cleanly at the next statement.
+fn element_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, &'a str>> {
+    let (input, _) = space0(input)?;
+    let (input, id) = identifier(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, id))
 }
 
 // --- Bodies ----------------------------------------------------------------
@@ -444,7 +454,60 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     ))
 }
 
-/// `PREMISE <name>: <body>` where the body is a list or an implication.
+/// `SET <name>` then one identifier per line (at least one) — declare a finite
+/// set to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
+fn stmt_set<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::SET), space1).parse(input)?;
+    let at = input;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "SET expects a name (a lowercase identifier), e.g. SET tasks",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the SET name")?;
+    let at = input;
+    let (input, first) = promote(
+        element_line(input),
+        at,
+        "a SET needs at least one element — one identifier per line",
+    )?;
+    let (input, rest) = many0(element_line).parse(input)?;
+    let mut elements = vec![first];
+    elements.extend(rest);
+    Ok((input, Statement::Set { name, elements }))
+}
+
+/// `FOR EACH <binder> IN <set>` — the optional quantifier tail on a `PREMISE`/
+/// `RULE` header (between the name and the `:`). There is exactly one binder and
+/// no production for a second, so quantifier nesting is unrepresentable.
+fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
+    // No FOR → recoverable Error so `opt` yields None and the `:` is parsed next.
+    let (input, _) = tag(kw::FOR).parse(input)?;
+    // Committed: FOR can only begin a quantifier here.
+    let at = input;
+    let (input, _) = promote(
+        (space1, tag(kw::EACH), space1).parse(input),
+        at,
+        "FOR must be followed by EACH: FOR EACH <binder> IN <set>",
+    )?;
+    let at = input;
+    let (input, binder) = promote(
+        identifier(input),
+        at,
+        "expected a binder name after FOR EACH",
+    )?;
+    let at = input;
+    let (input, _) = promote(
+        (space1, tag(kw::IN), space1).parse(input),
+        at,
+        "expected IN <set> after the FOR EACH binder",
+    )?;
+    let at = input;
+    let (input, set) = promote(identifier(input), at, "expected a set name after IN")?;
+    Ok((input, Quant::InSet { binder, set }))
+}
+
+/// `PREMISE <name> [FOR EACH …]: <body>` where the body is a list or an implication.
 fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
     // Committed to a premise now.
@@ -454,6 +517,7 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         at,
         "expected a premise name (a lowercase identifier)",
     )?;
+    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
     let (input, _) = space0(input)?;
     let (input, _) = promote(
         char(':').parse(input),
@@ -467,10 +531,11 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         at,
         "a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN",
     )?;
-    Ok((input, Statement::Premise { name, body }))
+    Ok((input, Statement::Premise { name, quant, body }))
 }
 
-/// `RULE <name>: <implication>` — like a premise but the body must be `WHEN … THEN`.
+/// `RULE <name> [FOR EACH …]: <implication>` — like a premise but the body must
+/// be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::RULE), space1).parse(input)?;
     let at = input;
@@ -479,6 +544,7 @@ fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         at,
         "expected a rule name (a lowercase identifier)",
     )?;
+    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
     let (input, _) = space0(input)?;
     let (input, _) = promote(
         char(':').parse(input),
@@ -488,7 +554,7 @@ fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = promote(eol(input), input, "unexpected text after 'RULE <name>:'")?;
     let at = input;
     let (input, body) = promote(impl_body(input), at, "a rule body must be WHEN ... THEN")?;
-    Ok((input, Statement::Rule { name, body }))
+    Ok((input, Statement::Rule { name, quant, body }))
 }
 
 /// One top-level statement. Order matters: each branch commits on its keyword,
@@ -502,6 +568,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     alt((
         stmt_domain,
         stmt_import,
+        stmt_set,
         stmt_fact,
         stmt_assume,
         stmt_premise,
@@ -515,7 +582,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 // --- Recovering driver -----------------------------------------------------
 
 /// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, SET, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///

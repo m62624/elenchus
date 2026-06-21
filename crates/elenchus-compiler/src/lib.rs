@@ -48,7 +48,7 @@ use core::fmt::Write as _;
 /// Re-exported so downstream crates can name the syntax diagnostics carried by
 /// [`CompileError::Parse`] (and render them with a custom error limit).
 pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement, kw};
+use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Located, Quant, Statement, kw};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -310,6 +310,20 @@ pub enum CompileError {
     /// Boxed so this comparatively large payload does not bloat every `Result`.
     #[error(transparent)]
     UnknownValue(Box<UnknownValue>),
+    /// A `FOR EACH … IN <set>` named a set that was never declared with `SET`.
+    /// Usually a typo in the set name; the suggestion offers the nearest declared
+    /// set when one is close.
+    #[error("{file}:{line}: FOR EACH ranges over '{set}', which is not a declared SET{suggestion}")]
+    UnknownSet {
+        /// The source the offending `FOR EACH` is in.
+        file: String,
+        /// 1-based line of the `FOR EACH`.
+        line: u32,
+        /// The undeclared set name that was referenced.
+        set: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
 }
 
 /// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
@@ -397,6 +411,11 @@ pub struct Compiler {
     /// that carry an object register here (binary atoms have no value slot to
     /// close). See [`Compiler::validate_closed_world`].
     oneof_values: BTreeMap<(String, String, String), BTreeSet<String>>,
+    /// Declared `SET <name>` collections: name → elements, used to ground a
+    /// `FOR EACH <binder> IN <name>` quantifier by instantiating the body once
+    /// per element. Populated in a pre-pass so a `FOR EACH` may reference a set
+    /// declared later in the file.
+    sets: BTreeMap<String, Vec<String>>,
 }
 
 impl Compiler {
@@ -422,6 +441,7 @@ impl Compiler {
             current: domain,
             aliases,
         };
+        self.collect_sets(&program);
         for stmt in &program.statements {
             match stmt {
                 Statement::Domain(_) => {}
@@ -434,12 +454,26 @@ impl Compiler {
         Ok(())
     }
 
+    /// Pre-pass: record every `SET` so a `FOR EACH … IN <set>` may reference a set
+    /// declared anywhere in the same source (including after the quantifier).
+    fn collect_sets(&mut self, program: &elenchus_parser::Program) {
+        for stmt in &program.statements {
+            if let Statement::Set { name, elements } = stmt {
+                self.sets.insert(
+                    name.data.to_string(),
+                    elements.iter().map(|e| e.data.to_string()).collect(),
+                );
+            }
+        }
+    }
+
     /// Compile one already-resolved file's statements under its domain context.
     fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
         let program = elenchus_parser::parse(&file.content).map_err(|mut diag| {
             diag.set_file(&file.path);
             CompileError::Parse(diag)
         })?;
+        self.collect_sets(&program);
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
@@ -486,13 +520,13 @@ impl Compiler {
                 subject: subject.as_ref().map(|s| s.data.to_string()),
                 bidirectional: *bidirectional,
             }),
-            Statement::Premise { name, body } => {
-                let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, false, ctx)?;
+            // Declared in the `collect_sets` pre-pass; nothing to emit here.
+            Statement::Set { .. } => {}
+            Statement::Premise { name, quant, body } => {
+                self.add_named(source, name, quant.as_ref(), body, false, ctx)?;
             }
-            Statement::Rule { name, body } => {
-                let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, true, ctx)?;
+            Statement::Rule { name, quant, body } => {
+                self.add_named(source, name, quant.as_ref(), body, true, ctx)?;
             }
         }
         Ok(())
@@ -548,13 +582,21 @@ impl Compiler {
     fn add_named(
         &mut self,
         source: &str,
-        name: &str,
-        line: u32,
+        name: &Located<&str>,
+        quant: Option<&Quant>,
         body: &Body,
         is_rule: bool,
         ctx: &DomainCtx,
     ) -> Result<(), CompileError> {
-        let body_hash = hash_hex(canonical_body(name, body, is_rule, ctx)?.as_bytes());
+        let line = name.span.location_line();
+        let name = name.data;
+        // The redefinition hash covers the quantifier too, so two same-named
+        // premises that differ only in their `FOR EACH` are still a redefinition.
+        let mut canon = canonical_body(name, body, is_rule, ctx)?;
+        if let Some(q) = quant {
+            canon.push_str(&quant_sig(q));
+        }
+        let body_hash = hash_hex(canon.as_bytes());
         let key = (source.to_string(), name.to_string());
         match self.defined.get(&key) {
             Some(prev) if *prev == body_hash => return Ok(()), // identical → idempotent
@@ -569,6 +611,46 @@ impl Compiler {
             }
         }
 
+        match quant {
+            // Unquantified: emit the body once, as before.
+            None => self.emit_named(source, name, line, body, is_rule, ctx),
+            // `FOR EACH <binder> IN <set>`: instantiate the body once per element,
+            // substituting the binder. Grounding is exactly `|set|` repetitions of
+            // the *same* desugar — linear, never a domain product (a second binder
+            // is unrepresentable in the grammar).
+            Some(Quant::InSet { binder, set }) => {
+                let elements = match self.sets.get(set.data) {
+                    Some(els) => els.clone(),
+                    None => {
+                        return Err(CompileError::UnknownSet {
+                            file: source.to_string(),
+                            line: set.span.location_line(),
+                            set: set.data.to_string(),
+                            suggestion: nearest_set_suggestion(set.data, &self.sets),
+                        });
+                    }
+                };
+                for el in &elements {
+                    let grounded = subst_body(body, binder.data, el);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Emit the clauses/rule for one (already-grounded) named construct's body.
+    /// Split out of [`Compiler::add_named`] so a `FOR EACH` can call it once per
+    /// element with the binder substituted, reusing the exact same desugar.
+    fn emit_named(
+        &mut self,
+        source: &str,
+        name: &str,
+        line: u32,
+        body: &Body,
+        is_rule: bool,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
         if is_rule {
             // RULE always has an implication body (guaranteed by the grammar).
             if let Body::Impl {
@@ -1177,6 +1259,90 @@ fn resolve_graph<R: Resolver>(
     Ok((files, unused))
 }
 
+/// A canonical signature of a `FOR EACH` quantifier, appended to the body hash so
+/// two same-named premises that differ only in their quantifier still count as a
+/// redefinition.
+fn quant_sig(q: &Quant) -> String {
+    match q {
+        Quant::InSet { binder, set } => alloc::format!("|FOREACH {} IN {}", binder.data, set.data),
+    }
+}
+
+/// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
+/// declared set name is close enough.
+fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
+    let names: Vec<&str> = sets.keys().map(String::as_str).collect();
+    match nearest(set, &names) {
+        Some(s) => alloc::format!(" — did you mean `{s}`?"),
+        None => String::new(),
+    }
+}
+
+/// Replace the `FOR EACH` binder with one element in an atom (in subject,
+/// predicate, and object positions). Non-matching identifiers pass through.
+fn subst_atom<'s>(a: &Atom<'s>, binder: &str, el: &'s str) -> Atom<'s> {
+    fn pick<'s>(s: &'s str, binder: &str, el: &'s str) -> &'s str {
+        if s == binder { el } else { s }
+    }
+    Atom {
+        domain: a.domain,
+        subject: pick(a.subject, binder, el),
+        predicate: pick(a.predicate, binder, el),
+        object: a.object.map(|o| pick(o, binder, el)),
+    }
+}
+
+/// Replace the binder in one located literal (preserving its span and `NOT`).
+fn subst_lit<'s>(
+    ll: &Located<'s, Literal<'s>>,
+    binder: &str,
+    el: &'s str,
+) -> Located<'s, Literal<'s>> {
+    Located {
+        data: Literal {
+            negated: ll.data.negated,
+            atom: subst_atom(&ll.data.atom, binder, el),
+        },
+        span: ll.span,
+    }
+}
+
+/// Build a grounded copy of a body with the `FOR EACH` binder replaced by `el`.
+/// Spans are preserved so any error still points at the original source line. The
+/// result borrows from the original body and from `el`, so it is consumed
+/// immediately (its keys interned) and never stored.
+fn subst_body<'s>(body: &Body<'s>, binder: &str, el: &'s str) -> Body<'s> {
+    match body {
+        Body::List { op, atoms } => Body::List {
+            op: *op,
+            atoms: atoms
+                .iter()
+                .map(|la| Located {
+                    data: subst_atom(&la.data, binder, el),
+                    span: la.span,
+                })
+                .collect(),
+        },
+        Body::Impl {
+            antecedent,
+            ante_conn,
+            consequent,
+            cons_conn,
+        } => Body::Impl {
+            antecedent: antecedent
+                .iter()
+                .map(|l| subst_lit(l, binder, el))
+                .collect(),
+            ante_conn: *ante_conn,
+            consequent: consequent
+                .iter()
+                .map(|l| subst_lit(l, binder, el))
+                .collect(),
+            cons_conn: *cons_conn,
+        },
+    }
+}
+
 /// Collect the domain prefixes used by a statement's atoms into `out` (`None` for
 /// a bare atom, `Some(p)` for a `p.`-qualified one) — feeds the unused-import lint.
 fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
@@ -1197,7 +1363,10 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
                 .chain(consequent)
                 .for_each(|l| add(&l.data.atom)),
         },
-        Statement::Domain(_) | Statement::Import { .. } | Statement::Check { .. } => {}
+        Statement::Domain(_)
+        | Statement::Import { .. }
+        | Statement::Check { .. }
+        | Statement::Set { .. } => {}
     }
 }
 
@@ -2389,5 +2558,82 @@ mod tests {
         };
         assert_eq!(e.value, "七");
         assert_eq!(e.suggestion, "");
+    }
+
+    // --- FOR EACH / SET (bounded quantification, Phase 1) ------------------
+
+    #[test]
+    fn for_each_grounds_once_per_element() {
+        // A ONEOF body over a 2-element set: each element yields one pairwise
+        // clause + one at-least-one clause = 2 clauses; 2 elements → 4 clauses,
+        // and 4 distinct grounded atoms (a/b × slot m/n).
+        let src = "SET xs\n    a\n    b\n\
+                   PREMISE slot FOR EACH t IN xs:\n    ONEOF\n        t slot m\n        t slot n\n";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 4);
+        for s in ["a", "b"] {
+            for o in ["m", "n"] {
+                assert!(c.atoms.contains(&key(s, "slot", Some(o))));
+            }
+        }
+    }
+
+    #[test]
+    fn for_each_in_a_rule_derives_per_element() {
+        // A quantified RULE grounds to one rule per element.
+        let src = "SET xs\n    a\n    b\n\
+                   RULE r FOR EACH t IN xs:\n    WHEN t on\n    THEN t hot\n";
+        let c = cs(src).unwrap();
+        assert_eq!(c.rules.len(), 2);
+    }
+
+    #[test]
+    fn for_each_over_an_undeclared_set_is_rejected() {
+        let src = "SET tasks\n    a\n\
+                   PREMISE p FOR EACH t IN taske:\n    ONEOF\n        t s x\n        t s y\n";
+        let CompileError::UnknownSet {
+            set, suggestion, ..
+        } = cs(src).unwrap_err()
+        else {
+            panic!("expected UnknownSet");
+        };
+        assert_eq!(set, "taske");
+        assert_eq!(suggestion, " — did you mean `tasks`?");
+    }
+
+    #[test]
+    fn for_each_closes_each_grounded_variable() {
+        // ONEOF inside FOR EACH closes the variable per element, so an out-of-set
+        // value on a grounded subject is a hard error (closed-world after subst).
+        let src = "SET xs\n    a\n    b\n\
+                   PREMISE c FOR EACH t IN xs:\n    ONEOF\n        t color red\n        t color blue\n\
+                   FACT a color gren\n";
+        let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
+            panic!("expected UnknownValue from the grounded ONEOF");
+        };
+        assert_eq!(e.value, "gren");
+        assert_eq!(e.subject, "a");
+    }
+
+    #[test]
+    fn nested_for_each_is_a_parse_error() {
+        // The structural guarantee: a second FOR EACH is unrepresentable — the
+        // header carries exactly one, so nesting fails to parse (no domain
+        // product can ever be written).
+        let src = "SET xs\n    a\n\
+                   PREMISE p FOR EACH x IN xs FOR EACH y IN xs:\n    ONEOF\n        x r y\n        x s y\n";
+        assert!(matches!(cs(src), Err(CompileError::Parse(_))));
+    }
+
+    #[test]
+    fn grounding_count_is_linear_in_the_set() {
+        // No domain product: N elements → exactly N groundings (here N clauses,
+        // one at-least-one per element), never N².
+        let elems: alloc::string::String = (0..20).map(|i| alloc::format!("    e{i}\n")).collect();
+        let src = alloc::format!(
+            "SET xs\n{elems}PREMISE p FOR EACH t IN xs:\n    ATLEAST\n        t a\n        t b\n"
+        );
+        let c = cs(&src).unwrap();
+        assert_eq!(c.clauses.len(), 20);
     }
 }
