@@ -1520,10 +1520,18 @@ impl fmt::Display for Report {
             }
         }
 
+        // Many warnings often share one root cause (e.g. the same missing FACT),
+        // so the `fix:` line is deduped in the human report — each distinct fix
+        // prints once — to keep a wall of warnings readable. The full per-warning
+        // hint is still in the JSON for tools that select/filter programmatically.
+        let mut shown_fixes: Vec<&str> = Vec::new();
         for w in &self.warnings {
             emit!(out, SECTION, "WARNING   {}", premise_tag(&w.origin))?;
             emit!(out, ITEM, "blocked by: {}", w.blocked_by.join(", "))?;
-            if let Some(hint) = &w.hint {
+            if let Some(hint) = &w.hint
+                && !shown_fixes.contains(&hint.as_str())
+            {
+                shown_fixes.push(hint);
                 emit!(out, ITEM, "fix: {hint}")?;
             }
         }
@@ -1685,6 +1693,39 @@ mod tests {
             hint.contains("derived by a RULE that has not fired"),
             "{hint}"
         );
+    }
+
+    #[test]
+    fn human_report_dedupes_repeated_fix_lines() {
+        // Three *distinct* premises all blocked: p1 and p2 by the SAME atom
+        // (`gate one_ok`, via different antecedents so the clauses don't dedupe)
+        // → one identical fix, deduped; p3 by a different atom → its own fix. So:
+        // 3 warnings, but only 2 distinct `fix:` lines in the human report (while
+        // every warning still carries its hint in the structured data / JSON).
+        let r = vs(concat!(
+            "FACT a on\n",
+            "FACT b on\n",
+            "PREMISE p1:\n    WHEN a on\n    THEN gate one_ok\n",
+            "PREMISE p2:\n    WHEN b on\n    THEN gate one_ok\n",
+            "PREMISE p3:\n    WHEN a on\n    THEN gate two_ok\n",
+        ))
+        .unwrap();
+        assert_eq!(r.warnings.len(), 3);
+        // Every warning keeps its hint in the structured form.
+        assert!(r.warnings.iter().all(|w| w.hint.is_some()));
+        let distinct_hints: BTreeSet<&str> = r
+            .warnings
+            .iter()
+            .filter_map(|w| w.hint.as_deref())
+            .collect();
+        assert_eq!(distinct_hints.len(), 2);
+        // The human report prints exactly one `fix:` per distinct hint.
+        let text = alloc::format!("{r}");
+        let shown = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("fix:"))
+            .count();
+        assert_eq!(shown, distinct_hints.len());
     }
 
     #[test]

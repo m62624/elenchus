@@ -15,7 +15,6 @@ RESULT: CONFLICT
       fix: nothing determines `d.x a` — add `FACT d.x a` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   WARNING   a_implies_not_b (PREMISE)  [v.vrf:6]
       blocked by: d.x a, d.x b
-      fix: nothing determines `d.x a` — add `FACT d.x a` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   WARNING   c_implies_a (PREMISE)  [v.vrf:13]
       blocked by: d.x c, d.x a
       fix: nothing determines `d.x c` — add `FACT d.x c` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
