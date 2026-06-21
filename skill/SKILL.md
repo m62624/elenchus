@@ -50,7 +50,7 @@ until it is **CONSISTENT**.
 | Verdict | exit | Meaning | Your next move |
 |--------|:----:|---------|----------------|
 | **CONSISTENT** | 0 | no contradiction; answer pinned down | done |
-| **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` |
+| **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` — or, if that atom should follow automatically from an already-true `WHEN`, make it a `RULE` (which derives it) instead of a `PREMISE` |
 | **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
 | **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
 
@@ -629,7 +629,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.7.0 -->
+<!-- skill-version: 0.7.1 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
