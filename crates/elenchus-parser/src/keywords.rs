@@ -33,6 +33,8 @@ pub mod kw {
     pub const FOR: &str = "FOR";
     pub const EACH: &str = "EACH";
     pub const IN: &str = "IN";
+    pub const CLOSE: &str = "CLOSE";
+    pub const TRANSITIVE: &str = "TRANSITIVE";
 }
 
 /// The correct-syntax reference for one keyword: its canonical written form (with
@@ -143,6 +145,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "SET <name>  then one element per line (>= 1)",
             "declare a finite set of elements to quantify a PREMISE/RULE over (FOR EACH ... IN)",
             "SET tasks\n    deploy\n    backup",
+        ),
+    },
+    Keyword {
+        text: kw::CLOSE,
+        top_level: true,
+        card: card(
+            "CLOSE <relation> TRANSITIVE",
+            "make a relation transitive at compile time (a->b, b->c implies a->c); a cycle is an error",
+            "CLOSE depends_on TRANSITIVE",
         ),
     },
     Keyword {
@@ -269,6 +280,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "CHECK [<subject>] BIDIRECTIONAL",
             "a CHECK modifier: also run the backward pass (finds UNDERDETERMINED)",
             "CHECK BIDIRECTIONAL",
+        ),
+    },
+    Keyword {
+        text: kw::TRANSITIVE,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> TRANSITIVE",
+            "the closure kind for CLOSE: a->b and b->c implies a->c",
+            "CLOSE depends_on TRANSITIVE",
         ),
     },
 ];

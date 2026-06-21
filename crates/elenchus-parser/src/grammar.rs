@@ -22,7 +22,9 @@ use nom::{
     sequence::{delimited, preceded, terminated},
 };
 
-use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement};
+use crate::ast::{
+    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+};
 use crate::diag::{Diagnostic, Diagnostics};
 use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
 
@@ -477,6 +479,34 @@ fn stmt_set<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Set { name, elements }))
 }
 
+/// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.
+fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::CLOSE), space1).parse(input)?;
+    let at = input;
+    let (input, relation) = promote(
+        identifier(input),
+        at,
+        "CLOSE expects a relation name, e.g. CLOSE depends_on TRANSITIVE",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::TRANSITIVE)).parse(input),
+        input,
+        "CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'CLOSE … TRANSITIVE'",
+    )?;
+    Ok((
+        input,
+        Statement::Close {
+            relation,
+            kind: CloseKind::Transitive,
+        },
+    ))
+}
+
 /// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
 /// and the `:`). One of two forms:
 ///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
@@ -600,6 +630,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_domain,
         stmt_import,
         stmt_set,
+        stmt_close,
         stmt_fact,
         stmt_assume,
         stmt_premise,
@@ -613,7 +644,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 // --- Recovering driver -----------------------------------------------------
 
 /// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, SET, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, SET, CLOSE, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///

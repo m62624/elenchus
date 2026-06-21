@@ -107,6 +107,13 @@ pub enum Quant<'a> {
     },
 }
 
+/// Which closure a `CLOSE` statement applies to a relation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseKind {
+    /// `TRANSITIVE` — add `a→c` whenever `a→b` and `b→c` hold (requires a DAG).
+    Transitive,
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -164,6 +171,15 @@ pub enum Statement<'a> {
         name: Located<'a, &'a str>,
         /// Its elements, one per line (at least one).
         elements: Vec<Located<'a, &'a str>>,
+    },
+    /// `CLOSE <relation> TRANSITIVE` — close a relation's `FACT` pairs under the
+    /// given kind at compile time (a graph operation, no solver cost). A cycle is
+    /// a compile error.
+    Close {
+        /// The relation predicate to close (e.g. `depends_on`).
+        relation: Located<'a, &'a str>,
+        /// Which closure to apply.
+        kind: CloseKind,
     },
     /// `PREMISE <name> [FOR EACH …]: ...` — a checked first principle, optionally
     /// quantified over a declared set.

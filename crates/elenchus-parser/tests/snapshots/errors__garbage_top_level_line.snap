@@ -14,7 +14,8 @@ statement  (1 problem)
       RULE <name>:  then a WHEN ... THEN implication
       CHECK [<subject>] [BIDIRECTIONAL]
       SET <name>  then one element per line (>= 1)
+      CLOSE <relation> TRANSITIVE
       IMPORT "<path>" [AS <alias>]
-    line 3, col 9 - expected a statement — a line must start with DOMAIN, SET, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 3, col 9 - expected a statement — a line must start with DOMAIN, SET, CLOSE, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
       |         %%% not a statement
       |         ^^^^^^^^^^^^^^^^^^^

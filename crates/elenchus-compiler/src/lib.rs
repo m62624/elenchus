@@ -48,7 +48,9 @@ use core::fmt::Write as _;
 /// Re-exported so downstream crates can name the syntax diagnostics carried by
 /// [`CompileError::Parse`] (and render them with a custom error limit).
 pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Located, Quant, Statement, kw};
+use elenchus_parser::{
+    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Quant, Statement, kw,
+};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -328,6 +330,22 @@ pub enum CompileError {
         /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
         suggestion: String,
     },
+    /// `CLOSE <relation> TRANSITIVE` found a cycle: a node transitively reaches
+    /// itself. Transitive closure requires a DAG (e.g. a dependency graph).
+    #[error(
+        "{file}:{line}: relation '{relation}' has a cycle (`{node}` reaches itself) \
+         — CLOSE … TRANSITIVE requires a DAG"
+    )]
+    CyclicRelation {
+        /// The source the `CLOSE` is in.
+        file: String,
+        /// 1-based line of the `CLOSE`.
+        line: u32,
+        /// The relation predicate being closed.
+        relation: String,
+        /// A node on the cycle (reaches itself).
+        node: String,
+    },
 }
 
 /// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
@@ -455,6 +473,7 @@ impl Compiler {
             aliases,
         };
         self.collect_decls(&program);
+        self.apply_closures(&program, source)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Domain(_) => {}
@@ -462,6 +481,39 @@ impl Compiler {
                     self.pending_imports.push(path.data.to_string());
                 }
                 other => self.add_statement(source, other, &ctx)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply every `CLOSE … TRANSITIVE`: replace the relation's pairs with their
+    /// transitive closure so a relation `FOR EACH` ranges over reachability, and
+    /// reject a cycle (a node reaching itself). A pure compile-time graph pass —
+    /// the solver never sees it. Runs after [`collect_decls`] (the direct edges
+    /// must be known) and before grounding.
+    fn apply_closures(
+        &mut self,
+        program: &elenchus_parser::Program,
+        source: &str,
+    ) -> Result<(), CompileError> {
+        for stmt in &program.statements {
+            if let Statement::Close { relation, kind } = stmt {
+                let CloseKind::Transitive = kind;
+                let pairs = self
+                    .relations
+                    .get(relation.data)
+                    .cloned()
+                    .unwrap_or_default();
+                let closed = transitive_closure(pairs);
+                if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
+                    return Err(CompileError::CyclicRelation {
+                        file: source.to_string(),
+                        line: relation.span.location_line(),
+                        relation: relation.data.to_string(),
+                        node: node.clone(),
+                    });
+                }
+                self.relations.insert(relation.data.to_string(), closed);
             }
         }
         Ok(())
@@ -499,6 +551,7 @@ impl Compiler {
             CompileError::Parse(diag)
         })?;
         self.collect_decls(&program);
+        self.apply_closures(&program, &file.path)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
@@ -545,8 +598,9 @@ impl Compiler {
                 subject: subject.as_ref().map(|s| s.data.to_string()),
                 bidirectional: *bidirectional,
             }),
-            // Declared in the `collect_sets` pre-pass; nothing to emit here.
-            Statement::Set { .. } => {}
+            // Declared in the `collect_decls` / `apply_closures` pre-passes;
+            // nothing to emit here.
+            Statement::Set { .. } | Statement::Close { .. } => {}
             Statement::Premise { name, quant, body } => {
                 self.add_named(source, name, quant.as_ref(), body, false, ctx)?;
             }
@@ -1430,8 +1484,34 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
         Statement::Domain(_)
         | Statement::Import { .. }
         | Statement::Check { .. }
-        | Statement::Set { .. } => {}
+        | Statement::Set { .. }
+        | Statement::Close { .. } => {}
     }
+}
+
+/// The transitive closure of a relation's `(from, to)` pairs: add `(a, c)`
+/// whenever `(a, b)` and `(b, c)` are present, to a fixpoint. A self-pair
+/// `(x, x)` in the result marks a cycle. A small compile-time graph op.
+fn transitive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
+    loop {
+        let mut added: Vec<(String, String)> = Vec::new();
+        for (a, b) in &set {
+            for (c, d) in &set {
+                if b == c {
+                    let p = (a.clone(), d.clone());
+                    if !set.contains(&p) {
+                        added.push(p);
+                    }
+                }
+            }
+        }
+        if added.is_empty() {
+            break;
+        }
+        set.extend(added);
+    }
+    set.into_iter().collect()
 }
 
 /// The single `DOMAIN` a source declares, or an error if it has none or several.
@@ -2711,6 +2791,25 @@ mod tests {
         let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 0);
         assert!(c.consumed.is_empty());
+    }
+
+    #[test]
+    fn close_transitive_extends_the_relation() {
+        // a->b, b->c; CLOSE adds a->c, so a relation FOR EACH grounds over all
+        // three pairs (without CLOSE it would be two).
+        let src = "FACT a r b\nFACT b r c\nCLOSE r TRANSITIVE\n\
+                   PREMISE p FOR EACH x r y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 3);
+    }
+
+    #[test]
+    fn close_transitive_rejects_a_cycle() {
+        let src = "FACT a r b\nFACT b r a\nCLOSE r TRANSITIVE\n";
+        let CompileError::CyclicRelation { relation, .. } = cs(src).unwrap_err() else {
+            panic!("expected CyclicRelation");
+        };
+        assert_eq!(relation, "r");
     }
 
     #[test]

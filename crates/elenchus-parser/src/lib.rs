@@ -41,7 +41,9 @@ pub mod diag;
 mod grammar;
 pub mod keywords;
 
-pub use ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement};
+pub use ast::{
+    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+};
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;
 pub use keywords::{Card, KEYWORDS, Keyword, card_for, is_reserved, kw};
@@ -710,6 +712,18 @@ FACT c d
                 assert_eq!(got, ["deploy", "backup"]);
             }
             other => panic!("expected a SET, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn close_statement_parses() {
+        let p = prog("CLOSE depends_on TRANSITIVE\n");
+        match &p.statements[0] {
+            Statement::Close { relation, kind } => {
+                assert_eq!(relation.data, "depends_on");
+                assert_eq!(*kind, CloseKind::Transitive);
+            }
+            other => panic!("expected a CLOSE, got {other:?}"),
         }
     }
 
