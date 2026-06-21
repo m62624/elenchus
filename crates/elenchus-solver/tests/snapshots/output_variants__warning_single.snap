@@ -5,5 +5,6 @@ expression: "report(r#\"\n        FACT x a\n        PREMISE w:\n            WHEN
 RESULT: WARNING
   WARNING   w (PREMISE)  [v.vrf:4]
       blocked by: d.x b
+      fix: nothing determines `d.x b` — add `FACT d.x b` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1

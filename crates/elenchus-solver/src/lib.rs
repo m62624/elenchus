@@ -45,6 +45,7 @@ extern crate std;
 
 pub mod sat;
 
+use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -142,6 +143,12 @@ pub struct Warning {
     pub origin: Origin,
     /// Human labels of the UNKNOWN atoms blocking the check.
     pub blocked_by: Vec<String>,
+    /// A directed fix for the most informative blocking atom, distinguishing the
+    /// two reasons a check stays blocked: the atom is a *free input* nothing can
+    /// determine (→ add a `FACT`/`NOT`, or make a `PREMISE` a `RULE` so it derives
+    /// the value), versus the atom *is* derivable by a `RULE` that has not fired
+    /// (→ assert that rule's antecedent). Advisory text; never changes the verdict.
+    pub hint: Option<String>,
 }
 
 /// A fact produced by a `RULE` during forward chaining.
@@ -281,6 +288,11 @@ impl Report {
             json_origin(&w.origin, &mut s);
             s.push_str(",\"blocked_by\":");
             json_array(&w.blocked_by, &mut s);
+            s.push_str(",\"hint\":");
+            match &w.hint {
+                Some(h) => json_str(h, &mut s),
+                None => s.push_str("null"),
+            }
             s.push('}');
         }
         s.push_str("],\"derived\":[");
@@ -668,6 +680,15 @@ impl<'a> Eval<'a> {
     /// 3. Evaluate every `Impossible` clause against the model.
     fn check_premises(&mut self) {
         let c = self.c;
+        // Atoms some RULE can derive (appear in a rule's consequent). The pivot for
+        // the warning hint: a blocked atom in this set is a derivation waiting on
+        // its rule's antecedent; one *not* in it can only be set by a FACT/NOT — or
+        // by turning a PREMISE that means to establish it into a RULE.
+        let derivable: BTreeSet<AtomId> = c
+            .rules
+            .iter()
+            .flat_map(|r| r.consequent.iter().map(|l| l.atom))
+            .collect();
         for clause in &c.clauses {
             match eval_clause(&self.model, clause) {
                 ClauseEval::Violated => self.conflicts.push(RawConflict {
@@ -679,13 +700,37 @@ impl<'a> Eval<'a> {
                 // Implication premises warn on missing data; list premises treat
                 // UNKNOWN as "no conflict yet" and stay consistent.
                 ClauseEval::Blocked(unknowns) if clause.origin.kind == "PREMISE" => {
+                    let hint = self.warning_hint(&unknowns, &derivable);
                     self.warnings.push(Warning {
                         origin: clause.origin.clone(),
                         blocked_by: unknowns.iter().map(|a| self.label(*a)).collect(),
+                        hint,
                     });
                 }
                 ClauseEval::Blocked(_) => {}
             }
+        }
+    }
+
+    /// Pick the most informative blocked atom and phrase a directed fix for it.
+    /// Prefers a *free input* (nothing derives it) — the common "I used a PREMISE
+    /// where I needed a RULE / forgot a FACT" trap — over an atom a RULE could
+    /// still derive.
+    fn warning_hint(&self, unknowns: &[AtomId], derivable: &BTreeSet<AtomId>) -> Option<String> {
+        let free = unknowns.iter().find(|a| !derivable.contains(a));
+        match free {
+            Some(&a) => Some(alloc::format!(
+                "nothing determines `{}` — add `FACT {}` (or `NOT …`), or if a PREMISE's \
+                 THEN is meant to establish it, make that PREMISE a RULE so it derives the value",
+                self.label(a),
+                self.label(a),
+            )),
+            None => unknowns.first().map(|&a| {
+                alloc::format!(
+                    "`{}` is derived by a RULE that has not fired — assert that rule's antecedent",
+                    self.label(a),
+                )
+            }),
         }
     }
 
@@ -1475,9 +1520,20 @@ impl fmt::Display for Report {
             }
         }
 
+        // Many warnings often share one root cause (e.g. the same missing FACT),
+        // so the `fix:` line is deduped in the human report — each distinct fix
+        // prints once — to keep a wall of warnings readable. The full per-warning
+        // hint is still in the JSON for tools that select/filter programmatically.
+        let mut shown_fixes: Vec<&str> = Vec::new();
         for w in &self.warnings {
             emit!(out, SECTION, "WARNING   {}", premise_tag(&w.origin))?;
             emit!(out, ITEM, "blocked by: {}", w.blocked_by.join(", "))?;
+            if let Some(hint) = &w.hint
+                && !shown_fixes.contains(&hint.as_str())
+            {
+                shown_fixes.push(hint);
+                emit!(out, ITEM, "fix: {hint}")?;
+            }
         }
         if let Some(atom) = &self.underdetermined {
             emit!(out, SECTION, "UNDERDETERMINED  an alternative model exists")?;
@@ -1608,6 +1664,68 @@ mod tests {
         assert_eq!(r.status, Status::Warning);
         assert_eq!(r.warnings.len(), 1);
         assert_eq!(r.warnings[0].blocked_by, vec![String::from("t.A has wing")]);
+    }
+
+    #[test]
+    fn warning_hint_points_at_rule_when_atom_is_a_free_input() {
+        // `A has wing` is nothing's consequent: it can only be set by a FACT, or by
+        // turning a PREMISE meant to establish it into a RULE. The hint says so.
+        let r = vs("FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n")
+            .unwrap();
+        let hint = r.warnings[0].hint.as_deref().unwrap();
+        assert!(hint.contains("make that PREMISE a RULE"), "{hint}");
+        assert!(hint.contains("t.A has wing"), "{hint}");
+    }
+
+    #[test]
+    fn warning_hint_points_at_antecedent_when_a_rule_could_derive_it() {
+        // `c ready` IS a RULE consequent, but the rule has not fired (its `x trigger`
+        // is UNKNOWN). The blocking premise's hint sends you to the rule's input.
+        let r = vs(concat!(
+            "RULE d:\n    WHEN x trigger\n    THEN c ready\n",
+            "FACT go now\n",
+            "PREMISE p:\n    WHEN go now\n    THEN c ready\n",
+        ))
+        .unwrap();
+        assert_eq!(r.status, Status::Warning);
+        let hint = r.warnings[0].hint.as_deref().unwrap();
+        assert!(
+            hint.contains("derived by a RULE that has not fired"),
+            "{hint}"
+        );
+    }
+
+    #[test]
+    fn human_report_dedupes_repeated_fix_lines() {
+        // Three *distinct* premises all blocked: p1 and p2 by the SAME atom
+        // (`gate one_ok`, via different antecedents so the clauses don't dedupe)
+        // → one identical fix, deduped; p3 by a different atom → its own fix. So:
+        // 3 warnings, but only 2 distinct `fix:` lines in the human report (while
+        // every warning still carries its hint in the structured data / JSON).
+        let r = vs(concat!(
+            "FACT a on\n",
+            "FACT b on\n",
+            "PREMISE p1:\n    WHEN a on\n    THEN gate one_ok\n",
+            "PREMISE p2:\n    WHEN b on\n    THEN gate one_ok\n",
+            "PREMISE p3:\n    WHEN a on\n    THEN gate two_ok\n",
+        ))
+        .unwrap();
+        assert_eq!(r.warnings.len(), 3);
+        // Every warning keeps its hint in the structured form.
+        assert!(r.warnings.iter().all(|w| w.hint.is_some()));
+        let distinct_hints: BTreeSet<&str> = r
+            .warnings
+            .iter()
+            .filter_map(|w| w.hint.as_deref())
+            .collect();
+        assert_eq!(distinct_hints.len(), 2);
+        // The human report prints exactly one `fix:` per distinct hint.
+        let text = alloc::format!("{r}");
+        let shown = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("fix:"))
+            .count();
+        assert_eq!(shown, distinct_hints.len());
     }
 
     #[test]

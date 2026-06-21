@@ -5,8 +5,10 @@ expression: "format!(\"{r}\")"
 RESULT: WARNING
   WARNING   wings_need_bone (PREMISE)  [creature.vrf:17]
       blocked by: creatures.Creature_A has wing
+      fix: nothing determines `creatures.Creature_A has wing` — add `FACT creatures.Creature_A has wing` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   WARNING   wings_need_bone (PREMISE)  [creature.vrf:17]
       blocked by: creatures.Creature_A has bone
+      fix: nothing determines `creatures.Creature_A has bone` — add `FACT creatures.Creature_A has bone` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
   DERIVED   creatures.Creature_A needs oxygen = TRUE   from needs_oxygen (RULE)  [creature.vrf:28]
 SUMMARY: 0 conflicts, 0 underdetermined, 2 warnings, 1 derived
 EXIT_CODE: 1

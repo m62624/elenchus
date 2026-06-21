@@ -170,10 +170,12 @@ PREMISE one_path:
         motor uses slow_path
 ```
 
-### `ONEOF` — exactly one
+### `ONEOF` — exactly one (this is how you declare a variable)
 - **Syntax:** keyword line, then ≥2 atoms.
 - **Why:** at most one **and** at least one is TRUE. The workhorse for assignment
-  ("each person has exactly one role").
+  ("each person has exactly one role"). Think of it as **declaring a variable**
+  `alice is …` whose value is one of the listed objects — the engine's nearest
+  thing to "a variable with a fixed domain of values".
 ```vrf
 PREMISE alice_role:
     ONEOF
@@ -181,6 +183,17 @@ PREMISE alice_role:
         alice is dev
         alice is qa
 ```
+- **`ONEOF` also *closes* the variable (typo guard).** Once you enumerate the
+  values of `alice is …`, those become the **only** legal values. Writing
+  `FACT alice is leed` (a misspelling — or any value you never listed) is now a
+  **hard compile error** (exit 2) with a `did you mean`, instead of silently
+  minting a new `alice is leed` atom that hangs in the air as UNKNOWN:
+  ```
+  alice.vrf:9: 'leed' is not a declared value of 'alice is' — ONEOF declares { dev, lead, qa } — did you mean `lead`?
+  ```
+  So: **enumerate a variable's values with `ONEOF` and the engine catches your
+  typos for you.** Subjects you never `ONEOF` stay open (any value is a fresh
+  boolean atom) — closing is opt-in, per variable.
 
 ### `ATLEAST` — at least one
 - **Syntax:** keyword line, then ≥2 atoms.
@@ -278,6 +291,10 @@ the domain separator, not a name character** — write compound names with `_`
 object, so they are *different atoms*. A typo silently makes a new UNKNOWN atom, so
 the constraint you thought you wrote never fires. **Before each run, pick one
 spelling per concept and make every name that should be one atom byte-identical.**
+For any variable whose values are a fixed set, declare them with `ONEOF` — that
+**closes** the variable, turning a misspelled value from a silent UNKNOWN atom into
+a hard compile error with a `did you mean` (see `ONEOF`). It is the strongest typo
+guard the language has; prefer it over relying on the advisory `HINT` below.
 
 The engine helps with two advisory signals (neither **ever changes the verdict or
 exit code**): a **`HINT`** (JSON: `hints`) when two names look like the same atom
@@ -305,7 +322,22 @@ misread it. There is **no**:
 ## Reading the report
 
 The verdict is never a dead end — the report tells you *where* and *why*. Learn to
-read these four things (shown as the engine actually prints them).
+read these things (shown as the engine actually prints them).
+
+**`blocked by:` + `fix:`** — on a `WARNING`, the UNKNOWN atom that stopped a premise
+from being checked, plus a directed fix. The `fix:` line disambiguates the two
+reasons a check stays blocked, so you don't guess:
+```
+  WARNING   needs_c (PREMISE)  [plan.vrf:5]
+      blocked by: plan.c ready
+      fix: nothing determines `plan.c ready` — add `FACT plan.c ready` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
+```
+- *"nothing determines X"* → X is a free input: either state it (`FACT`/`NOT`), or,
+  if a premise's `THEN` was meant to **establish** X, that premise should be a
+  `RULE` (which derives) not a `PREMISE` (which only checks). This is the single
+  most common small-model mistake — heed it.
+- *"X is derived by a RULE that has not fired"* → a `RULE` *can* produce X; assert
+  that rule's antecedent and X will be derived.
 
 **`why:` trace** — on a violated premise, the derivation chain that forced the
 clashing atoms (supporting facts first, then each rule built on them). Read it
@@ -581,6 +613,56 @@ premise were never in question — only the hypotheses. Drop or flip any one (e.
 `ASSUME rel has_feature_flag`) → `CONSISTENT`. That is the engine doing the
 backtracking for you: it tells you exactly which guess to revise.
 
+### 10. Encode a constraint / NP problem (the recipe)
+
+elenchus *is* a SAT checker, so problems shaped like "assign values to variables
+subject to constraints" (graph colouring, scheduling, seating, Sudoku-style grids
+— the classic NP-complete family) map onto it directly. The recipe is always the
+same three moves:
+
+1. **Each variable → one `ONEOF`** over its possible values (this both states "it
+   takes exactly one value" *and* closes the variable, so a mistyped value is a
+   hard error, not a silent bug).
+2. **Each constraint → a `PREMISE`** (`EXCLUSIVE`/`FORBIDS` for "not these
+   together", `WHEN…THEN` for "if this then that", `ATLEAST` for "at least one").
+3. **`CHECK BIDIRECTIONAL`** — `CONFLICT` = no valid assignment exists;
+   `UNDERDETERMINED` = solvable but more than one assignment fits (not unique);
+   `CONSISTENT` = exactly one.
+
+Graph 3-colouring of a triangle (three nodes, every pair adjacent — so it needs 3
+colours and the solution is not unique):
+
+```vrf
+DOMAIN graph
+PREMISE n1_color:                  // variable: node 1's colour
+    ONEOF
+        n1 is red
+        n1 is green
+        n1 is blue
+PREMISE n2_color:
+    ONEOF
+        n2 is red
+        n2 is green
+        n2 is blue
+PREMISE n3_color:
+    ONEOF
+        n3 is red
+        n3 is green
+        n3 is blue
+PREMISE edge_12:                   // adjacent nodes can't share a colour
+    FORBIDS
+        n1 is red
+        n2 is red
+// ... one FORBIDS per (edge, colour); shown trimmed for brevity
+CHECK BIDIRECTIONAL
+```
+
+Add an edge that makes it unsatisfiable (e.g. force all three the same colour via
+`WHEN…THEN` premises) and the verdict flips to `CONFLICT` with a `CORE` naming the
+clashing constraints. **Note the scale limit:** the backward (`BIDIRECTIONAL`)
+pass explores assignments, so keep variable/value counts modest — elenchus is for
+*checking the logic of* a constraint problem, not an industrial-scale solver.
+
 ## Run it — do these three steps first, in order (every session)
 
 Before you write a single program, set up and verify the engine. Do **not** skip
@@ -629,7 +711,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.7.1 -->
+<!-- skill-version: 0.8.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
