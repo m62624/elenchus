@@ -565,23 +565,34 @@ fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
 }
 
 /// `PREMISE <name> [FOR EACH …]: <body>` where the body is a list or an implication.
+/// Parse the `<name> [FOR EACH …]:` header shared by PREMISE and RULE, after the
+/// keyword has been consumed. The structure — the name, the single optional
+/// quantifier, the colon, and the end of line — lives here once; each keyword
+/// passes its own three diagnostics so the wording stays specific.
+fn named_header<'a>(
+    input: Span<'a>,
+    name_msg: &'static str,
+    colon_msg: &'static str,
+    tail_msg: &'static str,
+) -> PResult<'a, (Located<'a, &'a str>, Option<Quant<'a>>)> {
+    let at = input;
+    let (input, name) = promote(identifier(input), at, name_msg)?;
+    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = promote(char(':').parse(input), input, colon_msg)?;
+    let (input, _) = promote(eol(input), input, tail_msg)?;
+    Ok((input, (name, quant)))
+}
+
 fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
     // Committed to a premise now.
-    let at = input;
-    let (input, name) = promote(
-        identifier(input),
-        at,
-        "expected a premise name (a lowercase identifier)",
-    )?;
-    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = promote(
-        char(':').parse(input),
+    let (input, (name, quant)) = named_header(
         input,
+        "expected a premise name (a lowercase identifier)",
         "expected ':' after the premise name",
+        "unexpected text after 'PREMISE <name>:'",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after 'PREMISE <name>:'")?;
     let at = input;
     let (input, body) = promote(
         alt((list_body, impl_body)).parse(input),
@@ -595,20 +606,12 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 /// be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::RULE), space1).parse(input)?;
-    let at = input;
-    let (input, name) = promote(
-        identifier(input),
-        at,
-        "expected a rule name (a lowercase identifier)",
-    )?;
-    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = promote(
-        char(':').parse(input),
+    let (input, (name, quant)) = named_header(
         input,
+        "expected a rule name (a lowercase identifier)",
         "expected ':' after the rule name",
+        "unexpected text after 'RULE <name>:'",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after 'RULE <name>:'")?;
     let at = input;
     let (input, body) = promote(impl_body(input), at, "a rule body must be WHEN ... THEN")?;
     Ok((input, Statement::Rule { name, quant, body }))
