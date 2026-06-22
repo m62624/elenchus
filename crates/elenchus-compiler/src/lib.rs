@@ -1011,9 +1011,7 @@ impl Compiler {
         )];
         let declared: Vec<&str> = set.iter().map(|s| s.as_str()).collect(); // BTreeSet → sorted
         let value = key.object.clone().unwrap_or_default();
-        let suggestion = nearest(&value, &declared)
-            .map(|s| alloc::format!(" — did you mean `{s}`?"))
-            .unwrap_or_default();
+        let suggestion = did_you_mean(&value, &declared);
         Err(CompileError::UnknownValue(Box::new(UnknownValue {
             file: source.to_string(),
             line,
@@ -1401,10 +1399,7 @@ fn quant_sig(q: &Quant) -> String {
 /// declared set name is close enough.
 fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
     let names: Vec<&str> = sets.keys().map(String::as_str).collect();
-    match nearest(set, &names) {
-        Some(s) => alloc::format!(" — did you mean `{s}`?"),
-        None => String::new(),
-    }
+    did_you_mean(set, &names)
 }
 
 /// A list of binder substitutions `(name, value)` applied during grounding: one
@@ -1545,17 +1540,18 @@ fn extract_domain(
 
 // --- helpers ---------------------------------------------------------------
 
-/// Levenshtein edit distance over Unicode scalar values. Small inputs (atom
-/// names), so the simple two-row DP is plenty.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
+/// Levenshtein edit distance over Unicode scalars (rolling two-row DP). Small
+/// inputs (atom/value names), so the simple DP is plenty. The one edit-distance
+/// implementation in the workspace: the compiler's "did you mean" suggestions
+/// (via [`nearest`]) and the solver's typo-hint lint both build on it.
+pub fn levenshtein(a: &[char], b: &[char]) -> usize {
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0usize; b.len() + 1];
-    for (i, ca) in a.chars().enumerate() {
+    for (i, &ca) in a.iter().enumerate() {
         cur[0] = i + 1;
         for (j, &cb) in b.iter().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
         }
         core::mem::swap(&mut prev, &mut cur);
     }
@@ -1578,12 +1574,23 @@ fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if budget == 0 {
         return None;
     }
+    let w: Vec<char> = word.chars().collect();
     candidates
         .iter()
-        .map(|&c| (levenshtein(word, c), c))
+        .map(|&c| (levenshtein(&w, &c.chars().collect::<Vec<char>>()), c))
         .filter(|&(d, _)| d <= budget)
         .min_by_key(|&(d, _)| d)
         .map(|(_, c)| c)
+}
+
+/// `" — did you mean `x`?"` for the nearest candidate to `word`, or empty when
+/// none is close enough. The single spelling of the suggestion suffix, shared by
+/// every "unknown name" diagnostic (values, sets, …).
+fn did_you_mean(word: &str, candidates: &[&str]) -> String {
+    match nearest(word, candidates) {
+        Some(s) => alloc::format!(" — did you mean `{s}`?"),
+        None => String::new(),
+    }
 }
 
 /// Lower parsed, located literals to key-based [`RawLit`]s (drops spans),
@@ -2736,11 +2743,19 @@ mod tests {
 
     #[test]
     fn levenshtein_basics() {
-        assert_eq!(levenshtein("", ""), 0);
-        assert_eq!(levenshtein("abc", "abc"), 0);
-        assert_eq!(levenshtein("censoredmtp", "censored_mtp"), 1);
-        assert_eq!(levenshtein("norml", "normal"), 1);
-        assert_eq!(levenshtein("kitten", "sitting"), 3);
+        // The canonical distance works on char slices; spell the string cases
+        // through a tiny adapter so the table below reads as before.
+        fn lev(a: &str, b: &str) -> usize {
+            levenshtein(
+                &a.chars().collect::<Vec<char>>(),
+                &b.chars().collect::<Vec<char>>(),
+            )
+        }
+        assert_eq!(lev("", ""), 0);
+        assert_eq!(lev("abc", "abc"), 0);
+        assert_eq!(lev("censoredmtp", "censored_mtp"), 1);
+        assert_eq!(lev("norml", "normal"), 1);
+        assert_eq!(lev("kitten", "sitting"), 3);
     }
 
     #[test]

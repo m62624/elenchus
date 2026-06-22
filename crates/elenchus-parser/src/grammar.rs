@@ -213,6 +213,10 @@ fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
 /// the operator matched we are committed, so every subsequent failure is
 /// [`promote`]d to a `Failure` with a specific message — no backtracking to a
 /// generic "expected a statement".
+/// The diagnostic for a list body with fewer than the required two atoms — one
+/// spelling, used for both the missing-first and missing-second slot.
+const LIST_NEEDS_TWO_ATOMS: &str = "a list premise needs at least two atoms";
+
 fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // list_op failing stays Error so the PREMISE alt can try impl_body.
@@ -224,17 +228,9 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         "expected a newline after the list operator",
     )?;
     let at = input;
-    let (input, first) = promote(
-        atom_line(input),
-        at,
-        "a list premise needs at least two atoms",
-    )?;
+    let (input, first) = promote(atom_line(input), at, LIST_NEEDS_TWO_ATOMS)?;
     let at = input;
-    let (input, second) = promote(
-        atom_line(input),
-        at,
-        "a list premise needs at least two atoms",
-    )?;
+    let (input, second) = promote(atom_line(input), at, LIST_NEEDS_TWO_ATOMS)?;
     let (input, rest) = many0(atom_line).parse(input)?;
 
     let mut atoms = vec![first, second];

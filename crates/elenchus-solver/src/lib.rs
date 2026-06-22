@@ -54,7 +54,9 @@ use core::fmt;
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
 pub use elenchus_compiler::Diagnostics;
-use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, KIND_UNSAT, Lit, Origin, Value, kw};
+use elenchus_compiler::{
+    AtomId, AtomKey, Clause, Compiled, KIND_UNSAT, Lit, Origin, Value, kw, levenshtein,
+};
 pub use elenchus_compiler::{
     CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
 };
@@ -1126,21 +1128,6 @@ fn atoms_look_similar(
     None
 }
 
-/// Plain Levenshtein edit distance over char slices (rolling two-row DP).
-fn levenshtein(a: &[char], b: &[char]) -> usize {
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0usize; b.len() + 1];
-    for (i, &ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, &cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
-        }
-        core::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
-}
-
 /// Encode the premises (`Impossible` clauses), rules (as implications), and
 /// confident facts (as unit clauses) into CNF for the backward pass. Also
 /// returns the constrained atoms (those appearing in a clause or rule) to
@@ -1379,12 +1366,7 @@ pub fn verify<R: Resolver>(root: &str, resolver: &R) -> Result<Report, CompileEr
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Status::Consistent => "CONSISTENT",
-            Status::Underdetermined => "UNDERDETERMINED",
-            Status::Warning => "WARNING",
-            Status::Conflict => "CONFLICT",
-        })
+        f.write_str(status_name(*self))
     }
 }
 
