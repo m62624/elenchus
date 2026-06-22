@@ -41,7 +41,9 @@ pub mod diag;
 mod grammar;
 pub mod keywords;
 
-pub use ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
+pub use ast::{
+    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+};
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;
 pub use keywords::{Card, KEYWORDS, Keyword, card_for, is_reserved, kw};
@@ -228,7 +230,7 @@ mod tests {
         "#;
         let p = prog(src);
         match &p.statements[0] {
-            Statement::Premise { name, body } => {
+            Statement::Premise { name, body, .. } => {
                 assert_eq!(name.data, "fly_xor_swim");
                 match body {
                     Body::List { op, atoms } => {
@@ -516,7 +518,7 @@ mod tests {
             THEN собака умеет_лаять
         "#;
         match &prog(src).statements[0] {
-            Statement::Premise { name, body } => {
+            Statement::Premise { name, body, .. } => {
                 assert_eq!(name.data, "правило_лая");
                 match body {
                     Body::Impl {
@@ -698,5 +700,118 @@ FACT c d
     fn trailing_comment_without_final_newline() {
         let p = prog("FACT a b\n// trailing, no newline");
         assert_eq!(p.statements.len(), 1);
+    }
+
+    #[test]
+    fn set_declaration_parses() {
+        let p = prog(
+            r"
+        SET tasks
+            deploy
+            backup
+        ",
+        );
+        match &p.statements[0] {
+            Statement::Set { name, elements } => {
+                assert_eq!(name.data, "tasks");
+                let got: Vec<&str> = elements.iter().map(|e| e.data).collect();
+                assert_eq!(got, ["deploy", "backup"]);
+            }
+            other => panic!("expected a SET, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn close_statement_parses() {
+        let p = prog("CLOSE depends_on TRANSITIVE\n");
+        match &p.statements[0] {
+            Statement::Close { relation, kind } => {
+                assert_eq!(relation.data, "depends_on");
+                assert_eq!(*kind, CloseKind::Transitive);
+            }
+            other => panic!("expected a CLOSE, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_each_header_parses_into_a_quant() {
+        let p = prog(
+            r"
+        PREMISE p FOR EACH t IN tasks:
+            ONEOF
+                t s a
+                t s b
+        ",
+        );
+        match &p.statements[0] {
+            Statement::Premise {
+                quant: Some(Quant::InSet { binder, set }),
+                ..
+            } => {
+                assert_eq!(binder.data, "t");
+                assert_eq!(set.data, "tasks");
+            }
+            other => panic!("expected a quantified premise, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_each_relation_header_parses_into_a_quant() {
+        let p = prog(
+            r"
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x a
+                y a
+        ",
+        );
+        match &p.statements[0] {
+            Statement::Premise {
+                quant:
+                    Some(Quant::Relation {
+                        left,
+                        predicate,
+                        right,
+                    }),
+                ..
+            } => {
+                assert_eq!(left.data, "x");
+                assert_eq!(predicate.data, "linked");
+                assert_eq!(right.data, "y");
+            }
+            other => panic!("expected a relation-quantified premise, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unquantified_premise_has_no_quant() {
+        let p = prog(
+            r"
+        PREMISE p:
+            ONEOF
+                x s a
+                x s b
+        ",
+        );
+        assert!(matches!(
+            &p.statements[0],
+            Statement::Premise { quant: None, .. }
+        ));
+    }
+
+    #[test]
+    fn a_malformed_for_each_is_a_committed_error() {
+        // FOR without EACH commits (FOR is reserved, only a quantifier here).
+        assert!(
+            parse(
+                r"
+        PREMISE p FOR t IN tasks:
+            ONEOF
+                t s a
+                t s b
+        "
+            )
+            .is_err()
+        );
     }
 }

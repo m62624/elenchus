@@ -22,7 +22,9 @@ use nom::{
     sequence::{delimited, preceded, terminated},
 };
 
-use crate::ast::{Atom, Body, Conn, ListOp, Literal, Located, Program, Span, Statement};
+use crate::ast::{
+    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+};
 use crate::diag::{Diagnostic, Diagnostics};
 use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
 
@@ -180,6 +182,16 @@ fn atom_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     Ok((input, a))
 }
 
+/// A single identifier on its own (possibly indented) line: a `SET` element. A
+/// reserved word or a non-identifier line yields a recoverable `Error` so `many0`
+/// stops cleanly at the next statement.
+fn element_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, &'a str>> {
+    let (input, _) = space0(input)?;
+    let (input, id) = identifier(input)?;
+    let (input, _) = eol(input)?;
+    Ok((input, id))
+}
+
 // --- Bodies ----------------------------------------------------------------
 
 /// One of the list-constraint keywords (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`).
@@ -201,6 +213,10 @@ fn list_op<'a>(input: Span<'a>) -> PResult<'a, ListOp> {
 /// the operator matched we are committed, so every subsequent failure is
 /// [`promote`]d to a `Failure` with a specific message — no backtracking to a
 /// generic "expected a statement".
+/// The diagnostic for a list body with fewer than the required two atoms — one
+/// spelling, used for both the missing-first and missing-second slot.
+const LIST_NEEDS_TWO_ATOMS: &str = "a list premise needs at least two atoms";
+
 fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, _) = space0(input)?;
     // list_op failing stays Error so the PREMISE alt can try impl_body.
@@ -212,17 +228,9 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         "expected a newline after the list operator",
     )?;
     let at = input;
-    let (input, first) = promote(
-        atom_line(input),
-        at,
-        "a list premise needs at least two atoms",
-    )?;
+    let (input, first) = promote(atom_line(input), at, LIST_NEEDS_TWO_ATOMS)?;
     let at = input;
-    let (input, second) = promote(
-        atom_line(input),
-        at,
-        "a list premise needs at least two atoms",
-    )?;
+    let (input, second) = promote(atom_line(input), at, LIST_NEEDS_TWO_ATOMS)?;
     let (input, rest) = many0(atom_line).parse(input)?;
 
     let mut atoms = vec![first, second];
@@ -444,51 +452,169 @@ fn stmt_check<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     ))
 }
 
-/// `PREMISE <name>: <body>` where the body is a list or an implication.
-fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
-    let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
-    // Committed to a premise now.
+/// `SET <name>` then one identifier per line (at least one) — declare a finite
+/// set to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
+fn stmt_set<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::SET), space1).parse(input)?;
     let at = input;
     let (input, name) = promote(
         identifier(input),
         at,
-        "expected a premise name (a lowercase identifier)",
+        "SET expects a name (a lowercase identifier), e.g. SET tasks",
     )?;
-    let (input, _) = space0(input)?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the SET name")?;
+    let at = input;
+    let (input, first) = promote(
+        element_line(input),
+        at,
+        "a SET needs at least one element — one identifier per line",
+    )?;
+    let (input, rest) = many0(element_line).parse(input)?;
+    let mut elements = vec![first];
+    elements.extend(rest);
+    Ok((input, Statement::Set { name, elements }))
+}
+
+/// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.
+fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::CLOSE), space1).parse(input)?;
+    let at = input;
+    let (input, relation) = promote(
+        identifier(input),
+        at,
+        "CLOSE expects a relation name, e.g. CLOSE depends_on TRANSITIVE",
+    )?;
     let (input, _) = promote(
-        char(':').parse(input),
+        (space1, tag(kw::TRANSITIVE)).parse(input),
         input,
-        "expected ':' after the premise name",
+        "CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after 'PREMISE <name>:'")?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'CLOSE … TRANSITIVE'",
+    )?;
+    Ok((
+        input,
+        Statement::Close {
+            relation,
+            kind: CloseKind::Transitive,
+        },
+    ))
+}
+
+/// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
+/// and the `:`). One of two forms:
+///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
+///   `FOR EACH <left> <relation> <right>` — over the declared FACT pairs.
+/// There is exactly one quantifier and no production for a second, so nesting is
+/// unrepresentable.
+fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
+    // No FOR → recoverable Error so `opt` yields None and the `:` is parsed next.
+    let (input, _) = tag(kw::FOR).parse(input)?;
+    // Committed: FOR can only begin a quantifier here.
+    let at = input;
+    let (input, _) = promote(
+        (space1, tag(kw::EACH), space1).parse(input),
+        at,
+        "FOR must be followed by EACH: FOR EACH <binder> IN <set>  (or  FOR EACH <a> <relation> <b>)",
+    )?;
+    let at = input;
+    let (input, first) = promote(
+        identifier(input),
+        at,
+        "expected a binder name after FOR EACH",
+    )?;
+    let (input, _) = promote(
+        space1(input),
+        input,
+        "expected `IN <set>` or a relation `<rel> <binder>` after the FOR EACH binder",
+    )?;
+    // `IN <set>` → set quantifier; otherwise `<predicate> <right>` → relation.
+    let after_in: PResult<'a, (Span<'a>, Span<'a>)> = (tag(kw::IN), space1).parse(input);
+    if let Ok((rest, _)) = after_in {
+        let at = rest;
+        let (rest, set) = promote(identifier(rest), at, "expected a set name after IN")?;
+        return Ok((rest, Quant::InSet { binder: first, set }));
+    }
+    let at = input;
+    let (input, predicate) = promote(
+        identifier(input),
+        at,
+        "expected a relation name (FOR EACH <a> <relation> <b>)",
+    )?;
+    let (input, _) = promote(
+        space1(input),
+        input,
+        "expected the second binder after the relation (FOR EACH <a> <relation> <b>)",
+    )?;
+    let at = input;
+    let (input, right) = promote(
+        identifier(input),
+        at,
+        "expected the second binder (FOR EACH <a> <relation> <b>)",
+    )?;
+    Ok((
+        input,
+        Quant::Relation {
+            left: first,
+            predicate,
+            right,
+        },
+    ))
+}
+
+/// `PREMISE <name> [FOR EACH …]: <body>` where the body is a list or an implication.
+/// Parse the `<name> [FOR EACH …]:` header shared by PREMISE and RULE, after the
+/// keyword has been consumed. The structure — the name, the single optional
+/// quantifier, the colon, and the end of line — lives here once; each keyword
+/// passes its own three diagnostics so the wording stays specific.
+fn named_header<'a>(
+    input: Span<'a>,
+    name_msg: &'static str,
+    colon_msg: &'static str,
+    tail_msg: &'static str,
+) -> PResult<'a, (Located<'a, &'a str>, Option<Quant<'a>>)> {
+    let at = input;
+    let (input, name) = promote(identifier(input), at, name_msg)?;
+    let (input, quant) = opt(preceded(space1, for_each)).parse(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = promote(char(':').parse(input), input, colon_msg)?;
+    let (input, _) = promote(eol(input), input, tail_msg)?;
+    Ok((input, (name, quant)))
+}
+
+fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PREMISE), space1).parse(input)?;
+    // Committed to a premise now.
+    let (input, (name, quant)) = named_header(
+        input,
+        "expected a premise name (a lowercase identifier)",
+        "expected ':' after the premise name",
+        "unexpected text after 'PREMISE <name>:'",
+    )?;
     let at = input;
     let (input, body) = promote(
         alt((list_body, impl_body)).parse(input),
         at,
         "a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN",
     )?;
-    Ok((input, Statement::Premise { name, body }))
+    Ok((input, Statement::Premise { name, quant, body }))
 }
 
-/// `RULE <name>: <implication>` — like a premise but the body must be `WHEN … THEN`.
+/// `RULE <name> [FOR EACH …]: <implication>` — like a premise but the body must
+/// be `WHEN … THEN`.
 fn stmt_rule<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::RULE), space1).parse(input)?;
-    let at = input;
-    let (input, name) = promote(
-        identifier(input),
-        at,
-        "expected a rule name (a lowercase identifier)",
-    )?;
-    let (input, _) = space0(input)?;
-    let (input, _) = promote(
-        char(':').parse(input),
+    let (input, (name, quant)) = named_header(
         input,
+        "expected a rule name (a lowercase identifier)",
         "expected ':' after the rule name",
+        "unexpected text after 'RULE <name>:'",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after 'RULE <name>:'")?;
     let at = input;
     let (input, body) = promote(impl_body(input), at, "a rule body must be WHEN ... THEN")?;
-    Ok((input, Statement::Rule { name, body }))
+    Ok((input, Statement::Rule { name, quant, body }))
 }
 
 /// One top-level statement. Order matters: each branch commits on its keyword,
@@ -502,6 +628,8 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     alt((
         stmt_domain,
         stmt_import,
+        stmt_set,
+        stmt_close,
         stmt_fact,
         stmt_assume,
         stmt_premise,
@@ -514,8 +642,15 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 // --- Recovering driver -----------------------------------------------------
 
-/// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+/// Message for a line that begins with no known top-level keyword. The list of
+/// statements is built from [`keywords::top_level_menu`], so it always names
+/// exactly the top-level keywords that exist — no hand-kept copy to drift.
+fn not_a_statement() -> String {
+    alloc::format!(
+        "expected a statement — a line must start with {}",
+        crate::keywords::top_level_menu()
+    )
+}
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///
@@ -550,7 +685,7 @@ pub fn parse(src: &str) -> Result<Program<'_>, Diagnostics> {
             }
             // Recoverable: this line started no statement keyword at all.
             Err(nom::Err::Error(p)) => {
-                errors.push(make_diag(src, p.input, String::from(NOT_A_STATEMENT), true));
+                errors.push(make_diag(src, p.input, not_a_statement(), true));
                 input = resync(p.input);
             }
             // `complete` combinators never return Incomplete; stop defensively.

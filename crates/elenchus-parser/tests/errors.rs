@@ -247,14 +247,15 @@ fn unknown_keyword_has_no_card() {
 #[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
-    // A trailing newline is not required: `eol` accepts EOF too.
-    for kw in [
-        "FACT", "NOT", "ASSUME", "IMPORT", "CHECK", "PREMISE", "RULE",
-    ] {
-        let example = card_for(kw).unwrap().example;
+    // A trailing newline is not required: `eol` accepts EOF too. Drawn straight
+    // from the keyword table, so every top-level statement is covered and no new
+    // one can slip in untested.
+    for k in KEYWORDS.iter().filter(|k| k.top_level) {
         assert!(
-            parse(example).is_ok(),
-            "{kw} card example must parse:\n{example}"
+            parse(k.card.example).is_ok(),
+            "{} card example must parse:\n{}",
+            k.text,
+            k.card.example
         );
     }
 }

@@ -45,10 +45,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-/// Re-exported so downstream crates can name the syntax diagnostics carried by
-/// [`CompileError::Parse`] (and render them with a custom error limit).
-pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{Atom, Body, Conn, ListOp, Literal, Statement, kw};
+use elenchus_parser::{Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Quant, Statement};
+/// Re-exported so downstream crates name one source of truth: [`Diagnostics`] for
+/// the syntax errors carried by [`CompileError::Parse`], and [`kw`] for the
+/// keyword spellings an [`Origin::kind`] is built from (so the solver matches a
+/// `kind` against `kw::PREMISE`, not a re-typed `"PREMISE"`).
+pub use elenchus_parser::{Diagnostics, kw};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -158,9 +160,17 @@ pub struct Origin {
     pub line: u32,
     /// The premise/rule name, if it came from a named construct.
     pub premise: Option<String>,
-    /// Surface kind for the report, e.g. `"FACT"`, `"EXCLUSIVE"`, `"PREMISE"`.
+    /// Surface kind for the report. A surface keyword (a [`kw`] constant such as
+    /// `kw::FACT` / `kw::PREMISE`) for source constructs, or [`KIND_UNSAT`] for
+    /// the synthetic origin the solver attaches to a global unsatisfiability.
     pub kind: &'static str,
 }
+
+/// The [`Origin::kind`] the solver stamps on a conflict that is not pinned to one
+/// source construct but to the program being jointly unsatisfiable. Not a
+/// keyword — so it lives here, next to the other kinds, as the one spelling both
+/// the solver (which sets it) and any reader (which matches it) share.
+pub const KIND_UNSAT: &str = "UNSAT";
 
 /// A confident fact (from `FACT` / `NOT`). Conflicting facts on the same atom
 /// are preserved (both kept) — the solver reports that as a CONFLICT.
@@ -230,6 +240,10 @@ pub struct Compiled {
     /// it never affects the solve. Only populated by [`compile`] (an unresolved
     /// import in [`compile_source`] cannot be classified). See [`UnusedImport`].
     pub unused_imports: Vec<UnusedImport>,
+    /// Atoms consumed as data by a relation `FOR EACH` (the edge facts, e.g. each
+    /// `a linked b`). They are read by the quantifier, so the solver must not
+    /// report them as ORPHAN facts even though no clause references them.
+    pub consumed: Vec<AtomId>,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an
@@ -310,6 +324,36 @@ pub enum CompileError {
     /// Boxed so this comparatively large payload does not bloat every `Result`.
     #[error(transparent)]
     UnknownValue(Box<UnknownValue>),
+    /// A `FOR EACH … IN <set>` named a set that was never declared with `SET`.
+    /// Usually a typo in the set name; the suggestion offers the nearest declared
+    /// set when one is close.
+    #[error("{file}:{line}: FOR EACH ranges over '{set}', which is not a declared SET{suggestion}")]
+    UnknownSet {
+        /// The source the offending `FOR EACH` is in.
+        file: String,
+        /// 1-based line of the `FOR EACH`.
+        line: u32,
+        /// The undeclared set name that was referenced.
+        set: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// `CLOSE <relation> TRANSITIVE` found a cycle: a node transitively reaches
+    /// itself. Transitive closure requires a DAG (e.g. a dependency graph).
+    #[error(
+        "{file}:{line}: relation '{relation}' has a cycle (`{node}` reaches itself) \
+         — CLOSE … TRANSITIVE requires a DAG"
+    )]
+    CyclicRelation {
+        /// The source the `CLOSE` is in.
+        file: String,
+        /// 1-based line of the `CLOSE`.
+        line: u32,
+        /// The relation predicate being closed.
+        relation: String,
+        /// A node on the cycle (reaches itself).
+        node: String,
+    },
 }
 
 /// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
@@ -397,6 +441,20 @@ pub struct Compiler {
     /// that carry an object register here (binary atoms have no value slot to
     /// close). See [`Compiler::validate_closed_world`].
     oneof_values: BTreeMap<(String, String, String), BTreeSet<String>>,
+    /// Declared `SET <name>` collections: name → elements, used to ground a
+    /// `FOR EACH <binder> IN <name>` quantifier by instantiating the body once
+    /// per element. Populated in a pre-pass so a `FOR EACH` may reference a set
+    /// declared later in the file.
+    sets: BTreeMap<String, Vec<String>>,
+    /// Declared relation pairs: predicate → `(subject, object)` of every 3-part
+    /// `FACT`, used to ground a `FOR EACH <a> <predicate> <b>` quantifier. Also a
+    /// pre-pass, so the edges may be declared after the quantifier.
+    relations: BTreeMap<String, Vec<(String, String)>>,
+    /// Edge atoms consumed by a relation `FOR EACH` (e.g. each `a linked b`).
+    /// They are *read as data* by the quantifier, so they are not idle facts —
+    /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
+    /// lint.
+    relation_consumed: BTreeSet<AtomKey>,
 }
 
 impl Compiler {
@@ -411,10 +469,7 @@ impl Compiler {
     /// without a [`Resolver`]), so a single source may only reference its own
     /// domain. Use [`compile`] for cross-domain references.
     pub fn add_source(&mut self, source: &str, src: &str) -> Result<(), CompileError> {
-        let program = elenchus_parser::parse(src).map_err(|mut diag| {
-            diag.set_file(source);
-            CompileError::Parse(diag)
-        })?;
+        let program = parse_tagged(source, src)?;
         let domain = extract_domain(&program, source)?;
         let mut aliases = BTreeMap::new();
         aliases.insert(domain.clone(), domain.clone());
@@ -422,6 +477,8 @@ impl Compiler {
             current: domain,
             aliases,
         };
+        self.collect_decls(&program);
+        self.apply_closures(&program, source)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Domain(_) => {}
@@ -434,12 +491,69 @@ impl Compiler {
         Ok(())
     }
 
+    /// Apply every `CLOSE … TRANSITIVE`: replace the relation's pairs with their
+    /// transitive closure so a relation `FOR EACH` ranges over reachability, and
+    /// reject a cycle (a node reaching itself). A pure compile-time graph pass —
+    /// the solver never sees it. Runs after [`collect_decls`] (the direct edges
+    /// must be known) and before grounding.
+    fn apply_closures(
+        &mut self,
+        program: &elenchus_parser::Program,
+        source: &str,
+    ) -> Result<(), CompileError> {
+        for stmt in &program.statements {
+            if let Statement::Close { relation, kind } = stmt {
+                let CloseKind::Transitive = kind;
+                let pairs = self
+                    .relations
+                    .get(relation.data)
+                    .cloned()
+                    .unwrap_or_default();
+                let closed = transitive_closure(pairs);
+                if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
+                    return Err(CompileError::CyclicRelation {
+                        file: source.to_string(),
+                        line: relation.span.location_line(),
+                        relation: relation.data.to_string(),
+                        node: node.clone(),
+                    });
+                }
+                self.relations.insert(relation.data.to_string(), closed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Pre-pass: record every `SET` and every relation pair (3-part `FACT`) so a
+    /// `FOR EACH` may reference a set or relation declared anywhere in the same
+    /// source, including after the quantifier.
+    fn collect_decls(&mut self, program: &elenchus_parser::Program) {
+        for stmt in &program.statements {
+            match stmt {
+                Statement::Set { name, elements } => {
+                    self.sets.insert(
+                        name.data.to_string(),
+                        elements.iter().map(|e| e.data.to_string()).collect(),
+                    );
+                }
+                Statement::Fact(a) => {
+                    if let Some(obj) = a.data.object {
+                        self.relations
+                            .entry(a.data.predicate.to_string())
+                            .or_default()
+                            .push((a.data.subject.to_string(), obj.to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Compile one already-resolved file's statements under its domain context.
     fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
-        let program = elenchus_parser::parse(&file.content).map_err(|mut diag| {
-            diag.set_file(&file.path);
-            CompileError::Parse(diag)
-        })?;
+        let program = parse_tagged(&file.path, &file.content)?;
+        self.collect_decls(&program);
+        self.apply_closures(&program, &file.path)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
@@ -486,13 +600,14 @@ impl Compiler {
                 subject: subject.as_ref().map(|s| s.data.to_string()),
                 bidirectional: *bidirectional,
             }),
-            Statement::Premise { name, body } => {
-                let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, false, ctx)?;
+            // Declared in the `collect_decls` / `apply_closures` pre-passes;
+            // nothing to emit here.
+            Statement::Set { .. } | Statement::Close { .. } => {}
+            Statement::Premise { name, quant, body } => {
+                self.add_named(source, name, quant.as_ref(), body, false, ctx)?;
             }
-            Statement::Rule { name, body } => {
-                let line = name.span.location_line();
-                self.add_named(source, name.data, line, body, true, ctx)?;
+            Statement::Rule { name, quant, body } => {
+                self.add_named(source, name, quant.as_ref(), body, true, ctx)?;
             }
         }
         Ok(())
@@ -548,13 +663,21 @@ impl Compiler {
     fn add_named(
         &mut self,
         source: &str,
-        name: &str,
-        line: u32,
+        name: &Located<&str>,
+        quant: Option<&Quant>,
         body: &Body,
         is_rule: bool,
         ctx: &DomainCtx,
     ) -> Result<(), CompileError> {
-        let body_hash = hash_hex(canonical_body(name, body, is_rule, ctx)?.as_bytes());
+        let line = name.span.location_line();
+        let name = name.data;
+        // The redefinition hash covers the quantifier too, so two same-named
+        // premises that differ only in their `FOR EACH` are still a redefinition.
+        let mut canon = canonical_body(name, body, is_rule, ctx)?;
+        if let Some(q) = quant {
+            canon.push_str(&quant_sig(q));
+        }
+        let body_hash = hash_hex(canon.as_bytes());
         let key = (source.to_string(), name.to_string());
         match self.defined.get(&key) {
             Some(prev) if *prev == body_hash => return Ok(()), // identical → idempotent
@@ -569,6 +692,76 @@ impl Compiler {
             }
         }
 
+        match quant {
+            // Unquantified: emit the body once, as before.
+            None => self.emit_named(source, name, line, body, is_rule, ctx),
+            // `FOR EACH <binder> IN <set>`: instantiate the body once per element,
+            // substituting the binder. Grounding is exactly `|set|` repetitions of
+            // the *same* desugar — linear, never a domain product (a second binder
+            // is unrepresentable in the grammar).
+            Some(Quant::InSet { binder, set }) => {
+                let elements = match self.sets.get(set.data) {
+                    Some(els) => els.clone(),
+                    None => {
+                        return Err(CompileError::UnknownSet {
+                            file: source.to_string(),
+                            line: set.span.location_line(),
+                            set: set.data.to_string(),
+                            suggestion: nearest_set_suggestion(set.data, &self.sets),
+                        });
+                    }
+                };
+                for el in &elements {
+                    let grounded = subst_body(body, &[(binder.data, el)]);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                }
+                Ok(())
+            }
+            // `FOR EACH <a> <relation> <b>`: instantiate the body once per declared
+            // FACT pair of that relation, binding `a`→subject, `b`→object. The pair
+            // is pinned by data, so this is linear in the number of facts — never a
+            // product of the domain with itself.
+            Some(Quant::Relation {
+                left,
+                predicate,
+                right,
+            }) => {
+                let pairs = self
+                    .relations
+                    .get(predicate.data)
+                    .cloned()
+                    .unwrap_or_default();
+                for (subj, obj) in &pairs {
+                    let grounded = subst_body(body, &[(left.data, subj), (right.data, obj)]);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                    // The edge atom is read as data by the quantifier, not idle —
+                    // record it so the ORPHAN lint does not flag it.
+                    if let Ok(k) = ctx.key(&Atom {
+                        domain: None,
+                        subject: subj,
+                        predicate: predicate.data,
+                        object: Some(obj),
+                    }) {
+                        self.relation_consumed.insert(k);
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Emit the clauses/rule for one (already-grounded) named construct's body.
+    /// Split out of [`Compiler::add_named`] so a `FOR EACH` can call it once per
+    /// element with the binder substituted, reusing the exact same desugar.
+    fn emit_named(
+        &mut self,
+        source: &str,
+        name: &str,
+        line: u32,
+        body: &Body,
+        is_rule: bool,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
         if is_rule {
             // RULE always has an implication body (guaranteed by the grammar).
             if let Body::Impl {
@@ -812,9 +1005,7 @@ impl Compiler {
         )];
         let declared: Vec<&str> = set.iter().map(|s| s.as_str()).collect(); // BTreeSet → sorted
         let value = key.object.clone().unwrap_or_default();
-        let suggestion = nearest(&value, &declared)
-            .map(|s| alloc::format!(" — did you mean `{s}`?"))
-            .unwrap_or_default();
+        let suggestion = did_you_mean(&value, &declared);
         Err(CompileError::UnknownValue(Box::new(UnknownValue {
             file: source.to_string(),
             line,
@@ -866,6 +1057,12 @@ impl Compiler {
             })
             .collect();
 
+        let consumed = self
+            .relation_consumed
+            .iter()
+            .filter_map(|k| id_of.get(k).copied())
+            .collect();
+
         Compiled {
             atoms,
             facts,
@@ -874,6 +1071,7 @@ impl Compiler {
             checks: self.checks,
             pending_imports: self.pending_imports,
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
+            consumed,
         }
     }
 }
@@ -1062,10 +1260,7 @@ fn resolve_graph<R: Resolver>(
                 if discovered.contains_key(&hash) {
                     continue; // already fully resolved by another path — dedup
                 }
-                let program = elenchus_parser::parse(&content).map_err(|mut diag| {
-                    diag.set_file(&path);
-                    CompileError::Parse(diag)
-                })?;
+                let program = parse_tagged(&path, &content)?;
                 let domain = extract_domain(&program, &path)?;
                 let mut edges = Vec::new();
                 let mut used_prefixes = BTreeSet::new();
@@ -1177,6 +1372,102 @@ fn resolve_graph<R: Resolver>(
     Ok((files, unused))
 }
 
+/// A canonical signature of a `FOR EACH` quantifier, appended to the body hash so
+/// two same-named premises that differ only in their quantifier still count as a
+/// redefinition.
+fn quant_sig(q: &Quant) -> String {
+    match q {
+        Quant::InSet { binder, set } => alloc::format!("|FOREACH {} IN {}", binder.data, set.data),
+        Quant::Relation {
+            left,
+            predicate,
+            right,
+        } => alloc::format!("|FOREACH {} {} {}", left.data, predicate.data, right.data),
+    }
+}
+
+/// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
+/// declared set name is close enough.
+/// Parse one source, tagging any syntax [`Diagnostics`] with its file label so a
+/// `CompileError::Parse` names the right file. The single spelling of "parse, and
+/// on failure attach the file" — shared by the inline, resolved, and import paths.
+fn parse_tagged<'a>(
+    file: &str,
+    content: &'a str,
+) -> Result<elenchus_parser::Program<'a>, CompileError> {
+    elenchus_parser::parse(content).map_err(|mut diag| {
+        diag.set_file(file);
+        CompileError::Parse(diag)
+    })
+}
+
+fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
+    let names: Vec<&str> = sets.keys().map(String::as_str).collect();
+    did_you_mean(set, &names)
+}
+
+/// A list of binder substitutions `(name, value)` applied during grounding: one
+/// entry for an `IN <set>` quantifier, two for a `<a> <rel> <b>` relation.
+type Subs<'s> = [(&'s str, &'s str)];
+
+/// Replace any binder with its value in one identifier; non-matching pass through.
+fn subst_ident<'s>(s: &'s str, subs: &Subs<'s>) -> &'s str {
+    subs.iter()
+        .find_map(|&(b, v)| (s == b).then_some(v))
+        .unwrap_or(s)
+}
+
+/// Replace the binders in an atom (subject, predicate, and object positions).
+fn subst_atom<'s>(a: &Atom<'s>, subs: &Subs<'s>) -> Atom<'s> {
+    Atom {
+        domain: a.domain,
+        subject: subst_ident(a.subject, subs),
+        predicate: subst_ident(a.predicate, subs),
+        object: a.object.map(|o| subst_ident(o, subs)),
+    }
+}
+
+/// Replace the binders in one located literal (preserving its span and `NOT`).
+fn subst_lit<'s>(ll: &Located<'s, Literal<'s>>, subs: &Subs<'s>) -> Located<'s, Literal<'s>> {
+    Located {
+        data: Literal {
+            negated: ll.data.negated,
+            atom: subst_atom(&ll.data.atom, subs),
+        },
+        span: ll.span,
+    }
+}
+
+/// Build a grounded copy of a body with the `FOR EACH` binders substituted.
+/// Spans are preserved so any error still points at the original source line. The
+/// result borrows from the original body and from the substitution values, so it
+/// is consumed immediately (its keys interned) and never stored.
+fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
+    match body {
+        Body::List { op, atoms } => Body::List {
+            op: *op,
+            atoms: atoms
+                .iter()
+                .map(|la| Located {
+                    data: subst_atom(&la.data, subs),
+                    span: la.span,
+                })
+                .collect(),
+        },
+        Body::Impl {
+            antecedent,
+            ante_conn,
+            consequent,
+            cons_conn,
+        } => Body::Impl {
+            antecedent: antecedent.iter().map(|l| subst_lit(l, subs)).collect(),
+            ante_conn: *ante_conn,
+            consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
+            cons_conn: *cons_conn,
+        },
+    }
+}
+
 /// Collect the domain prefixes used by a statement's atoms into `out` (`None` for
 /// a bare atom, `Some(p)` for a `p.`-qualified one) — feeds the unused-import lint.
 fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
@@ -1197,8 +1488,37 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
                 .chain(consequent)
                 .for_each(|l| add(&l.data.atom)),
         },
-        Statement::Domain(_) | Statement::Import { .. } | Statement::Check { .. } => {}
+        Statement::Domain(_)
+        | Statement::Import { .. }
+        | Statement::Check { .. }
+        | Statement::Set { .. }
+        | Statement::Close { .. } => {}
     }
+}
+
+/// The transitive closure of a relation's `(from, to)` pairs: add `(a, c)`
+/// whenever `(a, b)` and `(b, c)` are present, to a fixpoint. A self-pair
+/// `(x, x)` in the result marks a cycle. A small compile-time graph op.
+fn transitive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
+    loop {
+        let mut added: Vec<(String, String)> = Vec::new();
+        for (a, b) in &set {
+            for (c, d) in &set {
+                if b == c {
+                    let p = (a.clone(), d.clone());
+                    if !set.contains(&p) {
+                        added.push(p);
+                    }
+                }
+            }
+        }
+        if added.is_empty() {
+            break;
+        }
+        set.extend(added);
+    }
+    set.into_iter().collect()
 }
 
 /// The single `DOMAIN` a source declares, or an error if it has none or several.
@@ -1224,17 +1544,18 @@ fn extract_domain(
 
 // --- helpers ---------------------------------------------------------------
 
-/// Levenshtein edit distance over Unicode scalar values. Small inputs (atom
-/// names), so the simple two-row DP is plenty.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
+/// Levenshtein edit distance over Unicode scalars (rolling two-row DP). Small
+/// inputs (atom/value names), so the simple DP is plenty. The one edit-distance
+/// implementation in the workspace: the compiler's "did you mean" suggestions
+/// (via [`nearest`]) and the solver's typo-hint lint both build on it.
+pub fn levenshtein(a: &[char], b: &[char]) -> usize {
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0usize; b.len() + 1];
-    for (i, ca) in a.chars().enumerate() {
+    for (i, &ca) in a.iter().enumerate() {
         cur[0] = i + 1;
         for (j, &cb) in b.iter().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
         }
         core::mem::swap(&mut prev, &mut cur);
     }
@@ -1257,12 +1578,23 @@ fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if budget == 0 {
         return None;
     }
+    let w: Vec<char> = word.chars().collect();
     candidates
         .iter()
-        .map(|&c| (levenshtein(word, c), c))
+        .map(|&c| (levenshtein(&w, &c.chars().collect::<Vec<char>>()), c))
         .filter(|&(d, _)| d <= budget)
         .min_by_key(|&(d, _)| d)
         .map(|(_, c)| c)
+}
+
+/// `" — did you mean `x`?"` for the nearest candidate to `word`, or empty when
+/// none is close enough. The single spelling of the suggestion suffix, shared by
+/// every "unknown name" diagnostic (values, sets, …).
+fn did_you_mean(word: &str, candidates: &[&str]) -> String {
+    match nearest(word, candidates) {
+        Some(s) => alloc::format!(" — did you mean `{s}`?"),
+        None => String::new(),
+    }
 }
 
 /// Lower parsed, located literals to key-based [`RawLit`]s (drops spans),
@@ -1324,7 +1656,12 @@ fn canonical_body(
     ctx: &DomainCtx,
 ) -> Result<String, CompileError> {
     let mut s = String::new();
-    let _ = write!(s, "{}|{}|", if is_rule { "RULE" } else { "PREMISE" }, name);
+    let _ = write!(
+        s,
+        "{}|{}|",
+        if is_rule { kw::RULE } else { kw::PREMISE },
+        name
+    );
     match body {
         Body::List { op, atoms } => {
             let _ = write!(s, "LIST|{}|", list_kind(*op));
@@ -1792,7 +2129,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "math.vrf",
-            "DOMAIN math\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r"
+        DOMAIN math
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        ",
         );
         r.add("physics.vrf", "DOMAIN physics\nIMPORT \"math.vrf\"\n");
         r.add("main.vrf", "DOMAIN main\nIMPORT \"physics.vrf\"\n");
@@ -1895,7 +2238,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "b.vrf",
-            "DOMAIN b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r"
+        DOMAIN b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        ",
         );
         r.add("c.vrf", "DOMAIN c\nIMPORT \"b.vrf\"\n");
         r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\nIMPORT \"c.vrf\"\n");
@@ -2003,7 +2352,13 @@ mod tests {
         r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
         r.add(
             "main.vrf",
-            "DOMAIN main\nIMPORT \"physics.vrf\"\nPREMISE p:\n    WHEN physics.Motor over_100\n    THEN x ok\n",
+            r#"
+        DOMAIN main
+        IMPORT "physics.vrf"
+        PREMISE p:
+            WHEN physics.Motor over_100
+            THEN x ok
+        "#,
         );
         let c = compile("main.vrf", &r).unwrap();
         assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
@@ -2205,8 +2560,14 @@ mod tests {
 
     // --- closed-world: ONEOF closes its variable's value set -----------------
 
-    /// A `ONEOF` body declaring three values of `resolved is …`.
-    const ONEOF_RESOLVED: &str = "PREMISE pick:\n    ONEOF\n        resolved is censored\n        resolved is censored_mtp\n        resolved is uncensored\n";
+    /// A `ONEOF` body declaring three values of `resolved is …`. Flush-left so it
+    /// concatenates cleanly in front of an appended line (CAPSTONE-style const).
+    const ONEOF_RESOLVED: &str = r"PREMISE pick:
+    ONEOF
+        resolved is censored
+        resolved is censored_mtp
+        resolved is uncensored
+";
 
     #[test]
     fn value_outside_oneof_is_rejected() {
@@ -2261,7 +2622,11 @@ mod tests {
     fn out_of_set_value_inside_a_premise_is_caught() {
         // Closed-world covers references anywhere — not just FACTs.
         let src = alloc::format!(
-            "{ONEOF_RESOLVED}PREMISE p:\n    WHEN resolved is censoredmtp\n    THEN x done\n"
+            r"{ONEOF_RESOLVED}
+            PREMISE p:
+                WHEN resolved is censoredmtp
+                THEN x done
+        "
         );
         assert!(matches!(
             cs(&src).unwrap_err(),
@@ -2272,7 +2637,11 @@ mod tests {
     #[test]
     fn out_of_set_value_inside_a_rule_is_caught() {
         let src = alloc::format!(
-            "{ONEOF_RESOLVED}RULE r:\n    WHEN x go\n    THEN resolved is censoredmtp\n"
+            r"{ONEOF_RESOLVED}
+            RULE r:
+                WHEN x go
+                THEN resolved is censoredmtp
+        "
         );
         assert!(matches!(
             cs(&src).unwrap_err(),
@@ -2284,7 +2653,13 @@ mod tests {
     fn binary_atoms_in_a_oneof_do_not_close_anything() {
         // `alice cooks` / `alice cleans` have no object slot, so there is no value
         // set to violate — a later `alice bakes` is just another atom, not an error.
-        let src = "PREMISE chores:\n    ONEOF\n        alice cooks\n        alice cleans\nFACT alice bakes\n";
+        let src = r"
+        PREMISE chores:
+            ONEOF
+                alice cooks
+                alice cleans
+        FACT alice bakes
+        ";
         assert!(cs(src).is_ok());
     }
 
@@ -2298,7 +2673,17 @@ mod tests {
     #[test]
     fn two_oneofs_union_their_declared_values() {
         // A value declared by either ONEOF for the same variable is legal.
-        let src = "PREMISE a:\n    ONEOF\n        v is one\n        v is two\nPREMISE b:\n    ONEOF\n        v is two\n        v is three\nFACT v is three\n";
+        let src = r"
+        PREMISE a:
+            ONEOF
+                v is one
+                v is two
+        PREMISE b:
+            ONEOF
+                v is two
+                v is three
+        FACT v is three
+        ";
         assert!(cs(src).is_ok());
     }
 
@@ -2321,7 +2706,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "physics.vrf",
-            "DOMAIN physics\nPREMISE g:\n    ONEOF\n        Motor speed slow\n        Motor speed fast\n",
+            r"
+        DOMAIN physics
+        PREMISE g:
+            ONEOF
+                Motor speed slow
+                Motor speed fast
+        ",
         );
         r.add(
             "main.vrf",
@@ -2341,7 +2732,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "a.vrf",
-            "DOMAIN a\nPREMISE s:\n    ONEOF\n        state is open\n        state is closed\n",
+            r"
+        DOMAIN a
+        PREMISE s:
+            ONEOF
+                state is open
+                state is closed
+        ",
         );
         r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\nFACT state is shut\n");
         // `state is shut` is in domain b, which has no ONEOF → open, so it compiles.
@@ -2350,11 +2747,19 @@ mod tests {
 
     #[test]
     fn levenshtein_basics() {
-        assert_eq!(levenshtein("", ""), 0);
-        assert_eq!(levenshtein("abc", "abc"), 0);
-        assert_eq!(levenshtein("censoredmtp", "censored_mtp"), 1);
-        assert_eq!(levenshtein("norml", "normal"), 1);
-        assert_eq!(levenshtein("kitten", "sitting"), 3);
+        // The canonical distance works on char slices; spell the string cases
+        // through a tiny adapter so the table below reads as before.
+        fn lev(a: &str, b: &str) -> usize {
+            levenshtein(
+                &a.chars().collect::<Vec<char>>(),
+                &b.chars().collect::<Vec<char>>(),
+            )
+        }
+        assert_eq!(lev("", ""), 0);
+        assert_eq!(lev("abc", "abc"), 0);
+        assert_eq!(lev("censoredmtp", "censored_mtp"), 1);
+        assert_eq!(lev("norml", "normal"), 1);
+        assert_eq!(lev("kitten", "sitting"), 3);
     }
 
     #[test]
@@ -2382,12 +2787,190 @@ mod tests {
         // The closed-world error does not depend on the suggestion: an out-of-set
         // single-character value is rejected exactly, only the `did you mean` is
         // suppressed.
-        let src =
-            "PREMISE pick:\n    ONEOF\n        roll is 一\n        roll is 二\nFACT roll is 七\n";
+        let src = r"
+        PREMISE pick:
+            ONEOF
+                roll is 一
+                roll is 二
+        FACT roll is 七
+        ";
         let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
             panic!("expected UnknownValue");
         };
         assert_eq!(e.value, "七");
         assert_eq!(e.suggestion, "");
+    }
+
+    // --- FOR EACH / SET (bounded quantification, Phase 1) ------------------
+
+    #[test]
+    fn for_each_grounds_once_per_element() {
+        // A ONEOF body over a 2-element set: each element yields one pairwise
+        // clause + one at-least-one clause = 2 clauses; 2 elements → 4 clauses,
+        // and 4 distinct grounded atoms (a/b × slot m/n).
+        let src = r"
+        SET xs
+            a
+            b
+        PREMISE slot FOR EACH t IN xs:
+            ONEOF
+                t slot m
+                t slot n
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 4);
+        for s in ["a", "b"] {
+            for o in ["m", "n"] {
+                assert!(c.atoms.contains(&key(s, "slot", Some(o))));
+            }
+        }
+    }
+
+    #[test]
+    fn for_each_in_a_rule_derives_per_element() {
+        // A quantified RULE grounds to one rule per element.
+        let src = r"
+        SET xs
+            a
+            b
+        RULE r FOR EACH t IN xs:
+            WHEN t on
+            THEN t hot
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.rules.len(), 2);
+    }
+
+    #[test]
+    fn for_each_over_an_undeclared_set_is_rejected() {
+        let src = r"
+        SET tasks
+            a
+        PREMISE p FOR EACH t IN taske:
+            ONEOF
+                t s x
+                t s y
+        ";
+        let CompileError::UnknownSet {
+            set, suggestion, ..
+        } = cs(src).unwrap_err()
+        else {
+            panic!("expected UnknownSet");
+        };
+        assert_eq!(set, "taske");
+        assert_eq!(suggestion, " — did you mean `tasks`?");
+    }
+
+    #[test]
+    fn for_each_closes_each_grounded_variable() {
+        // ONEOF inside FOR EACH closes the variable per element, so an out-of-set
+        // value on a grounded subject is a hard error (closed-world after subst).
+        let src = r"
+        SET xs
+            a
+            b
+        PREMISE c FOR EACH t IN xs:
+            ONEOF
+                t color red
+                t color blue
+        FACT a color gren
+        ";
+        let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
+            panic!("expected UnknownValue from the grounded ONEOF");
+        };
+        assert_eq!(e.value, "gren");
+        assert_eq!(e.subject, "a");
+    }
+
+    #[test]
+    fn nested_for_each_is_a_parse_error() {
+        // The structural guarantee: a second FOR EACH is unrepresentable — the
+        // header carries exactly one, so nesting fails to parse (no domain
+        // product can ever be written).
+        let src = r"
+        SET xs
+            a
+        PREMISE p FOR EACH x IN xs FOR EACH y IN xs:
+            ONEOF
+                x r y
+                x s y
+        ";
+        assert!(matches!(cs(src), Err(CompileError::Parse(_))));
+    }
+
+    #[test]
+    fn relation_for_each_grounds_per_fact_pair() {
+        // Two declared edges → the body is instantiated once per edge (two
+        // pairwise clauses), and both edge atoms are recorded as consumed so the
+        // ORPHAN lint will not flag them.
+        let src = r"
+        FACT a linked b
+        FACT b linked c
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 2);
+        assert_eq!(c.consumed.len(), 2);
+        assert!(c.consumed.contains(&id(&c, &key("a", "linked", Some("b")))));
+    }
+
+    #[test]
+    fn relation_for_each_over_no_edges_is_inert() {
+        // A relation with no matching facts grounds to nothing (vacuous), not an
+        // error — unlike an undeclared SET.
+        let src = r"
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 0);
+        assert!(c.consumed.is_empty());
+    }
+
+    #[test]
+    fn close_transitive_extends_the_relation() {
+        // a->b, b->c; CLOSE adds a->c, so a relation FOR EACH grounds over all
+        // three pairs (without CLOSE it would be two).
+        let src = r"
+        FACT a r b
+        FACT b r c
+        CLOSE r TRANSITIVE
+        PREMISE p FOR EACH x r y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 3);
+    }
+
+    #[test]
+    fn close_transitive_rejects_a_cycle() {
+        let src = r"
+        FACT a r b
+        FACT b r a
+        CLOSE r TRANSITIVE
+        ";
+        let CompileError::CyclicRelation { relation, .. } = cs(src).unwrap_err() else {
+            panic!("expected CyclicRelation");
+        };
+        assert_eq!(relation, "r");
+    }
+
+    #[test]
+    fn grounding_count_is_linear_in_the_set() {
+        // No domain product: N elements → exactly N groundings (here N clauses,
+        // one at-least-one per element), never N².
+        let elems: alloc::string::String = (0..20).map(|i| alloc::format!("    e{i}\n")).collect();
+        let src = alloc::format!(
+            "SET xs\n{elems}PREMISE p FOR EACH t IN xs:\n    ATLEAST\n        t a\n        t b\n"
+        );
+        let c = cs(&src).unwrap();
+        assert_eq!(c.clauses.len(), 20);
     }
 }

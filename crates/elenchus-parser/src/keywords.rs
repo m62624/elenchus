@@ -29,6 +29,12 @@ pub mod kw {
     pub const FORBIDS: &str = "FORBIDS";
     pub const ONEOF: &str = "ONEOF";
     pub const ATLEAST: &str = "ATLEAST";
+    pub const SET: &str = "SET";
+    pub const FOR: &str = "FOR";
+    pub const EACH: &str = "EACH";
+    pub const IN: &str = "IN";
+    pub const CLOSE: &str = "CLOSE";
+    pub const TRANSITIVE: &str = "TRANSITIVE";
 }
 
 /// The correct-syntax reference for one keyword: its canonical written form (with
@@ -133,6 +139,24 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::SET,
+        top_level: true,
+        card: card(
+            "SET <name>  then one element per line (>= 1)",
+            "declare a finite set of elements to quantify a PREMISE/RULE over (FOR EACH ... IN)",
+            "SET tasks\n    deploy\n    backup",
+        ),
+    },
+    Keyword {
+        text: kw::CLOSE,
+        top_level: true,
+        card: card(
+            "CLOSE <relation> TRANSITIVE",
+            "make a relation transitive at compile time (a->b, b->c implies a->c); a cycle is an error",
+            "CLOSE depends_on TRANSITIVE",
+        ),
+    },
+    Keyword {
         text: kw::IMPORT,
         top_level: true,
         card: card(
@@ -148,6 +172,33 @@ pub const KEYWORDS: &[Keyword] = &[
             "IMPORT \"<path>\" AS <alias>",
             "give the imported domain a local name to reference it by",
             "IMPORT \"physics.vrf\" AS phys",
+        ),
+    },
+    Keyword {
+        text: kw::FOR,
+        top_level: false,
+        card: card(
+            "PREMISE <name> FOR EACH <binder> IN <set>:  then the usual body",
+            "quantify a PREMISE/RULE: instantiate its body once per element of <set>, binding <binder>",
+            "PREMISE colored FOR EACH n IN nodes:\n    ONEOF\n        n is red\n        n is blue",
+        ),
+    },
+    Keyword {
+        text: kw::EACH,
+        top_level: false,
+        card: card(
+            "FOR EACH <binder> IN <set>",
+            "part of the FOR EACH ... IN quantifier on a PREMISE/RULE header",
+            "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::IN,
+        top_level: false,
+        card: card(
+            "FOR EACH <binder> IN <set>",
+            "names the declared SET a FOR EACH quantifier ranges over",
+            "FOR EACH t IN tasks",
         ),
     },
     Keyword {
@@ -231,6 +282,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "CHECK BIDIRECTIONAL",
         ),
     },
+    Keyword {
+        text: kw::TRANSITIVE,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> TRANSITIVE",
+            "the closure kind for CLOSE: a->b and b->c implies a->c",
+            "CLOSE depends_on TRANSITIVE",
+        ),
+    },
 ];
 
 /// Whether `word` is a reserved keyword.
@@ -252,6 +312,25 @@ pub fn card_for(keyword: &str) -> Option<&'static Card> {
 /// as the menu when an error is not tied to one specific keyword.
 pub fn top_level_forms() -> impl Iterator<Item = &'static Keyword> {
     KEYWORDS.iter().filter(|k| k.top_level)
+}
+
+/// The top-level keywords joined as an English menu — `"A, B, …, or Z"`, in
+/// teaching order. The single source for the "expected a statement" diagnostic,
+/// so that menu can never drift from [`KEYWORDS`] as keywords are added.
+pub fn top_level_menu() -> alloc::string::String {
+    use alloc::string::String;
+    let words: alloc::vec::Vec<&'static str> = top_level_forms().map(|k| k.text).collect();
+    let mut out = String::new();
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+            if i + 1 == words.len() {
+                out.push_str("or ");
+            }
+        }
+        out.push_str(w);
+    }
+    out
 }
 
 /// The first keyword named anywhere in `message` (selects its card in a

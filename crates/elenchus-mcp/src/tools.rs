@@ -7,15 +7,31 @@ use serde_json::{Value, json};
 
 use crate::{messages, rpc};
 
+/// The tool names, shared by each definition and the `tools/call` dispatcher so
+/// the advertised name and the routed name can never drift apart.
+const CHECK: &str = "elenchus_check";
+const VERSION: &str = "elenchus_version";
+const ABOUT: &str = "elenchus_about";
+
 /// Every tool definition, in the order `tools/list` advertises them.
 pub fn definitions() -> Vec<Value> {
     vec![check_def(), version_def(), about_def()]
 }
 
+/// A no-argument tool definition: a name, a description, and an empty input
+/// schema. Shared by the tools that take no parameters.
+fn simple_def(name: &str, description: &str) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
 /// `elenchus_check` — run a `.vrf` program through the engine.
 fn check_def() -> Value {
     json!({
-        "name": "elenchus_check",
+        "name": CHECK,
         "description": messages::CHECK_TOOL,
         "inputSchema": {
             "type": "object",
@@ -46,21 +62,13 @@ fn check_def() -> Value {
 /// read the running engine version (it cannot see `initialize`'s
 /// `serverInfo.version`) and compare it to the version its skill targets.
 fn version_def() -> Value {
-    json!({
-        "name": "elenchus_version",
-        "description": messages::VERSION_TOOL,
-        "inputSchema": { "type": "object", "properties": {} }
-    })
+    simple_def(VERSION, messages::VERSION_TOOL)
 }
 
 /// `elenchus_about` — a pointer to the companion skill for agents that reached
 /// this server without it. No version here; that is `elenchus_version`.
 fn about_def() -> Value {
-    json!({
-        "name": "elenchus_about",
-        "description": messages::ABOUT_TOOL,
-        "inputSchema": { "type": "object", "properties": {} }
-    })
+    simple_def(ABOUT, messages::ABOUT_TOOL)
 }
 
 /// Execute a `tools/call`: route by tool name, then hand off. A missing `params`
@@ -72,11 +80,9 @@ pub fn call(id: Value, params: Option<&Value>) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
 
     match name {
-        "elenchus_version" => {
-            rpc::tool_result(id, format!("elenchus {}", env!("CARGO_PKG_VERSION")), false)
-        }
-        "elenchus_about" => rpc::tool_result(id, messages::ABOUT_TOOL.to_string(), false),
-        "elenchus_check" => check(id, params.get("arguments")),
+        VERSION => rpc::tool_result(id, format!("elenchus {}", env!("CARGO_PKG_VERSION")), false),
+        ABOUT => rpc::tool_result(id, messages::ABOUT_TOOL.to_string(), false),
+        CHECK => check(id, params.get("arguments")),
         other => rpc::tool_result(id, format!("unknown tool: {other}"), true),
     }
 }

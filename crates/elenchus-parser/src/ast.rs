@@ -76,6 +76,44 @@ pub enum Conn {
     Or,
 }
 
+/// A `FOR EACH` quantifier on a `PREMISE`/`RULE` header. It instantiates the
+/// premise's whole body **once per element**, substituting the binder. The
+/// quantifier lives in the *header* (not the body), so there is exactly one per
+/// statement and the body grammar is untouched — a second `FOR EACH` is
+/// structurally unrepresentable, which is what bounds the desugar to a linear
+/// number of clauses (no domain products).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Quant<'a> {
+    /// `FOR EACH <binder> IN <set>` — range over the elements of a declared
+    /// [`Statement::Set`]. The binder is the name the body's atoms refer to.
+    InSet {
+        /// The name bound inside the body (substituted per element).
+        binder: Located<'a, &'a str>,
+        /// The declared set this ranges over.
+        set: Located<'a, &'a str>,
+    },
+    /// `FOR EACH <left> <predicate> <right>` — range over the declared `FACT`
+    /// pairs of that relation (e.g. every `FACT a linked b`), binding `left` to a
+    /// pair's subject and `right` to its object. This is the channel for
+    /// multi-element constraints (graphs, dependencies): the pair is *pinned by
+    /// data*, so the desugar is linear in the number of facts, never a product.
+    Relation {
+        /// Bound to each matching fact's subject.
+        left: Located<'a, &'a str>,
+        /// The relation predicate whose facts are ranged over.
+        predicate: Located<'a, &'a str>,
+        /// Bound to each matching fact's object.
+        right: Located<'a, &'a str>,
+    },
+}
+
+/// Which closure a `CLOSE` statement applies to a relation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseKind {
+    /// `TRANSITIVE` — add `a→c` whenever `a→b` and `b→c` hold (requires a DAG).
+    Transitive,
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -126,17 +164,39 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
-    /// `PREMISE <name>: ...` — a checked first principle.
+    /// `SET <name>` then one element identifier per line — declare a finite set
+    /// to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
+    Set {
+        /// The set's name (referenced by `FOR EACH … IN <name>`).
+        name: Located<'a, &'a str>,
+        /// Its elements, one per line (at least one).
+        elements: Vec<Located<'a, &'a str>>,
+    },
+    /// `CLOSE <relation> TRANSITIVE` — close a relation's `FACT` pairs under the
+    /// given kind at compile time (a graph operation, no solver cost). A cycle is
+    /// a compile error.
+    Close {
+        /// The relation predicate to close (e.g. `depends_on`).
+        relation: Located<'a, &'a str>,
+        /// Which closure to apply.
+        kind: CloseKind,
+    },
+    /// `PREMISE <name> [FOR EACH …]: ...` — a checked first principle, optionally
+    /// quantified over a declared set.
     Premise {
         /// The premise's label (a per-source name, not a global identifier).
         name: Located<'a, &'a str>,
+        /// An optional `FOR EACH … IN …` header quantifier (at most one).
+        quant: Option<Quant<'a>>,
         /// The constraint itself: a list body or a `WHEN … THEN` implication.
         body: Body<'a>,
     },
-    /// `RULE <name>: ...` — a fact-producing inference rule.
+    /// `RULE <name> [FOR EACH …]: ...` — a fact-producing inference rule.
     Rule {
         /// The rule's label.
         name: Located<'a, &'a str>,
+        /// An optional `FOR EACH … IN …` header quantifier (at most one).
+        quant: Option<Quant<'a>>,
         /// Always an implication body (the grammar forbids a list body here).
         body: Body<'a>,
     },
