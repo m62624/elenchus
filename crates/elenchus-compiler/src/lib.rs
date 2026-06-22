@@ -469,10 +469,7 @@ impl Compiler {
     /// without a [`Resolver`]), so a single source may only reference its own
     /// domain. Use [`compile`] for cross-domain references.
     pub fn add_source(&mut self, source: &str, src: &str) -> Result<(), CompileError> {
-        let program = elenchus_parser::parse(src).map_err(|mut diag| {
-            diag.set_file(source);
-            CompileError::Parse(diag)
-        })?;
+        let program = parse_tagged(source, src)?;
         let domain = extract_domain(&program, source)?;
         let mut aliases = BTreeMap::new();
         aliases.insert(domain.clone(), domain.clone());
@@ -554,10 +551,7 @@ impl Compiler {
 
     /// Compile one already-resolved file's statements under its domain context.
     fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
-        let program = elenchus_parser::parse(&file.content).map_err(|mut diag| {
-            diag.set_file(&file.path);
-            CompileError::Parse(diag)
-        })?;
+        let program = parse_tagged(&file.path, &file.content)?;
         self.collect_decls(&program);
         self.apply_closures(&program, &file.path)?;
         for stmt in &program.statements {
@@ -1266,10 +1260,7 @@ fn resolve_graph<R: Resolver>(
                 if discovered.contains_key(&hash) {
                     continue; // already fully resolved by another path — dedup
                 }
-                let program = elenchus_parser::parse(&content).map_err(|mut diag| {
-                    diag.set_file(&path);
-                    CompileError::Parse(diag)
-                })?;
+                let program = parse_tagged(&path, &content)?;
                 let domain = extract_domain(&program, &path)?;
                 let mut edges = Vec::new();
                 let mut used_prefixes = BTreeSet::new();
@@ -1397,6 +1388,19 @@ fn quant_sig(q: &Quant) -> String {
 
 /// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
 /// declared set name is close enough.
+/// Parse one source, tagging any syntax [`Diagnostics`] with its file label so a
+/// `CompileError::Parse` names the right file. The single spelling of "parse, and
+/// on failure attach the file" — shared by the inline, resolved, and import paths.
+fn parse_tagged<'a>(
+    file: &str,
+    content: &'a str,
+) -> Result<elenchus_parser::Program<'a>, CompileError> {
+    elenchus_parser::parse(content).map_err(|mut diag| {
+        diag.set_file(file);
+        CompileError::Parse(diag)
+    })
+}
+
 fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
     let names: Vec<&str> = sets.keys().map(String::as_str).collect();
     did_you_mean(set, &names)
