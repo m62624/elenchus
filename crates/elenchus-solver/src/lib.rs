@@ -1662,7 +1662,14 @@ mod tests {
     #[test]
     fn exclusive_with_unknown_is_consistent_not_warning() {
         // flying TRUE, swimming UNKNOWN — at most one can hold, no conflict, no warning.
-        let r = vs("FACT A has flying\nPREMISE e:\n    EXCLUSIVE\n        A has flying\n        A has swimming\n").unwrap();
+        let r = vs(r"
+        FACT A has flying
+        PREMISE e:
+            EXCLUSIVE
+                A has flying
+                A has swimming
+        ")
+        .unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert!(r.warnings.is_empty());
     }
@@ -1686,8 +1693,13 @@ mod tests {
     fn warning_hint_points_at_rule_when_atom_is_a_free_input() {
         // `A has wing` is nothing's consequent: it can only be set by a FACT, or by
         // turning a PREMISE meant to establish it into a RULE. The hint says so.
-        let r = vs("FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n")
-            .unwrap();
+        let r = vs(r"
+        FACT A has flying
+        PREMISE w:
+            WHEN A has flying
+            THEN A has wing
+        ")
+        .unwrap();
         let hint = r.warnings[0].hint.as_deref().unwrap();
         assert!(hint.contains("make that PREMISE a RULE"), "{hint}");
         assert!(hint.contains("t.A has wing"), "{hint}");
@@ -1697,11 +1709,15 @@ mod tests {
     fn warning_hint_points_at_antecedent_when_a_rule_could_derive_it() {
         // `c ready` IS a RULE consequent, but the rule has not fired (its `x trigger`
         // is UNKNOWN). The blocking premise's hint sends you to the rule's input.
-        let r = vs(concat!(
-            "RULE d:\n    WHEN x trigger\n    THEN c ready\n",
-            "FACT go now\n",
-            "PREMISE p:\n    WHEN go now\n    THEN c ready\n",
-        ))
+        let r = vs(r"
+        RULE d:
+            WHEN x trigger
+            THEN c ready
+        FACT go now
+        PREMISE p:
+            WHEN go now
+            THEN c ready
+        ")
         .unwrap();
         assert_eq!(r.status, Status::Warning);
         let hint = r.warnings[0].hint.as_deref().unwrap();
@@ -1718,13 +1734,19 @@ mod tests {
         // → one identical fix, deduped; p3 by a different atom → its own fix. So:
         // 3 warnings, but only 2 distinct `fix:` lines in the human report (while
         // every warning still carries its hint in the structured data / JSON).
-        let r = vs(concat!(
-            "FACT a on\n",
-            "FACT b on\n",
-            "PREMISE p1:\n    WHEN a on\n    THEN gate one_ok\n",
-            "PREMISE p2:\n    WHEN b on\n    THEN gate one_ok\n",
-            "PREMISE p3:\n    WHEN a on\n    THEN gate two_ok\n",
-        ))
+        let r = vs(r"
+        FACT a on
+        FACT b on
+        PREMISE p1:
+            WHEN a on
+            THEN gate one_ok
+        PREMISE p2:
+            WHEN b on
+            THEN gate one_ok
+        PREMISE p3:
+            WHEN a on
+            THEN gate two_ok
+        ")
         .unwrap();
         assert_eq!(r.warnings.len(), 3);
         // Every warning keeps its hint in the structured form.
@@ -1746,14 +1768,28 @@ mod tests {
 
     #[test]
     fn implication_satisfied_is_consistent() {
-        let r = vs("FACT A has flying\nFACT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = vs(r"
+        FACT A has flying
+        FACT A has wing
+        PREMISE w:
+            WHEN A has flying
+            THEN A has wing
+        ")
+        .unwrap();
         assert_eq!(r.status, Status::Consistent);
     }
 
     #[test]
     fn implication_violated_is_conflict() {
         // antecedent TRUE, consequent FALSE → CONFLICT.
-        let r = vs("FACT A has flying\nNOT A has wing\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n").unwrap();
+        let r = vs(r"
+        FACT A has flying
+        NOT A has wing
+        PREMISE w:
+            WHEN A has flying
+            THEN A has wing
+        ")
+        .unwrap();
         assert_eq!(r.status, Status::Conflict);
     }
 
@@ -1774,7 +1810,14 @@ mod tests {
     #[test]
     fn rule_derivation_contradiction_is_conflict() {
         // rule derives `A needs oxygen` TRUE, but it's asserted FALSE.
-        let r = vs("FACT A has flying\nNOT A needs oxygen\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\n").unwrap();
+        let r = vs(r"
+        FACT A has flying
+        NOT A needs oxygen
+        RULE o:
+            WHEN A has flying
+            THEN A needs oxygen
+        ")
+        .unwrap();
         assert_eq!(r.status, Status::Conflict);
     }
 
@@ -2008,9 +2051,13 @@ mod tests {
     #[test]
     fn assume_drives_a_rule_like_a_fact() {
         // A soft assumption fires forward chaining just like a hard fact.
-        let r = vs(
-            "ASSUME A has flying\nRULE o:\n    WHEN A has flying\n    THEN A needs oxygen\nCHECK A\n",
-        )
+        let r = vs(r"
+        ASSUME A has flying
+        RULE o:
+            WHEN A has flying
+            THEN A needs oxygen
+        CHECK A
+        ")
         .unwrap();
         assert_eq!(r.status, Status::Consistent);
         assert_eq!(r.derived.len(), 1);
@@ -2183,14 +2230,28 @@ mod tests {
     #[test]
     fn fact_used_by_a_premise_is_not_orphan() {
         // `x a` feeds an EXCLUSIVE constraint → referenced → not an orphan.
-        let r =
-            vs("FACT x a\nPREMISE p:\n    EXCLUSIVE\n        x a\n        x b\nCHECK\n").unwrap();
+        let r = vs(r"
+        FACT x a
+        PREMISE p:
+            EXCLUSIVE
+                x a
+                x b
+        CHECK
+        ")
+        .unwrap();
         assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }
 
     #[test]
     fn fact_used_by_a_rule_antecedent_is_not_orphan() {
-        let r = vs("FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nCHECK\n").unwrap();
+        let r = vs(r"
+        FACT x a
+        RULE r:
+            WHEN x a
+            THEN x c
+        CHECK
+        ")
+        .unwrap();
         assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }
 
@@ -2242,9 +2303,16 @@ mod tests {
     fn a_derived_atom_does_not_make_its_consumer_orphan() {
         // `x c` is derived by the rule and then referenced by the premise; the
         // seeding fact `x a` is referenced by the rule. Nothing is orphan.
-        let r = vs(
-            "FACT x a\nRULE r:\n    WHEN x a\n    THEN x c\nPREMISE p:\n    WHEN x c\n    THEN x d\nCHECK\n",
-        )
+        let r = vs(r"
+        FACT x a
+        RULE r:
+            WHEN x a
+            THEN x c
+        PREMISE p:
+            WHEN x c
+            THEN x d
+        CHECK
+        ")
         .unwrap();
         assert!(r.orphans.is_empty(), "{:?}", r.orphans);
     }

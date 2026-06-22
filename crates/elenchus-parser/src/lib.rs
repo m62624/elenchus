@@ -704,7 +704,13 @@ FACT c d
 
     #[test]
     fn set_declaration_parses() {
-        let p = prog("SET tasks\n    deploy\n    backup\n");
+        let p = prog(
+            r"
+        SET tasks
+            deploy
+            backup
+        ",
+        );
         match &p.statements[0] {
             Statement::Set { name, elements } => {
                 assert_eq!(name.data, "tasks");
@@ -729,7 +735,14 @@ FACT c d
 
     #[test]
     fn for_each_header_parses_into_a_quant() {
-        let p = prog("PREMISE p FOR EACH t IN tasks:\n    ONEOF\n        t s a\n        t s b\n");
+        let p = prog(
+            r"
+        PREMISE p FOR EACH t IN tasks:
+            ONEOF
+                t s a
+                t s b
+        ",
+        );
         match &p.statements[0] {
             Statement::Premise {
                 quant: Some(Quant::InSet { binder, set }),
@@ -744,7 +757,14 @@ FACT c d
 
     #[test]
     fn for_each_relation_header_parses_into_a_quant() {
-        let p = prog("PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x a\n        y a\n");
+        let p = prog(
+            r"
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x a
+                y a
+        ",
+        );
         match &p.statements[0] {
             Statement::Premise {
                 quant:
@@ -765,7 +785,14 @@ FACT c d
 
     #[test]
     fn an_unquantified_premise_has_no_quant() {
-        let p = prog("PREMISE p:\n    ONEOF\n        x s a\n        x s b\n");
+        let p = prog(
+            r"
+        PREMISE p:
+            ONEOF
+                x s a
+                x s b
+        ",
+        );
         assert!(matches!(
             &p.statements[0],
             Statement::Premise { quant: None, .. }
@@ -776,7 +803,15 @@ FACT c d
     fn a_malformed_for_each_is_a_committed_error() {
         // FOR without EACH commits (FOR is reserved, only a quantifier here).
         assert!(
-            parse("PREMISE p FOR t IN tasks:\n    ONEOF\n        t s a\n        t s b\n").is_err()
+            parse(
+                r"
+        PREMISE p FOR t IN tasks:
+            ONEOF
+                t s a
+                t s b
+        "
+            )
+            .is_err()
         );
     }
 }

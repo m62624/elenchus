@@ -2118,7 +2118,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "math.vrf",
-            "DOMAIN math\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r"
+        DOMAIN math
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        ",
         );
         r.add("physics.vrf", "DOMAIN physics\nIMPORT \"math.vrf\"\n");
         r.add("main.vrf", "DOMAIN main\nIMPORT \"physics.vrf\"\n");
@@ -2221,7 +2227,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "b.vrf",
-            "DOMAIN b\nPREMISE e:\n    EXCLUSIVE\n        x a\n        x b\n",
+            r"
+        DOMAIN b
+        PREMISE e:
+            EXCLUSIVE
+                x a
+                x b
+        ",
         );
         r.add("c.vrf", "DOMAIN c\nIMPORT \"b.vrf\"\n");
         r.add("a.vrf", "DOMAIN a\nIMPORT \"b.vrf\"\nIMPORT \"c.vrf\"\n");
@@ -2329,7 +2341,13 @@ mod tests {
         r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
         r.add(
             "main.vrf",
-            "DOMAIN main\nIMPORT \"physics.vrf\"\nPREMISE p:\n    WHEN physics.Motor over_100\n    THEN x ok\n",
+            r#"
+        DOMAIN main
+        IMPORT "physics.vrf"
+        PREMISE p:
+            WHEN physics.Motor over_100
+            THEN x ok
+        "#,
         );
         let c = compile("main.vrf", &r).unwrap();
         assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
@@ -2531,8 +2549,14 @@ mod tests {
 
     // --- closed-world: ONEOF closes its variable's value set -----------------
 
-    /// A `ONEOF` body declaring three values of `resolved is …`.
-    const ONEOF_RESOLVED: &str = "PREMISE pick:\n    ONEOF\n        resolved is censored\n        resolved is censored_mtp\n        resolved is uncensored\n";
+    /// A `ONEOF` body declaring three values of `resolved is …`. Flush-left so it
+    /// concatenates cleanly in front of an appended line (CAPSTONE-style const).
+    const ONEOF_RESOLVED: &str = r"PREMISE pick:
+    ONEOF
+        resolved is censored
+        resolved is censored_mtp
+        resolved is uncensored
+";
 
     #[test]
     fn value_outside_oneof_is_rejected() {
@@ -2587,7 +2611,11 @@ mod tests {
     fn out_of_set_value_inside_a_premise_is_caught() {
         // Closed-world covers references anywhere — not just FACTs.
         let src = alloc::format!(
-            "{ONEOF_RESOLVED}PREMISE p:\n    WHEN resolved is censoredmtp\n    THEN x done\n"
+            r"{ONEOF_RESOLVED}
+            PREMISE p:
+                WHEN resolved is censoredmtp
+                THEN x done
+        "
         );
         assert!(matches!(
             cs(&src).unwrap_err(),
@@ -2598,7 +2626,11 @@ mod tests {
     #[test]
     fn out_of_set_value_inside_a_rule_is_caught() {
         let src = alloc::format!(
-            "{ONEOF_RESOLVED}RULE r:\n    WHEN x go\n    THEN resolved is censoredmtp\n"
+            r"{ONEOF_RESOLVED}
+            RULE r:
+                WHEN x go
+                THEN resolved is censoredmtp
+        "
         );
         assert!(matches!(
             cs(&src).unwrap_err(),
@@ -2610,7 +2642,13 @@ mod tests {
     fn binary_atoms_in_a_oneof_do_not_close_anything() {
         // `alice cooks` / `alice cleans` have no object slot, so there is no value
         // set to violate — a later `alice bakes` is just another atom, not an error.
-        let src = "PREMISE chores:\n    ONEOF\n        alice cooks\n        alice cleans\nFACT alice bakes\n";
+        let src = r"
+        PREMISE chores:
+            ONEOF
+                alice cooks
+                alice cleans
+        FACT alice bakes
+        ";
         assert!(cs(src).is_ok());
     }
 
@@ -2624,7 +2662,17 @@ mod tests {
     #[test]
     fn two_oneofs_union_their_declared_values() {
         // A value declared by either ONEOF for the same variable is legal.
-        let src = "PREMISE a:\n    ONEOF\n        v is one\n        v is two\nPREMISE b:\n    ONEOF\n        v is two\n        v is three\nFACT v is three\n";
+        let src = r"
+        PREMISE a:
+            ONEOF
+                v is one
+                v is two
+        PREMISE b:
+            ONEOF
+                v is two
+                v is three
+        FACT v is three
+        ";
         assert!(cs(src).is_ok());
     }
 
@@ -2647,7 +2695,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "physics.vrf",
-            "DOMAIN physics\nPREMISE g:\n    ONEOF\n        Motor speed slow\n        Motor speed fast\n",
+            r"
+        DOMAIN physics
+        PREMISE g:
+            ONEOF
+                Motor speed slow
+                Motor speed fast
+        ",
         );
         r.add(
             "main.vrf",
@@ -2667,7 +2721,13 @@ mod tests {
         let mut r = MemoryResolver::new();
         r.add(
             "a.vrf",
-            "DOMAIN a\nPREMISE s:\n    ONEOF\n        state is open\n        state is closed\n",
+            r"
+        DOMAIN a
+        PREMISE s:
+            ONEOF
+                state is open
+                state is closed
+        ",
         );
         r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\nFACT state is shut\n");
         // `state is shut` is in domain b, which has no ONEOF → open, so it compiles.
@@ -2708,8 +2768,13 @@ mod tests {
         // The closed-world error does not depend on the suggestion: an out-of-set
         // single-character value is rejected exactly, only the `did you mean` is
         // suppressed.
-        let src =
-            "PREMISE pick:\n    ONEOF\n        roll is 一\n        roll is 二\nFACT roll is 七\n";
+        let src = r"
+        PREMISE pick:
+            ONEOF
+                roll is 一
+                roll is 二
+        FACT roll is 七
+        ";
         let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
             panic!("expected UnknownValue");
         };
@@ -2724,8 +2789,15 @@ mod tests {
         // A ONEOF body over a 2-element set: each element yields one pairwise
         // clause + one at-least-one clause = 2 clauses; 2 elements → 4 clauses,
         // and 4 distinct grounded atoms (a/b × slot m/n).
-        let src = "SET xs\n    a\n    b\n\
-                   PREMISE slot FOR EACH t IN xs:\n    ONEOF\n        t slot m\n        t slot n\n";
+        let src = r"
+        SET xs
+            a
+            b
+        PREMISE slot FOR EACH t IN xs:
+            ONEOF
+                t slot m
+                t slot n
+        ";
         let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 4);
         for s in ["a", "b"] {
@@ -2738,16 +2810,28 @@ mod tests {
     #[test]
     fn for_each_in_a_rule_derives_per_element() {
         // A quantified RULE grounds to one rule per element.
-        let src = "SET xs\n    a\n    b\n\
-                   RULE r FOR EACH t IN xs:\n    WHEN t on\n    THEN t hot\n";
+        let src = r"
+        SET xs
+            a
+            b
+        RULE r FOR EACH t IN xs:
+            WHEN t on
+            THEN t hot
+        ";
         let c = cs(src).unwrap();
         assert_eq!(c.rules.len(), 2);
     }
 
     #[test]
     fn for_each_over_an_undeclared_set_is_rejected() {
-        let src = "SET tasks\n    a\n\
-                   PREMISE p FOR EACH t IN taske:\n    ONEOF\n        t s x\n        t s y\n";
+        let src = r"
+        SET tasks
+            a
+        PREMISE p FOR EACH t IN taske:
+            ONEOF
+                t s x
+                t s y
+        ";
         let CompileError::UnknownSet {
             set, suggestion, ..
         } = cs(src).unwrap_err()
@@ -2762,9 +2846,16 @@ mod tests {
     fn for_each_closes_each_grounded_variable() {
         // ONEOF inside FOR EACH closes the variable per element, so an out-of-set
         // value on a grounded subject is a hard error (closed-world after subst).
-        let src = "SET xs\n    a\n    b\n\
-                   PREMISE c FOR EACH t IN xs:\n    ONEOF\n        t color red\n        t color blue\n\
-                   FACT a color gren\n";
+        let src = r"
+        SET xs
+            a
+            b
+        PREMISE c FOR EACH t IN xs:
+            ONEOF
+                t color red
+                t color blue
+        FACT a color gren
+        ";
         let CompileError::UnknownValue(e) = cs(src).unwrap_err() else {
             panic!("expected UnknownValue from the grounded ONEOF");
         };
@@ -2777,8 +2868,14 @@ mod tests {
         // The structural guarantee: a second FOR EACH is unrepresentable — the
         // header carries exactly one, so nesting fails to parse (no domain
         // product can ever be written).
-        let src = "SET xs\n    a\n\
-                   PREMISE p FOR EACH x IN xs FOR EACH y IN xs:\n    ONEOF\n        x r y\n        x s y\n";
+        let src = r"
+        SET xs
+            a
+        PREMISE p FOR EACH x IN xs FOR EACH y IN xs:
+            ONEOF
+                x r y
+                x s y
+        ";
         assert!(matches!(cs(src), Err(CompileError::Parse(_))));
     }
 
@@ -2787,8 +2884,14 @@ mod tests {
         // Two declared edges → the body is instantiated once per edge (two
         // pairwise clauses), and both edge atoms are recorded as consumed so the
         // ORPHAN lint will not flag them.
-        let src = "FACT a linked b\nFACT b linked c\n\
-                   PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let src = r"
+        FACT a linked b
+        FACT b linked c
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
         let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 2);
         assert_eq!(c.consumed.len(), 2);
@@ -2799,8 +2902,12 @@ mod tests {
     fn relation_for_each_over_no_edges_is_inert() {
         // A relation with no matching facts grounds to nothing (vacuous), not an
         // error — unlike an undeclared SET.
-        let src =
-            "PREMISE p FOR EACH x linked y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let src = r"
+        PREMISE p FOR EACH x linked y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
         let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 0);
         assert!(c.consumed.is_empty());
@@ -2810,15 +2917,26 @@ mod tests {
     fn close_transitive_extends_the_relation() {
         // a->b, b->c; CLOSE adds a->c, so a relation FOR EACH grounds over all
         // three pairs (without CLOSE it would be two).
-        let src = "FACT a r b\nFACT b r c\nCLOSE r TRANSITIVE\n\
-                   PREMISE p FOR EACH x r y:\n    FORBIDS\n        x hot on\n        y hot on\n";
+        let src = r"
+        FACT a r b
+        FACT b r c
+        CLOSE r TRANSITIVE
+        PREMISE p FOR EACH x r y:
+            FORBIDS
+                x hot on
+                y hot on
+        ";
         let c = cs(src).unwrap();
         assert_eq!(c.clauses.len(), 3);
     }
 
     #[test]
     fn close_transitive_rejects_a_cycle() {
-        let src = "FACT a r b\nFACT b r a\nCLOSE r TRANSITIVE\n";
+        let src = r"
+        FACT a r b
+        FACT b r a
+        CLOSE r TRANSITIVE
+        ";
         let CompileError::CyclicRelation { relation, .. } = cs(src).unwrap_err() else {
             panic!("expected CyclicRelation");
         };
