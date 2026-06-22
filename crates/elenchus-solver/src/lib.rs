@@ -54,7 +54,7 @@ use core::fmt;
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
 pub use elenchus_compiler::Diagnostics;
-use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, Lit, Origin, Value};
+use elenchus_compiler::{AtomId, AtomKey, Clause, Compiled, KIND_UNSAT, Lit, Origin, Value, kw};
 pub use elenchus_compiler::{
     CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
 };
@@ -699,7 +699,7 @@ impl<'a> Eval<'a> {
                 ClauseEval::Satisfied => {}
                 // Implication premises warn on missing data; list premises treat
                 // UNKNOWN as "no conflict yet" and stay consistent.
-                ClauseEval::Blocked(unknowns) if clause.origin.kind == "PREMISE" => {
+                ClauseEval::Blocked(unknowns) if clause.origin.kind == kw::PREMISE => {
                     let hint = self.warning_hint(&unknowns, &derivable);
                     self.warnings.push(Warning {
                         origin: clause.origin.clone(),
@@ -797,7 +797,7 @@ impl<'a> Eval<'a> {
                         source: String::from("<system>"),
                         line: 0,
                         premise: None,
-                        kind: "UNSAT",
+                        kind: KIND_UNSAT,
                     },
                     atoms: vec![String::from(
                         "the premises and facts are jointly unsatisfiable",
@@ -1582,8 +1582,8 @@ impl fmt::Display for Report {
         for o in &self.orphans {
             // Reconstruct the surface line; `kind` already carries the polarity
             // except for `ASSUME NOT`, where the value supplies it.
-            let surface = if o.origin.kind == "ASSUME" && matches!(o.value, Value::False) {
-                alloc::format!("ASSUME NOT {}", o.atom)
+            let surface = if o.origin.kind == kw::ASSUME && matches!(o.value, Value::False) {
+                alloc::format!("{} {} {}", kw::ASSUME, kw::NOT, o.atom)
             } else {
                 alloc::format!("{} {}", o.origin.kind, o.atom)
             };
@@ -1947,7 +1947,7 @@ mod tests {
         "#;
         let r = vs(src).unwrap();
         assert_eq!(r.status, Status::Conflict);
-        assert_eq!(r.conflicts[0].origin.kind, "UNSAT");
+        assert_eq!(r.conflicts[0].origin.kind, KIND_UNSAT);
         assert_eq!(r.unsat_core.len(), 4);
         let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"one"));
@@ -2042,7 +2042,7 @@ mod tests {
         assert!(labels.contains(&"NOT t.rel has_rollback"));
         assert!(labels.contains(&"NOT t.rel has_feature_flag"));
         // Every retract item is an ASSUME — a FACT/PREMISE is never blamed.
-        assert!(r.retract.iter().all(|it| it.origin.kind == "ASSUME"));
+        assert!(r.retract.iter().all(|it| it.origin.kind == kw::ASSUME));
         // The human report leads with RETRACT and hides the raw conflict pool.
         let shown = alloc::format!("{r}");
         assert!(shown.contains("RETRACT"), "{shown}");
@@ -2056,7 +2056,7 @@ mod tests {
         assert_eq!(r.status, Status::Conflict);
         assert_eq!(r.retract.len(), 1);
         assert_eq!(r.retract[0].label, "NOT t.x a");
-        assert_eq!(r.retract[0].origin.kind, "ASSUME");
+        assert_eq!(r.retract[0].origin.kind, kw::ASSUME);
     }
 
     #[test]
@@ -2177,7 +2177,7 @@ mod tests {
         assert_eq!(r.exit_code(), 0, "orphan must not change exit code");
         assert_eq!(r.orphans.len(), 1, "{:?}", r.orphans);
         assert_eq!(r.orphans[0].atom, "t.x a");
-        assert_eq!(r.orphans[0].origin.kind, "FACT");
+        assert_eq!(r.orphans[0].origin.kind, kw::FACT);
     }
 
     #[test]

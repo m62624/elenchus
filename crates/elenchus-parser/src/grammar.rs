@@ -643,8 +643,15 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
 
 // --- Recovering driver -----------------------------------------------------
 
-/// Message for a line that begins with no known top-level keyword.
-const NOT_A_STATEMENT: &str = "expected a statement — a line must start with DOMAIN, SET, CLOSE, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT";
+/// Message for a line that begins with no known top-level keyword. The list of
+/// statements is built from [`keywords::top_level_menu`], so it always names
+/// exactly the top-level keywords that exist — no hand-kept copy to drift.
+fn not_a_statement() -> String {
+    alloc::format!(
+        "expected a statement — a line must start with {}",
+        crate::keywords::top_level_menu()
+    )
+}
 
 /// Parse a full `.vrf` source into a [`Program`], collecting *every* syntax error.
 ///
@@ -679,7 +686,7 @@ pub fn parse(src: &str) -> Result<Program<'_>, Diagnostics> {
             }
             // Recoverable: this line started no statement keyword at all.
             Err(nom::Err::Error(p)) => {
-                errors.push(make_diag(src, p.input, String::from(NOT_A_STATEMENT), true));
+                errors.push(make_diag(src, p.input, not_a_statement(), true));
                 input = resync(p.input);
             }
             // `complete` combinators never return Incomplete; stop defensively.

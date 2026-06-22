@@ -314,6 +314,25 @@ pub fn top_level_forms() -> impl Iterator<Item = &'static Keyword> {
     KEYWORDS.iter().filter(|k| k.top_level)
 }
 
+/// The top-level keywords joined as an English menu — `"A, B, …, or Z"`, in
+/// teaching order. The single source for the "expected a statement" diagnostic,
+/// so that menu can never drift from [`KEYWORDS`] as keywords are added.
+pub fn top_level_menu() -> alloc::string::String {
+    use alloc::string::String;
+    let words: alloc::vec::Vec<&'static str> = top_level_forms().map(|k| k.text).collect();
+    let mut out = String::new();
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+            if i + 1 == words.len() {
+                out.push_str("or ");
+            }
+        }
+        out.push_str(w);
+    }
+    out
+}
+
 /// The first keyword named anywhere in `message` (selects its card in a
 /// diagnostic). Splits on non-alphabetic characters and returns the first token
 /// that is a keyword.

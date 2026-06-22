@@ -45,12 +45,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-/// Re-exported so downstream crates can name the syntax diagnostics carried by
-/// [`CompileError::Parse`] (and render them with a custom error limit).
-pub use elenchus_parser::Diagnostics;
-use elenchus_parser::{
-    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Quant, Statement, kw,
-};
+use elenchus_parser::{Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Quant, Statement};
+/// Re-exported so downstream crates name one source of truth: [`Diagnostics`] for
+/// the syntax errors carried by [`CompileError::Parse`], and [`kw`] for the
+/// keyword spellings an [`Origin::kind`] is built from (so the solver matches a
+/// `kind` against `kw::PREMISE`, not a re-typed `"PREMISE"`).
+pub use elenchus_parser::{Diagnostics, kw};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -160,9 +160,17 @@ pub struct Origin {
     pub line: u32,
     /// The premise/rule name, if it came from a named construct.
     pub premise: Option<String>,
-    /// Surface kind for the report, e.g. `"FACT"`, `"EXCLUSIVE"`, `"PREMISE"`.
+    /// Surface kind for the report. A surface keyword (a [`kw`] constant such as
+    /// `kw::FACT` / `kw::PREMISE`) for source constructs, or [`KIND_UNSAT`] for
+    /// the synthetic origin the solver attaches to a global unsatisfiability.
     pub kind: &'static str,
 }
+
+/// The [`Origin::kind`] the solver stamps on a conflict that is not pinned to one
+/// source construct but to the program being jointly unsatisfiable. Not a
+/// keyword — so it lives here, next to the other kinds, as the one spelling both
+/// the solver (which sets it) and any reader (which matches it) share.
+pub const KIND_UNSAT: &str = "UNSAT";
 
 /// A confident fact (from `FACT` / `NOT`). Conflicting facts on the same atom
 /// are preserved (both kept) — the solver reports that as a CONFLICT.
@@ -1637,7 +1645,12 @@ fn canonical_body(
     ctx: &DomainCtx,
 ) -> Result<String, CompileError> {
     let mut s = String::new();
-    let _ = write!(s, "{}|{}|", if is_rule { "RULE" } else { "PREMISE" }, name);
+    let _ = write!(
+        s,
+        "{}|{}|",
+        if is_rule { kw::RULE } else { kw::PREMISE },
+        name
+    );
     match body {
         Body::List { op, atoms } => {
             let _ = write!(s, "LIST|{}|", list_kind(*op));

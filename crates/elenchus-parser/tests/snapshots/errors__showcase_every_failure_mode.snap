@@ -121,9 +121,9 @@ statement  (2 problems)
       SET <name>  then one element per line (>= 1)
       CLOSE <relation> TRANSITIVE
       IMPORT "<path>" [AS <alias>]
-    line 82, col 1 - expected a statement — a line must start with DOMAIN, SET, CLOSE, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, or IMPORT
       | %%% this line starts no keyword
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    line 84, col 1 - expected a statement — a line must start with DOMAIN, SET, CLOSE, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, or IMPORT
+    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, or IMPORT
       | 123 numbers cannot start a statement
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
