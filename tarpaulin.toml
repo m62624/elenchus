@@ -1,0 +1,24 @@
+# cargo-tarpaulin coverage config — read automatically by `cargo tarpaulin`.
+#
+# Scope = the library crates (elenchus-parser / -compiler / -solver), where line
+# coverage reflects what the unit + property tests actually reach. The whole
+# workspace is still *built and tested* (so the binaries' integration tests run
+# and must pass); only the coverage *metric* is narrowed, via `exclude-files`:
+#
+#   * crates/elenchus-cli/src/main.rs, crates/elenchus-mcp/*  — these binaries are
+#     exercised by integration tests that spawn the built executable as a separate
+#     process. Tarpaulin's ptrace engine cannot attribute a subprocess's executed
+#     lines back to source (and `--follow-exec` segfaults on this suite), so their
+#     `src/` would always read ~0% despite being covered. Excluding them keeps the
+#     number honest instead of reporting a phantom gap. Their behaviour is guarded
+#     by tests/cli.rs, tests/examples.rs and tests/mcp.rs.
+#   * crates/*/tests/*  — we measure the code under test, not the test code itself.
+[default]
+workspace = true
+out = ["Html", "Lcov", "Stdout"]
+output-dir = "coverage"
+exclude-files = [
+    "crates/elenchus-cli/src/main.rs",
+    "crates/elenchus-mcp/*",
+    "crates/*/tests/*",
+]

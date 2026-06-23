@@ -1,0 +1,26 @@
+# Codecov configuration.
+#
+# The uploaded Cobertura report already drops the two binaries (see tarpaulin.toml
+# `exclude-files`): elenchus-cli / elenchus-mcp are exercised by integration tests
+# that spawn the built executable, and line coverage cannot see a subprocess. The
+# `ignore` list below mirrors that so Codecov's file tree matches the metric.
+#
+# Both statuses are `informational: true` — Codecov reports the number and the diff
+# but never fails the check, so coverage guides without gatekeeping merges. Tighten
+# (drop `informational`, set a `target`) once the number is where you want it.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+ignore:
+  - "crates/elenchus-cli/src/main.rs"
+  - "crates/elenchus-mcp"
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true

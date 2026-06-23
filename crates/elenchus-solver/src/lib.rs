@@ -2011,6 +2011,37 @@ mod tests {
     }
 
     #[test]
+    fn unsat_core_blames_the_rules_that_form_it() {
+        // Same case-split unsat as `jointly_unsatisfiable_reports_a_minimal_core`,
+        // but the implications are RULEs (→ `c.rules`), not PREMISEs (→ `c.clauses`).
+        // This is the only path that drives the RULE branch of `constructs`, so the
+        // minimal core must name the two rules (plus `one` and the `NOT x c` fact).
+        let src = r#"
+        PREMISE one:
+            ONEOF
+                x a
+                x b
+        RULE ac:
+            WHEN x a
+            THEN x c
+        RULE bc:
+            WHEN x b
+            THEN x c
+        NOT x c
+        CHECK x BIDIRECTIONAL
+        "#;
+        let r = vs(src).unwrap();
+        assert_eq!(r.status, Status::Conflict);
+        assert_eq!(r.conflicts[0].origin.kind, KIND_UNSAT);
+        assert_eq!(r.unsat_core.len(), 4);
+        let labels: Vec<&str> = r.unsat_core.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"one"));
+        assert!(labels.contains(&"ac"));
+        assert!(labels.contains(&"bc"));
+        assert!(labels.contains(&"t.x c")); // the bare NOT fact, labelled by its atom
+    }
+
+    #[test]
     fn consistent_report_has_empty_core_and_no_trace() {
         let r = vs("FACT x a\nCHECK x BIDIRECTIONAL\n").unwrap();
         assert_eq!(r.status, Status::Consistent);
