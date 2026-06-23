@@ -244,6 +244,17 @@ RULE flyers_breathe:
     WHEN bird can_fly
     THEN bird needs_oxygen
 ```
+- **To rule a possibility *out*, derive the negation with a `RULE` — a `PREMISE`
+  cannot.** A `PREMISE WHEN x THEN NOT y` only *checks* `y`; while `y` is UNKNOWN
+  the premise stays **blocked** (`WARNING`) and the engine never concludes
+  `y = FALSE`. So if eliminating one branch is what should let a downstream check
+  pass (and the model reach `CONSISTENT` instead of `WARNING`), **derive** that
+  negation with a `RULE` (its `THEN` may be a `NOT`):
+```vrf
+RULE not_repro_blocks_proof:    // if it can't be reproduced, it isn't proven
+    WHEN NOT case reproducible
+    THEN NOT case proven        // derived FALSE — now the `proven` branch is closed
+```
 
 ### `SET` + `FOR EACH … IN …` — write a premise once, apply it to every element
 - **Syntax:** `SET <name>` then one element per line; then on a `PREMISE`/`RULE`
@@ -778,7 +789,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.9.0 -->
+<!-- skill-version: 0.9.1 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
