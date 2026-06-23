@@ -1,0 +1,53 @@
+# Dependabot version updates for this repo only.
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Goal: open automatic bump PRs but never for MAJOR version jumps (those tend to
+# be breaking and we adopt them by hand). Minor + patch updates are collapsed
+# into a single grouped PR per ecosystem to avoid PR noise. Every bump PR still
+# runs the full CI (lint + test on 3 OSes, the no_std/wasm32 build, dist plan),
+# so a breaking minor — e.g. a 0.x crate where 0.y is a breaking bump — surfaces
+# as a red required check rather than a silent merge.
+version: 2
+updates:
+  # --- cargo (the Rust workspace at the repo root) --------------------------
+  # The workspace's external deps (clap, nom, nom_locate, thiserror, sha2, plus
+  # dev: insta, proptest, serde_json). The initial pins were seeded from another
+  # project but the two are independent, so routine bumps are welcome here.
+  #
+  # Note: `cargo-dist-version` lives in [workspace.metadata.dist], not in the
+  # dependency graph, so Dependabot's cargo updater never sees it and can never
+  # bump it — it stays pinned in lockstep with the installer URLs in the
+  # workflows, updated by hand. Nothing to exclude here.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    # Hold MAJOR bumps for manual review (e.g. nom 8 -> 9); minor/patch flow.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    # One PR for all allowed (minor + patch) cargo updates instead of one each.
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --- GitHub Actions used by the workflows ---------------------------------
+  # No major ignore here on purpose: actions are pinned to a major tag
+  # (e.g. actions/checkout@v6), whose only meaningful update IS the major bump
+  # (v6 -> v7). Ignoring majors would make this ecosystem never update. These
+  # land grouped and are reviewed by hand before merge anyway. (`@stable` and
+  # local `./.github/workflows/*` reuses are not versioned deps — skipped.)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
