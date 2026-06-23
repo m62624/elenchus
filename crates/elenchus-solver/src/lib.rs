@@ -55,7 +55,7 @@ use core::fmt;
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
 pub use elenchus_compiler::Diagnostics;
 use elenchus_compiler::{
-    AtomId, AtomKey, Clause, Compiled, KIND_UNSAT, Lit, Origin, Value, kw, levenshtein,
+    AtomId, AtomKey, Clause, Compiled, Fact, KIND_UNSAT, Lit, Origin, Rule, Value, kw, levenshtein,
 };
 pub use elenchus_compiler::{
     CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
@@ -1128,51 +1128,68 @@ fn atoms_look_similar(
     None
 }
 
+/// One IR literal as it enters a CNF clause, with the polarity flip folded in: a
+/// surface-positive literal `L` becomes `¬L`. This is exactly what both a PREMISE
+/// `Impossible([L..])` (== ¬L1 ∨ … ∨ ¬Ln) and a RULE antecedent need. (`SatLit::new`'s
+/// second argument is the *positive* flag, so passing `negated` performs the flip.)
+fn clause_lit(l: &Lit) -> sat::SatLit {
+    sat::SatLit::new(l.atom, l.negated)
+}
+
+/// The unit literal a confident fact contributes: `TRUE → positive`, `FALSE → negative`.
+fn fact_lit(f: &Fact) -> sat::SatLit {
+    match f.value {
+        Value::True => sat::SatLit::positive(f.atom),
+        Value::False => sat::SatLit::negative(f.atom),
+    }
+}
+
+/// The CNF clause one rule consequent contributes: `WHEN A.. THEN C` == `(¬A1 ∨ … ∨ C)`.
+/// The antecedent literals enter negated (via [`clause_lit`]); the consequent enters
+/// with its surface polarity. The single encoding of "rule ⇒ clause", shared by the
+/// backward-pass CNF and the unsat-core constructs.
+fn rule_consequent_clause(r: &Rule, cons: &Lit) -> Vec<sat::SatLit> {
+    let mut lits: Vec<sat::SatLit> = r.antecedent.iter().map(clause_lit).collect();
+    lits.push(sat::SatLit::new(cons.atom, !cons.negated));
+    lits
+}
+
 /// Encode the premises (`Impossible` clauses), rules (as implications), and
 /// confident facts (as unit clauses) into CNF for the backward pass. Also
 /// returns the constrained atoms (those appearing in a clause or rule) to
 /// project model counting onto.
 fn build_cnf(c: &Compiled) -> (sat::Cnf, Vec<sat::Var>) {
-    use sat::SatLit;
     let mut cnf = sat::Cnf::new(c.atoms.len());
     let mut constrained = vec![false; c.atoms.len()];
-    let mark = |a: AtomId, constrained: &mut [bool]| constrained[a as usize] = true;
 
-    // Impossible([L1..Ln]) == (¬L1 ∨ … ∨ ¬Ln); ¬L of (atom, negated) is (atom, negated).
+    // Premises and rules constrain every atom they mention; facts pin a value but do
+    // not by themselves make an atom a candidate for the underdetermined witness, so
+    // only these two add to `constrained`.
+    let add_constraining =
+        |cnf: &mut sat::Cnf, constrained: &mut [bool], lits: Vec<sat::SatLit>| {
+            for l in &lits {
+                constrained[l.var() as usize] = true;
+            }
+            cnf.add_clause(lits);
+        };
+
+    // Impossible([L1..Ln]) == (¬L1 ∨ … ∨ ¬Ln).
     for clause in &c.clauses {
-        let lits = clause
-            .lits
-            .iter()
-            .map(|l| {
-                mark(l.atom, &mut constrained);
-                SatLit::new(l.atom, l.negated)
-            })
-            .collect();
-        cnf.add_clause(lits);
+        add_constraining(
+            &mut cnf,
+            &mut constrained,
+            clause.lits.iter().map(clause_lit).collect(),
+        );
     }
     // RULE WHEN A.. THEN C.. == for each C: (¬A1 ∨ … ∨ C).
     for r in &c.rules {
         for cons in &r.consequent {
-            let mut lits: Vec<SatLit> = r
-                .antecedent
-                .iter()
-                .map(|a| {
-                    mark(a.atom, &mut constrained);
-                    SatLit::new(a.atom, a.negated)
-                })
-                .collect();
-            mark(cons.atom, &mut constrained);
-            lits.push(SatLit::new(cons.atom, !cons.negated));
-            cnf.add_clause(lits);
+            add_constraining(&mut cnf, &mut constrained, rule_consequent_clause(r, cons));
         }
     }
-    // Confident facts as unit clauses.
+    // Confident facts as unit clauses (not marked constrained — see above).
     for f in &c.facts {
-        let lit = match f.value {
-            Value::True => SatLit::positive(f.atom),
-            Value::False => SatLit::negative(f.atom),
-        };
-        cnf.add_clause(vec![lit]);
+        cnf.add_clause(vec![fact_lit(f)]);
     }
 
     let project = (0..c.atoms.len() as AtomId)
@@ -1207,28 +1224,19 @@ fn same_origin(a: &Origin, b: &Origin) -> bool {
 /// several clauses (e.g. an `EXCLUSIVE` over n atoms) is grouped back into one
 /// construct by origin, so the core blames whole premises, not clause shards.
 fn constructs(c: &Compiled) -> Vec<Construct> {
-    use sat::SatLit;
     let mut out: Vec<Construct> = Vec::new();
 
     for f in &c.facts {
-        let lit = match f.value {
-            Value::True => SatLit::positive(f.atom),
-            Value::False => SatLit::negative(f.atom),
-        };
         out.push(Construct {
             origin: f.origin.clone(),
             label: label(c, f.atom),
-            clauses: vec![vec![lit]],
+            clauses: vec![vec![fact_lit(f)]],
         });
     }
 
     let mut premises: Vec<Construct> = Vec::new();
     for clause in &c.clauses {
-        let lits: Vec<SatLit> = clause
-            .lits
-            .iter()
-            .map(|l| SatLit::new(l.atom, l.negated))
-            .collect();
+        let lits: Vec<sat::SatLit> = clause.lits.iter().map(clause_lit).collect();
         match premises
             .iter_mut()
             .find(|k| same_origin(&k.origin, &clause.origin))
@@ -1247,15 +1255,7 @@ fn constructs(c: &Compiled) -> Vec<Construct> {
         let clauses = r
             .consequent
             .iter()
-            .map(|cons| {
-                let mut lits: Vec<SatLit> = r
-                    .antecedent
-                    .iter()
-                    .map(|a| SatLit::new(a.atom, a.negated))
-                    .collect();
-                lits.push(SatLit::new(cons.atom, !cons.negated));
-                lits
-            })
+            .map(|cons| rule_consequent_clause(r, cons))
             .collect();
         out.push(Construct {
             label: r.origin.premise.clone().unwrap_or_default(),
