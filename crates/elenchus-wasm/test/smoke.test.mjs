@@ -26,9 +26,12 @@ test("check: human format differs from JSON", () => {
   assert.notEqual(e.check(program, "json"), e.check(program, "human"));
 });
 
-test("version: reports the engine, and the skill marker matches it", () => {
+test("version reports the engine; skill marker is version-shaped", () => {
   assert.match(e.version(), /^elenchus \d+\.\d+\.\d+/);
-  assert.equal(e.skillVersion(), e.version().split(" ")[1]);
+  // Not asserted equal to the engine version — the release-only CI `skill-check`
+  // owns that. The marker and the crate version move at different moments during
+  // a release, so they are legitimately out of sync between releases.
+  assert.match(e.skillVersion(), /^\d+\.\d+\.\d+/);
 });
 
 test("skill/about: skill is the SKILL.md text, about points to it", () => {

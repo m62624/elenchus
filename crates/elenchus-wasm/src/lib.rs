@@ -207,8 +207,21 @@ mod tests {
     #[test]
     fn skill_text_and_marker_are_present() {
         assert!(skill().contains("name: elenchus"));
-        // The bundled skill targets the engine it ships with.
-        assert_eq!(skill_version(), elenchus_solver::VERSION);
+        // The marker is present and x.y.z-shaped. It is deliberately NOT asserted
+        // equal to the engine version here: a release bumps the SKILL.md marker
+        // and the crate version at different moments, so between releases they are
+        // legitimately out of sync. The release-only CI job `skill-check` owns the
+        // "marker == release version" check.
+        let marker = skill_version();
+        let core = marker.split('-').next().unwrap_or("");
+        let parts: Vec<&str> = core.split('.').collect();
+        assert!(
+            parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+            "skill-version marker should be x.y.z, got: {marker:?}"
+        );
     }
 
     #[test]
