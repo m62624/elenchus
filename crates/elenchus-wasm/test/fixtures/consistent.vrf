@@ -1,0 +1,3 @@
+DOMAIN d
+FACT x a
+CHECK x

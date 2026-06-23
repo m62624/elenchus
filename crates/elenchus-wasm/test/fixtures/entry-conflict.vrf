@@ -1,0 +1,5 @@
+DOMAIN demo
+IMPORT "lib.vrf"
+FACT physics.Motor uses fast_path
+FACT physics.Motor uses slow_path
+CHECK

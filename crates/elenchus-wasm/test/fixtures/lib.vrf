@@ -1,0 +1,5 @@
+DOMAIN physics
+PREMISE fast_xor_slow:
+    EXCLUSIVE
+        Motor uses fast_path
+        Motor uses slow_path
