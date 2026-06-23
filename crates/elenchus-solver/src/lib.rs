@@ -61,6 +61,12 @@ pub use elenchus_compiler::{
     CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
 };
 
+/// The engine version (this crate's package version). Exposed so a wrapper —
+/// e.g. the wasm/npm build, which carries its own, independent package version —
+/// can report the *engine* version (and compare it to a skill's
+/// `<!-- skill-version -->` marker) rather than its own.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Three-valued truth (Kleene). UNKNOWN is a first-class value, not hidden FALSE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum V3 {

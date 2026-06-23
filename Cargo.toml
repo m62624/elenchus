@@ -6,6 +6,7 @@ members = [
     "crates/elenchus-solver",
     "crates/elenchus-cli",
     "crates/elenchus-mcp",
+    "crates/elenchus-wasm",
 ]
 
 [workspace.package]

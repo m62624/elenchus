@@ -1,0 +1,28 @@
+[package]
+name = "elenchus-wasm"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WebAssembly build of the elenchus logical-consistency engine — program text in, JSON verdict out — published to npm via wasm-pack."
+# Published to npm (via wasm-pack), not to crates.io.
+publish = false
+
+[lib]
+# cdylib: the wasm artifact for wasm-pack. rlib: so `cargo test` (native) can
+# exercise the pure functions (check/version/skill) without a JS host.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Only the engine. The core pipeline (verify_source / verify / Report::to_json /
+# Diagnostics::render / Resolver / CompileError) is reused verbatim — no logic is
+# reimplemented in this wrapper.
+elenchus-solver = { workspace = true }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+# Not a cargo-dist binary (the CLI and MCP server are the only shipped binaries).
+[package.metadata.dist]
+dist = false
