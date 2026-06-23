@@ -1386,8 +1386,6 @@ fn quant_sig(q: &Quant) -> String {
     }
 }
 
-/// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
-/// declared set name is close enough.
 /// Parse one source, tagging any syntax [`Diagnostics`] with its file label so a
 /// `CompileError::Parse` names the right file. The single spelling of "parse, and
 /// on failure attach the file" — shared by the inline, resolved, and import paths.
@@ -1401,6 +1399,8 @@ fn parse_tagged<'a>(
     })
 }
 
+/// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
+/// declared set name is close enough.
 fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
     let names: Vec<&str> = sets.keys().map(String::as_str).collect();
     did_you_mean(set, &names)
