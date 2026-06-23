@@ -27,7 +27,7 @@ jobs:
     name: coverage (tarpaulin → Codecov)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Prebuilt binary — far faster than `cargo install cargo-tarpaulin`.
@@ -39,7 +39,7 @@ jobs:
       - name: Generate coverage (Cobertura XML)
         run: cargo tarpaulin --timeout 120 --out Xml --output-dir .
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./cobertura.xml
