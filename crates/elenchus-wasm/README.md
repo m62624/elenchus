@@ -21,7 +21,7 @@ import {
   about,
   skill,
   skillVersion,
-} from "@m62624/elenchus"; // package name TBD
+} from "elenchus-wasm";
 
 // Inline program (no IMPORT resolution):
 check("DOMAIN d\nFACT x a\nNOT x a\nCHECK x");

@@ -33,9 +33,16 @@ copyFileSync(join(crateDir, "README.md"), join(pkg, "README.md"));
 // Point the package at the curated Node entry and list everything we ship.
 const pkgJsonPath = join(pkg, "package.json");
 const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
-pkgJson.name = process.env.NPM_PACKAGE_NAME ?? "@m62624/elenchus";
+// Native, unscoped name matching the crate (override with NPM_PACKAGE_NAME).
+pkgJson.name = process.env.NPM_PACKAGE_NAME ?? "elenchus-wasm";
 pkgJson.main = "index.js";
 pkgJson.types = "index.d.ts";
+// Normalize the repository URL to the `git+...git` form npm expects, so
+// `npm publish` doesn't warn and auto-correct it.
+pkgJson.repository = {
+  type: "git",
+  url: "git+https://github.com/m62624/elenchus.git",
+};
 pkgJson.files = [
   "elenchus_bg.wasm",
   "elenchus.js",
