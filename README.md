@@ -5,11 +5,15 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-A small **SAT checker with three-valued logic** (TRUE / FALSE / UNKNOWN), aimed at
-small local LLMs. You write **facts** and **first principles** (premises) in a tiny
+A small **SAT checker with three-valued logic** (TRUE / FALSE / UNKNOWN) for LLM
+reasoning. You write **facts** and **first principles** (premises) in a tiny
 English-like DSL; a Rust engine does the boolean bookkeeping and flags
 contradictions. The model can only get a premise wrong — never a step in a long
 chain — and that is caught mechanically.
+
+It's a *simplified* SAT checker, not SMT: just the boolean core, no arithmetic.
+That simpler DSL — plus the bundled skill that drives it — keeps it within reach
+of local LLMs, not only large hosted ones.
 
 The name comes from *elenchus* (ἔλεγχος) — Socratic refutation by finding
 contradictions; that's just the spirit of it. Mechanically it's a small
