@@ -76,6 +76,20 @@ false confidence. So:
 So "done" = **CONSISTENT with every real premise present and every known fact
 stated** — no remaining "but…". Only then trust the reasoning and proceed.
 
+**"Keep going" means fix an incomplete model — not force the verdict green.**
+Some questions *ask whether a consistent configuration exists at all*, and the
+honest answer is that none does. A `CONFLICT` (or `UNDERDETERMINED`) is then the
+**result, not a failure** — but *only* once you reached it by stating real truth
+and its `why:`/`CORE` traces solely to genuine first principles and true facts
+(examples 6 and 8 are exactly this). Before you accept any non-`CONSISTENT`
+verdict as the answer, first rule out the model-level causes that would flip it:
+a wrong `FACT`, a missing `PREMISE`, a typo'd atom (`HINT`/`ORPHAN`), or a
+value-establishing `PREMISE` that should be a `RULE`. A verdict that survives all
+of that is a **proof** — report it with its `CORE`/`why:` trace. The one move
+never allowed is declaring `CONFLICT`/UNSAT *because you got stuck* or to stop
+trying: UNSAT is a claim that demands the very same rigour `CONSISTENT` demands of
+completeness. No `CORE`/`why:` to stand on, no answer — keep going.
+
 ## Keyword reference (the complete set)
 
 Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
