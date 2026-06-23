@@ -1,0 +1,3 @@
+DOMAIN demo
+IMPORT "does-not-exist.vrf"
+CHECK

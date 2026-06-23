@@ -210,4 +210,32 @@ mod tests {
         // The bundled skill targets the engine it ships with.
         assert_eq!(skill_version(), elenchus_solver::VERSION);
     }
+
+    #[test]
+    fn check_syntax_error_is_not_a_json_verdict() {
+        // A malformed program goes through the diagnostics renderer / error
+        // message path, never the JSON report path.
+        let out = check("this is not a valid program", None, None, None);
+        assert!(
+            !out.contains("exit_code"),
+            "a syntax/compile error must not look like a JSON verdict: {out}"
+        );
+        assert!(!out.trim().is_empty());
+    }
+
+    #[test]
+    fn limit_maps_zero_and_absent_to_none() {
+        assert_eq!(limit(None), None);
+        assert_eq!(limit(Some(0)), None);
+        assert_eq!(limit(Some(3)), Some(3));
+    }
+
+    #[test]
+    fn skill_version_of_parses_marker_and_tolerates_absence() {
+        assert_eq!(
+            skill_version_of("intro\n<!-- skill-version: 1.2.3 -->\nrest").as_deref(),
+            Some("1.2.3"),
+        );
+        assert_eq!(skill_version_of("no marker here"), None);
+    }
 }

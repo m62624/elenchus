@@ -102,16 +102,9 @@ jobs:
       - name: Build and assemble the npm package
         working-directory: crates/elenchus-wasm
         run: node scripts/build-npm.mjs
-      - name: Smoke-test the package through Node
+      - name: Test the package through Node
         working-directory: crates/elenchus-wasm
-        run: >-
-          node -e '
-          const e = require("./pkg");
-          const c = e.check("DOMAIN d\nFACT x a\nNOT x a\nCHECK x");
-          if (!c.includes("CONFLICT")) throw new Error("no CONFLICT: " + c);
-          const engine = e.version().split(" ")[1];
-          if (e.skillVersion() !== engine) throw new Error("skill/engine version skew: " + e.skillVersion() + " vs " + engine);
-          console.log("wasm smoke OK:", e.version(), "skill", e.skillVersion());'
+        run: node --test test/smoke.test.mjs
 
   dist-plan:
     name: cargo-dist plan

@@ -26,3 +26,9 @@ js-sys = "0.3"
 # Not a cargo-dist binary (the CLI and MCP server are the only shipped binaries).
 [package.metadata.dist]
 dist = false
+
+# wasm-pack runs wasm-opt automatically on a release build; pin it to optimize
+# for size (`-Oz`). The engine is small and runs on tiny inputs, so a smaller
+# download beats micro-optimizing solve speed.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]
