@@ -76,6 +76,20 @@ false confidence. So:
 So "done" = **CONSISTENT with every real premise present and every known fact
 stated** — no remaining "but…". Only then trust the reasoning and proceed.
 
+**"Keep going" means fix an incomplete model — not force the verdict green.**
+Some questions *ask whether a consistent configuration exists at all*, and the
+honest answer is that none does. A `CONFLICT` (or `UNDERDETERMINED`) is then the
+**result, not a failure** — but *only* once you reached it by stating real truth
+and its `why:`/`CORE` traces solely to genuine first principles and true facts
+(examples 6 and 8 are exactly this). Before you accept any non-`CONSISTENT`
+verdict as the answer, first rule out the model-level causes that would flip it:
+a wrong `FACT`, a missing `PREMISE`, a typo'd atom (`HINT`/`ORPHAN`), or a
+value-establishing `PREMISE` that should be a `RULE`. A verdict that survives all
+of that is a **proof** — report it with its `CORE`/`why:` trace. The one move
+never allowed is declaring `CONFLICT`/UNSAT *because you got stuck* or to stop
+trying: UNSAT is a claim that demands the very same rigour `CONSISTENT` demands of
+completeness. No `CORE`/`why:` to stand on, no answer — keep going.
+
 ## Keyword reference (the complete set)
 
 Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
@@ -243,6 +257,17 @@ PREMISE needs_a_backend:
 RULE flyers_breathe:
     WHEN bird can_fly
     THEN bird needs_oxygen
+```
+- **To rule a possibility *out*, derive the negation with a `RULE` — a `PREMISE`
+  cannot.** A `PREMISE WHEN x THEN NOT y` only *checks* `y`; while `y` is UNKNOWN
+  the premise stays **blocked** (`WARNING`) and the engine never concludes
+  `y = FALSE`. So if eliminating one branch is what should let a downstream check
+  pass (and the model reach `CONSISTENT` instead of `WARNING`), **derive** that
+  negation with a `RULE` (its `THEN` may be a `NOT`):
+```vrf
+RULE not_repro_blocks_proof:    // if it can't be reproduced, it isn't proven
+    WHEN NOT case reproducible
+    THEN NOT case proven        // derived FALSE — now the `proven` branch is closed
 ```
 
 ### `SET` + `FOR EACH … IN …` — write a premise once, apply it to every element
@@ -778,7 +803,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.9.0 -->
+<!-- skill-version: 0.9.1 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
