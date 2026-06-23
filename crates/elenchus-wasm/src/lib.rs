@@ -106,7 +106,9 @@ impl Resolver for JsResolver {
                 CompileError::ImportNotFound(format!("{path}: read() did not return a string"))
             }),
             Err(err) => {
-                let detail = err.as_string().unwrap_or_else(|| "read() threw".to_string());
+                let detail = err
+                    .as_string()
+                    .unwrap_or_else(|| "read() threw".to_string());
                 Err(CompileError::ImportNotFound(format!("{path}: {detail}")))
             }
         }
@@ -174,8 +176,14 @@ mod tests {
     #[test]
     fn check_reports_conflict_as_json() {
         let out = check("DOMAIN d\nFACT x a\nNOT x a\nCHECK x", None, None, None);
-        assert!(out.contains("CONFLICT"), "expected a CONFLICT verdict, got: {out}");
-        assert!(out.contains("exit_code"), "expected machine JSON, got: {out}");
+        assert!(
+            out.contains("CONFLICT"),
+            "expected a CONFLICT verdict, got: {out}"
+        );
+        assert!(
+            out.contains("exit_code"),
+            "expected machine JSON, got: {out}"
+        );
     }
 
     #[test]

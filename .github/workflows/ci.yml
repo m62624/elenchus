@@ -81,6 +81,38 @@ jobs:
           -p elenchus-parser -p elenchus-compiler -p elenchus-solver
           --no-default-features --target wasm32v1-none
 
+  # Build the npm/wasm package the way a release does (wasm-pack + assemble) and
+  # smoke-test it through Node, so the published artifact can never silently rot.
+  wasm-pack:
+    name: wasm npm build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install wasm-pack
+        run: npm install -g wasm-pack
+      - name: Build and assemble the npm package
+        working-directory: crates/elenchus-wasm
+        run: node scripts/build-npm.mjs
+      - name: Smoke-test the package through Node
+        working-directory: crates/elenchus-wasm
+        run: >-
+          node -e '
+          const e = require("./pkg");
+          const c = e.check("DOMAIN d\nFACT x a\nNOT x a\nCHECK x");
+          if (!c.includes("CONFLICT")) throw new Error("no CONFLICT: " + c);
+          const engine = e.version().split(" ")[1];
+          if (e.skillVersion() !== engine) throw new Error("skill/engine version skew: " + e.skillVersion() + " vs " + engine);
+          console.log("wasm smoke OK:", e.version(), "skill", e.skillVersion());'
+
   dist-plan:
     name: cargo-dist plan
     runs-on: ubuntu-latest
@@ -103,7 +135,7 @@ jobs:
   ci-pass:
     name: CI passed
     if: always()
-    needs: [check, no_std, dist-plan]
+    needs: [check, no_std, wasm-pack, dist-plan]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed
@@ -112,7 +144,8 @@ jobs:
           echo "A required CI job failed or was cancelled:"
           echo "  check     = ${{ needs.check.result }}"
           echo "  no_std    = ${{ needs.no_std.result }}"
+          echo "  wasm-pack = ${{ needs.wasm-pack.result }}"
           echo "  dist-plan = ${{ needs.dist-plan.result }}"
           exit 1
       - name: All required jobs passed
-        run: echo "lint + test (all OSes), no_std and dist-plan are green."
+        run: echo "lint + test (all OSes), no_std, wasm-pack and dist-plan are green."
