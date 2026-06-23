@@ -29,6 +29,7 @@ copyFileSync(join(crateDir, "npm", "index.js"), join(pkg, "index.js"));
 copyFileSync(join(crateDir, "npm", "index.d.ts"), join(pkg, "index.d.ts"));
 copyFileSync(join(repoRoot, "skill", "SKILL.md"), join(pkg, "SKILL.md"));
 copyFileSync(join(crateDir, "README.md"), join(pkg, "README.md"));
+copyFileSync(join(repoRoot, "LICENSE"), join(pkg, "LICENSE"));
 
 // Point the package at the curated Node entry and list everything we ship.
 const pkgJsonPath = join(pkg, "package.json");
@@ -51,6 +52,7 @@ pkgJson.files = [
   "index.d.ts",
   "SKILL.md",
   "README.md",
+  "LICENSE",
 ];
 writeFileSync(pkgJsonPath, `${JSON.stringify(pkgJson, null, 2)}\n`);
 

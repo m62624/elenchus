@@ -66,4 +66,4 @@ this package.
 
 ## License
 
-MIT © Mansur Azatbek. See the [repository](https://github.com/m62624/elenchus).
+MIT — see [LICENSE](LICENSE).
