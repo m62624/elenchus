@@ -1,6 +1,9 @@
 [package]
 name = "elenchus-wasm"
-version = "0.1.0"
+# Tracks the workspace (engine) version, so elenchus-wasm@X.Y.Z always bundles
+# engine X.Y.Z. The one-time 0.1.0 bootstrap publish (to claim the npm name and
+# enable OIDC) is done; releases now bump this with the rest of the workspace.
+version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
