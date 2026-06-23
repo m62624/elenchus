@@ -48,7 +48,7 @@ jobs:
           - { name: Windows, os: windows-latest }
           - { name: macOS, os: macos-latest }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
@@ -68,7 +68,7 @@ jobs:
     name: no_std build (wasm32v1-none)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
@@ -85,7 +85,7 @@ jobs:
     name: cargo-dist plan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
       - name: Install dist
