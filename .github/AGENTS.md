@@ -83,4 +83,12 @@ cargo-dist. Pure Rust — there is no npm/Node anywhere here.
   lets `cargo install <crate>` and the short `cargo binstall <crate>` resolve by
   name; for an unpublished/private repo use `cargo binstall --git <repo-url>
   elenchus-cli` (likewise `elenchus-mcp`).
+
+### Project Rules
+
+These rules are documented in the root `AGENTS.md` and must be followed for all releases and SKILL changes.
+
+- **Version bumping discipline:** Do NOT perform `cargo bump` when a SKILL requests a version bump. CI automatically bumps versions during tagging via `cargo set-version --workspace` in the `prepare` job of `release.yml`. The SKILL spec does not auto-bump — humans must manually review and synchronize the SKILL with actual technical functionality before any version change.
+- **SKILL synchronization:** The `skill-version` marker in `skill/SKILL.md` must equal the workspace version at release time. The `skill-check` job in `release.yml` is a manual checkpoint — humans must review and update SKILL.md instructions for the new version before the `tag` job creates the release tag.
+- **SKILL content deduplication:** Each SKILL must be unique and non-redundant. Avoid repeating the same information across multiple SKILL files. When writing AGENTS.md, document this rule to prevent future duplication where the same content appears across different SKILL files.
 <!-- elenchus:contracts:end -->
