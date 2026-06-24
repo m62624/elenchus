@@ -8,3 +8,4 @@
 cobertura.xml
 tarpaulin-report.html
 lcov.info
+.pi/pi-code-planner/worktrees/
