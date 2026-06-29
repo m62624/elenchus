@@ -92,7 +92,10 @@ fn render(stmts: &[Stmt]) -> String {
 // --- comparison (parsed AST vs spec) ---------------------------------------
 
 fn atom_eq(p: &elenchus_parser::Atom, s: &Atom3) -> bool {
-    p.subject == s.0 && p.predicate == s.1 && p.object == s.2.as_deref()
+    // The roundtrip generator emits two- or three-word atoms (predicate always
+    // present); bare-proposition (`None` predicate) coverage lives in the port
+    // fuzz suite.
+    p.subject == s.0 && p.predicate == Some(s.1.as_str()) && p.object == s.2.as_deref()
 }
 
 fn lits_eq(p: &[elenchus_parser::Located<elenchus_parser::Literal>], s: &[Lit3]) -> bool {

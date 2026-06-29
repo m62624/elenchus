@@ -86,9 +86,12 @@ pub struct AtomKey {
     pub domain: String,
     /// The entity the claim is about (owned copy of the parser's `subject`).
     pub subject: String,
-    /// The relation or property asserted.
-    pub predicate: String,
-    /// Optional object; part of identity, so `has flying` ≠ `has swimming`.
+    /// The relation or property asserted. `None` for a **bare proposition** — a
+    /// single-word atom introduced by a `VAR` port (e.g. `db_ready`). `None`
+    /// sorts before any `Some`, so existing (always-`Some`) atoms keep their order.
+    pub predicate: Option<String>,
+    /// Optional object; part of identity, so `has flying` ≠ `has swimming`. Always
+    /// `None` when `predicate` is `None`.
     pub object: Option<String>,
 }
 
@@ -126,7 +129,7 @@ impl DomainCtx {
         Ok(AtomKey {
             domain: self.resolve(a.domain)?,
             subject: a.subject.to_string(),
-            predicate: a.predicate.to_string(),
+            predicate: a.predicate.map(|p| p.to_string()),
             object: a.object.map(|o| o.to_string()),
         })
     }
@@ -244,6 +247,11 @@ pub struct Compiled {
     /// `a linked b`). They are read by the quantifier, so the solver must not
     /// report them as ORPHAN facts even though no clause references them.
     pub consumed: Vec<AtomId>,
+    /// One record per declared `VAR` port: how it resolved (supplied / default /
+    /// unset), its value and origin. Drives the report's PLACEHOLDERS section;
+    /// purely advisory. Filled by `compile_source_with` / `compile_with` after
+    /// [`Compiler::resolve_ports`]; empty when no port was declared.
+    pub placeholders: Vec<PlaceholderInfo>,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an
@@ -260,6 +268,44 @@ pub struct UnusedImport {
     pub alias: Option<String>,
     /// 1-based line of the `IMPORT` statement in `file`.
     pub line: u32,
+}
+
+/// One external value bound to a port `key`, supplied from outside the program
+/// (CLI / API / a data file). The `origin` is a short human tag used both in the
+/// placeholders report and in a [`CompileError::PortConflict`] message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortBinding {
+    /// The boolean truth supplied for the port.
+    pub value: bool,
+    /// Where it came from: `"CLI"`, `"api"`, `"data:<file>"`, or `"PROVIDE <file>"`.
+    pub origin: String,
+}
+
+/// How a declared `VAR` port got (or did not get) its value — the per-port status
+/// shown in the report's PLACEHOLDERS section. Advisory only; never affects the
+/// verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceholderStatus {
+    /// An external value (CLI/API/data) was supplied.
+    Supplied,
+    /// No external value; the port's `DEFAULT` was used.
+    DefaultUsed,
+    /// No external value and no `DEFAULT` — the port stays UNKNOWN.
+    Unset,
+}
+
+/// A reporting record for one declared `VAR` port: its key, how it resolved, the
+/// value it took (if any), and where that value came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaceholderInfo {
+    /// The port's name (the external key).
+    pub key: String,
+    /// How it resolved (supplied / default / unset).
+    pub status: PlaceholderStatus,
+    /// The resolved boolean, or `None` when unset.
+    pub value: Option<bool>,
+    /// The origin of a supplied value (`None` for default/unset).
+    pub origin: Option<String>,
 }
 
 /// Anything that can go wrong while compiling (and resolving imports).
@@ -354,6 +400,63 @@ pub enum CompileError {
         /// A node on the cycle (reaches itself).
         node: String,
     },
+    /// A bare proposition (a single-word atom like `db_ready`) was used in the
+    /// program but never declared with `VAR`. Almost always a typo or a forgotten
+    /// declaration; the suggestion offers the nearest declared port when close.
+    #[error(
+        "{file}:{line}: '{name}' is a bare proposition but no VAR declares it \
+         — add `VAR {name}`{suggestion}"
+    )]
+    UndeclaredPort {
+        /// The source the offending reference is in.
+        file: String,
+        /// 1-based line of the offending reference.
+        line: u32,
+        /// The undeclared bare-proposition name.
+        name: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// An external value (`--set`, API, or `PROVIDE`) named a port that no `VAR`
+    /// declares. Strict by design: silently ignoring an unknown key would hide a
+    /// mistake.
+    #[error("no VAR declares the port '{name}' that an external value sets{suggestion}")]
+    UnknownPort {
+        /// The supplied key that matches no declared port.
+        name: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// An external value named a port whose bare name is declared in more than one
+    /// domain, so which one it sets is ambiguous. (Phase-1 ports match by bare
+    /// name; a richer domain-qualified form may lift this later.)
+    #[error(
+        "the port '{name}' is declared in multiple domains ({domains}); external value is ambiguous"
+    )]
+    AmbiguousPort {
+        /// The ambiguous bare port name.
+        name: String,
+        /// The domains that declare a port with this name, comma-joined (sorted).
+        domains: String,
+    },
+    /// Two sources supplied different values for the same port. Ambiguity is a hard
+    /// error: the engine is about determinism, so it never silently picks one.
+    #[error(
+        "the port '{name}' is set to two different values: {a_value} (from {a_origin}) \
+         and {b_value} (from {b_origin})"
+    )]
+    PortConflict {
+        /// The port set inconsistently.
+        name: String,
+        /// The first binding's value.
+        a_value: bool,
+        /// The first binding's origin tag.
+        a_origin: String,
+        /// The second (conflicting) binding's value.
+        b_value: bool,
+        /// The second binding's origin tag.
+        b_origin: String,
+    },
 }
 
 /// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
@@ -414,6 +517,15 @@ struct RawRule {
     origin: Origin,
 }
 
+/// A declared `VAR` port, keyed in the compiler by `(domain, name)`: its optional
+/// `DEFAULT` fallback and where it was declared (for provenance on the synthetic
+/// fact and the placeholders report).
+struct PortDecl {
+    default: Option<bool>,
+    source: String,
+    line: u32,
+}
+
 // --- compiler --------------------------------------------------------------
 
 /// Accumulates statements from one or more sources, then interns + emits the IR.
@@ -455,6 +567,11 @@ pub struct Compiler {
     /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
     /// lint.
     relation_consumed: BTreeSet<AtomKey>,
+    /// Declared `VAR` ports, keyed by `(domain, name)`. Collected as statements are
+    /// added (across every imported file), then resolved against external values in
+    /// [`Compiler::resolve_ports`]. The first declaration of a `(domain, name)`
+    /// wins; later duplicates are ignored.
+    ports: BTreeMap<(String, String), PortDecl>,
 }
 
 impl Compiler {
@@ -537,9 +654,12 @@ impl Compiler {
                     );
                 }
                 Statement::Fact(a) => {
-                    if let Some(obj) = a.data.object {
+                    // Only a 3-part fact (`a rel b`) declares a relation pair; a bare
+                    // proposition or a 2-word fact has no object (hence no predicate
+                    // pair to record).
+                    if let (Some(pred), Some(obj)) = (a.data.predicate, a.data.object) {
                         self.relations
-                            .entry(a.data.predicate.to_string())
+                            .entry(pred.to_string())
                             .or_default()
                             .push((a.data.subject.to_string(), obj.to_string()));
                     }
@@ -603,6 +723,18 @@ impl Compiler {
             // Declared in the `collect_decls` / `apply_closures` pre-passes;
             // nothing to emit here.
             Statement::Set { .. } | Statement::Close { .. } => {}
+            // A port declaration: record it under this file's domain (the first
+            // declaration of a `(domain, name)` wins). It is resolved against
+            // external values later, in `resolve_ports`.
+            Statement::Var { name, default } => {
+                self.ports
+                    .entry((ctx.current.clone(), name.data.to_string()))
+                    .or_insert(PortDecl {
+                        default: *default,
+                        source: source.to_string(),
+                        line: name.span.location_line(),
+                    });
+            }
             Statement::Premise { name, quant, body } => {
                 self.add_named(source, name, quant.as_ref(), body, false, ctx)?;
             }
@@ -739,7 +871,7 @@ impl Compiler {
                     if let Ok(k) = ctx.key(&Atom {
                         domain: None,
                         subject: subj,
-                        predicate: predicate.data,
+                        predicate: Some(predicate.data),
                         object: Some(obj),
                     }) {
                         self.relation_consumed.insert(k);
@@ -829,13 +961,9 @@ impl Compiler {
                         self.emit_pairwise(&keys, &origin);
                         self.emit_at_least_one(&keys, &origin);
                         for k in &keys {
-                            if let Some(obj) = &k.object {
+                            if let (Some(pred), Some(obj)) = (&k.predicate, &k.object) {
                                 self.oneof_values
-                                    .entry((
-                                        k.domain.clone(),
-                                        k.subject.clone(),
-                                        k.predicate.clone(),
-                                    ))
+                                    .entry((k.domain.clone(), k.subject.clone(), pred.clone()))
                                     .or_default()
                                     .insert(obj.clone());
                             }
@@ -962,15 +1090,15 @@ impl Compiler {
         // are in-set by construction, so they never trip the check. `out_of_set`
         // tests one key against its variable's declared values.
         let out_of_set = |key: &AtomKey| -> bool {
-            key.object.as_ref().is_some_and(|obj| {
-                self.oneof_values
-                    .get(&(
-                        key.domain.clone(),
-                        key.subject.clone(),
-                        key.predicate.clone(),
-                    ))
-                    .is_some_and(|set| !set.contains(obj))
-            })
+            // A bare proposition (predicate `None`) has no object, so it never trips
+            // closed-world; only `(predicate, object)` atoms are checked.
+            match (key.predicate.as_ref(), key.object.as_ref()) {
+                (Some(pred), Some(obj)) => self
+                    .oneof_values
+                    .get(&(key.domain.clone(), key.subject.clone(), pred.clone()))
+                    .is_some_and(|set| !set.contains(obj)),
+                _ => false,
+            }
         };
         let mut offenders: Vec<(&str, u32, &AtomKey)> = Vec::new();
         for f in &self.facts {
@@ -998,11 +1126,9 @@ impl Compiler {
         }) else {
             return Ok(());
         };
-        let set = &self.oneof_values[&(
-            key.domain.clone(),
-            key.subject.clone(),
-            key.predicate.clone(),
-        )];
+        // The offender tripped `out_of_set`, so its predicate is `Some`.
+        let pred = key.predicate.clone().unwrap_or_default();
+        let set = &self.oneof_values[&(key.domain.clone(), key.subject.clone(), pred.clone())];
         let declared: Vec<&str> = set.iter().map(|s| s.as_str()).collect(); // BTreeSet → sorted
         let value = key.object.clone().unwrap_or_default();
         let suggestion = did_you_mean(&value, &declared);
@@ -1010,11 +1136,177 @@ impl Compiler {
             file: source.to_string(),
             line,
             subject: key.subject.clone(),
-            predicate: key.predicate.clone(),
+            predicate: pred,
             value,
             declared: declared.join(", "),
             suggestion,
         })))
+    }
+
+    /// Resolve every declared `VAR` port against the external `inputs`, validate
+    /// that every used bare proposition is declared, and push a synthetic hard fact
+    /// for each resolved port. Returns the per-port report records (the PLACEHOLDERS
+    /// section). Run after the add-statement loop (all ports declared, all bare
+    /// props interned) and before [`finalize`].
+    ///
+    /// Every ambiguity is a hard error, by design (the engine is deterministic):
+    /// - a used bare proposition with no `VAR` → [`CompileError::UndeclaredPort`];
+    /// - an external key naming no declared port → [`CompileError::UnknownPort`];
+    /// - an external key whose bare name is declared in >1 domain → [`CompileError::AmbiguousPort`];
+    /// - two bindings disagreeing on one key → [`CompileError::PortConflict`].
+    ///
+    /// A resolved port becomes a hard fact (observationally equal to `FACT name` /
+    /// `NOT name`); a port with neither value nor `DEFAULT` stays UNKNOWN (no fact).
+    fn resolve_ports(
+        &mut self,
+        inputs: &[(String, PortBinding)],
+    ) -> Result<Vec<PlaceholderInfo>, CompileError> {
+        // (1) Every *used* bare proposition (in a fact, clause, or rule) must be a
+        // declared port. Reported with the earliest source/line, like closed-world.
+        {
+            let bad = |k: &AtomKey| {
+                k.predicate.is_none()
+                    && !self
+                        .ports
+                        .contains_key(&(k.domain.clone(), k.subject.clone()))
+            };
+            let mut offenders: Vec<(&str, u32, &str)> = Vec::new();
+            for f in &self.facts {
+                if bad(&f.key) {
+                    offenders.push((&f.origin.source, f.origin.line, &f.key.subject));
+                }
+            }
+            for c in &self.clauses {
+                for l in &c.lits {
+                    if bad(&l.key) {
+                        offenders.push((&c.origin.source, c.origin.line, &l.key.subject));
+                    }
+                }
+            }
+            for r in &self.rules {
+                for l in r.antecedent.iter().chain(r.consequent.iter()) {
+                    if bad(&l.key) {
+                        offenders.push((&r.origin.source, r.origin.line, &l.key.subject));
+                    }
+                }
+            }
+            if let Some(&(source, line, name)) = offenders
+                .iter()
+                .min_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)))
+            {
+                let names: Vec<&str> = self.ports.keys().map(|(_, n)| n.as_str()).collect();
+                return Err(CompileError::UndeclaredPort {
+                    file: source.to_string(),
+                    line,
+                    name: name.to_string(),
+                    suggestion: did_you_mean(name, &names),
+                });
+            }
+        }
+
+        // (2) Merge the external bindings by key; two disagreeing values conflict.
+        let mut merged: BTreeMap<String, PortBinding> = BTreeMap::new();
+        for (name, b) in inputs {
+            match merged.get(name) {
+                Some(prev) if prev.value != b.value => {
+                    return Err(CompileError::PortConflict {
+                        name: name.clone(),
+                        a_value: prev.value,
+                        a_origin: prev.origin.clone(),
+                        b_value: b.value,
+                        b_origin: b.origin.clone(),
+                    });
+                }
+                _ => {
+                    merged.entry(name.clone()).or_insert_with(|| b.clone());
+                }
+            }
+        }
+
+        // (3) Match each external key to exactly one declared port (by bare name).
+        let mut supplied: BTreeMap<(String, String), PortBinding> = BTreeMap::new();
+        for (name, b) in &merged {
+            let domains: Vec<&str> = self
+                .ports
+                .keys()
+                .filter(|(_, n)| n == name)
+                .map(|(d, _)| d.as_str())
+                .collect();
+            match domains.as_slice() {
+                [] => {
+                    let names: Vec<&str> = self.ports.keys().map(|(_, n)| n.as_str()).collect();
+                    return Err(CompileError::UnknownPort {
+                        name: name.clone(),
+                        suggestion: did_you_mean(name, &names),
+                    });
+                }
+                [d] => {
+                    supplied.insert(((*d).to_string(), name.clone()), b.clone());
+                }
+                many => {
+                    return Err(CompileError::AmbiguousPort {
+                        name: name.clone(),
+                        domains: many.join(", "),
+                    });
+                }
+            }
+        }
+
+        // (4) Resolve each declared port: supplied > DEFAULT > unset (UNKNOWN).
+        let mut placeholders: Vec<PlaceholderInfo> = Vec::new();
+        let mut interns: Vec<AtomKey> = Vec::new();
+        let mut synth: Vec<(AtomKey, bool, String, u32)> = Vec::new();
+        for ((domain, name), decl) in &self.ports {
+            let key = AtomKey {
+                domain: domain.clone(),
+                subject: name.clone(),
+                predicate: None,
+                object: None,
+            };
+            interns.push(key.clone());
+            let (status, value, origin) = match supplied.get(&(domain.clone(), name.clone())) {
+                Some(b) => (
+                    PlaceholderStatus::Supplied,
+                    Some(b.value),
+                    Some(b.origin.clone()),
+                ),
+                None => match decl.default {
+                    Some(v) => (PlaceholderStatus::DefaultUsed, Some(v), None),
+                    None => (PlaceholderStatus::Unset, None, None),
+                },
+            };
+            if let Some(v) = value {
+                synth.push((key, v, decl.source.clone(), decl.line));
+            }
+            placeholders.push(PlaceholderInfo {
+                key: name.clone(),
+                status,
+                value,
+                origin,
+            });
+        }
+
+        // (5) Intern every declared port (so it appears even if unused), keep it out
+        // of the ORPHAN lint, and assert a hard fact for each resolved one.
+        for key in interns {
+            self.intern(&key);
+            self.relation_consumed.insert(key);
+        }
+        for (key, value, source, line) in synth {
+            self.facts.push(RawFact {
+                key,
+                value: if value { Value::True } else { Value::False },
+                origin: Origin {
+                    source,
+                    line,
+                    premise: None,
+                    kind: kw::VAR,
+                },
+                soft: false,
+            });
+        }
+
+        Ok(placeholders)
     }
 
     /// Intern all atoms (canonical sort), then lower the raw IR to ids.
@@ -1072,6 +1364,7 @@ impl Compiler {
             pending_imports: self.pending_imports,
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
             consumed,
+            placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
         }
     }
 }
@@ -1079,10 +1372,24 @@ impl Compiler {
 /// Convenience: compile a single source into the IR. `IMPORT`s are recorded as
 /// pending, not resolved (use [`compile`] with a [`Resolver`] to resolve them).
 pub fn compile_source(source: &str, src: &str) -> Result<Compiled, CompileError> {
+    compile_source_with(source, src, &[])
+}
+
+/// Like [`compile_source`], but resolving declared `VAR` ports against external
+/// `inputs` (`(name, binding)` pairs from CLI / API / data). The `Compiled` carries
+/// a `placeholders` record per declared port.
+pub fn compile_source_with(
+    source: &str,
+    src: &str,
+    inputs: &[(String, PortBinding)],
+) -> Result<Compiled, CompileError> {
     let mut c = Compiler::new();
     c.add_source(source, src)?;
     c.validate_closed_world()?;
-    Ok(c.finalize())
+    let placeholders = c.resolve_ports(inputs)?;
+    let mut compiled = c.finalize();
+    compiled.placeholders = placeholders;
+    Ok(compiled)
 }
 
 // --- import resolution (source-agnostic) -----------------------------------
@@ -1188,14 +1495,27 @@ struct ResolvedFile {
 /// files may reuse a name, and the report qualifies them by source. A name reused
 /// with a different body is an error only *within the same source*.
 pub fn compile<R: Resolver>(root: &str, resolver: &R) -> Result<Compiled, CompileError> {
+    compile_with(root, resolver, &[])
+}
+
+/// Like [`compile`], but resolving declared `VAR` ports against external `inputs`.
+/// Ports declared in any file of the import graph are aggregated, then resolved
+/// once after every file is added.
+pub fn compile_with<R: Resolver>(
+    root: &str,
+    resolver: &R,
+    inputs: &[(String, PortBinding)],
+) -> Result<Compiled, CompileError> {
     let (files, unused_imports) = resolve_graph(root, resolver)?;
     let mut c = Compiler::new();
     for file in &files {
         c.add_resolved(file)?;
     }
     c.validate_closed_world()?;
+    let placeholders = c.resolve_ports(inputs)?;
     let mut compiled = c.finalize();
     compiled.unused_imports = unused_imports;
+    compiled.placeholders = placeholders;
     Ok(compiled)
 }
 
@@ -1422,7 +1742,7 @@ fn subst_atom<'s>(a: &Atom<'s>, subs: &Subs<'s>) -> Atom<'s> {
     Atom {
         domain: a.domain,
         subject: subst_ident(a.subject, subs),
-        predicate: subst_ident(a.predicate, subs),
+        predicate: a.predicate.map(|p| subst_ident(p, subs)),
         object: a.object.map(|o| subst_ident(o, subs)),
     }
 }
@@ -1492,7 +1812,8 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
         | Statement::Import { .. }
         | Statement::Check { .. }
         | Statement::Set { .. }
-        | Statement::Close { .. } => {}
+        | Statement::Close { .. }
+        | Statement::Var { .. } => {}
     }
 }
 
@@ -1631,7 +1952,7 @@ fn key_sig(k: &AtomKey) -> String {
         "{}|{}|{}|{}",
         k.domain,
         k.subject,
-        k.predicate,
+        k.predicate.as_deref().unwrap_or(""),
         k.object.as_deref().unwrap_or("")
     )
 }
@@ -1732,7 +2053,7 @@ mod tests {
         AtomKey {
             domain: domain.to_string(),
             subject: subject.to_string(),
-            predicate: predicate.to_string(),
+            predicate: Some(predicate.to_string()),
             object: object.map(|o| o.to_string()),
         }
     }
@@ -2079,7 +2400,7 @@ mod tests {
         assert_eq!(
             c.atoms
                 .iter()
-                .filter(|a| a.subject == "Engine_X" && a.predicate == "has")
+                .filter(|a| a.subject == "Engine_X" && a.predicate.as_deref() == Some("has"))
                 .count(),
             2
         );

@@ -35,7 +35,9 @@ fn fact_unifies_with_imported_premise_atom() {
         .atoms
         .iter()
         .position(|a| {
-            a.subject == "Car" && a.predicate == "has" && a.object.as_deref() == Some("fuel")
+            a.subject == "Car"
+                && a.predicate.as_deref() == Some("has")
+                && a.object.as_deref() == Some("fuel")
         })
         .expect("Car has fuel atom") as u32;
 

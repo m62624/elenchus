@@ -31,11 +31,15 @@ pub struct Atom<'a> {
     pub domain: Option<&'a str>,
     /// The entity the claim is about, e.g. `Creature_A` or `Motor`.
     pub subject: &'a str,
-    /// The relation or property asserted, e.g. `has` or `over_100`.
-    pub predicate: &'a str,
+    /// The relation or property asserted, e.g. `has` or `over_100`. `None` for a
+    /// **bare proposition** — a single-word atom such as `db_ready`, introduced by
+    /// a `VAR` port and used directly in bodies (`WHEN db_ready THEN …`). The
+    /// compiler requires any bare-proposition atom to be a declared `VAR`.
+    pub predicate: Option<&'a str>,
     /// Optional value the predicate relates the subject to, e.g. `flying`.
     /// `None` for two-word atoms such as `Motor over_100`. The object is part of
-    /// identity: `has flying` and `has swimming` are different atoms.
+    /// identity: `has flying` and `has swimming` are different atoms. Always `None`
+    /// when `predicate` is `None` (a bare proposition has neither).
     pub object: Option<&'a str>,
 }
 
@@ -180,6 +184,17 @@ pub enum Statement<'a> {
         relation: Located<'a, &'a str>,
         /// Which closure to apply.
         kind: CloseKind,
+    },
+    /// `VAR <name> [DEFAULT true|false]` — declare an external boolean **port**: a
+    /// single-word proposition whose truth is supplied from outside (CLI/API/data).
+    /// `<name>` doubles as the proposition usable in bodies (`WHEN <name> THEN …`)
+    /// and as the key external values bind to. With no supplied value it falls back
+    /// to `default`, or stays UNKNOWN when there is none.
+    Var {
+        /// The port's name — both the bound proposition and the external key.
+        name: Located<'a, &'a str>,
+        /// The `DEFAULT true|false` fallback, if written.
+        default: Option<bool>,
     },
     /// `PREMISE <name> [FOR EACH …]: ...` — a checked first principle, optionally
     /// quantified over a declared set.

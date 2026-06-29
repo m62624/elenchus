@@ -7,19 +7,25 @@ Compiled {
         AtomKey {
             domain: "physics",
             subject: "Motor",
-            predicate: "over_100",
+            predicate: Some(
+                "over_100",
+            ),
             object: None,
         },
         AtomKey {
             domain: "physics",
             subject: "Motor",
-            predicate: "over_200",
+            predicate: Some(
+                "over_200",
+            ),
             object: None,
         },
         AtomKey {
             domain: "physics",
             subject: "Motor",
-            predicate: "uses",
+            predicate: Some(
+                "uses",
+            ),
             object: Some(
                 "fast_path",
             ),
@@ -27,7 +33,9 @@ Compiled {
         AtomKey {
             domain: "physics",
             subject: "Motor",
-            predicate: "uses",
+            predicate: Some(
+                "uses",
+            ),
             object: Some(
                 "slow_path",
             ),
@@ -109,4 +117,5 @@ Compiled {
     pending_imports: [],
     unused_imports: [],
     consumed: [],
+    placeholders: [],
 }

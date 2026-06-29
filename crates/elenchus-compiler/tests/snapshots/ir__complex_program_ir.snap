@@ -7,19 +7,25 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "broken",
+            predicate: Some(
+                "broken",
+            ),
             object: None,
         },
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "busy",
+            predicate: Some(
+                "busy",
+            ),
             object: None,
         },
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "can",
+            predicate: Some(
+                "can",
+            ),
             object: Some(
                 "deploy",
             ),
@@ -27,7 +33,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "checked",
+            predicate: Some(
+                "checked",
+            ),
             object: Some(
                 "integration",
             ),
@@ -35,7 +43,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "checked",
+            predicate: Some(
+                "checked",
+            ),
             object: Some(
                 "unit",
             ),
@@ -43,7 +53,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "mode",
+            predicate: Some(
+                "mode",
+            ),
             object: Some(
                 "error",
             ),
@@ -51,7 +63,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "mode",
+            predicate: Some(
+                "mode",
+            ),
             object: Some(
                 "halt",
             ),
@@ -59,7 +73,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "mode",
+            predicate: Some(
+                "mode",
+            ),
             object: Some(
                 "idle",
             ),
@@ -67,7 +83,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "mode",
+            predicate: Some(
+                "mode",
+            ),
             object: Some(
                 "run",
             ),
@@ -75,7 +93,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "notify",
+            predicate: Some(
+                "notify",
+            ),
             object: Some(
                 "ops",
             ),
@@ -83,7 +103,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "owner",
+            predicate: Some(
+                "owner",
+            ),
             object: Some(
                 "alice",
             ),
@@ -91,7 +113,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "owner",
+            predicate: Some(
+                "owner",
+            ),
             object: Some(
                 "bob",
             ),
@@ -99,7 +123,9 @@ Compiled {
         AtomKey {
             domain: "sys",
             subject: "Sys",
-            predicate: "ready",
+            predicate: Some(
+                "ready",
+            ),
             object: None,
         },
     ],
@@ -400,4 +426,5 @@ Compiled {
     pending_imports: [],
     unused_imports: [],
     consumed: [],
+    placeholders: [],
 }

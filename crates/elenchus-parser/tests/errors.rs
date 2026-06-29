@@ -22,20 +22,10 @@ fn err(src: &str) -> String {
 
 // --- per-keyword syntax cards ----------------------------------------------
 
-#[test]
-fn fact_missing_predicate() {
-    insta::assert_snapshot!(err("FACT lonely\n"));
-}
-
-#[test]
-fn not_missing_predicate() {
-    insta::assert_snapshot!(err("NOT lonely\n"));
-}
-
-#[test]
-fn assume_missing_predicate() {
-    insta::assert_snapshot!(err("ASSUME lonely\n"));
-}
+// Note: a single-word atom (`FACT lonely`) is no longer a *parse* error — it is a
+// bare proposition (a `VAR` port reference). The "must be a declared VAR" guard
+// lives in the compiler (`UndeclaredPort`), so the former `*_missing_predicate`
+// parser snapshots moved there; see the compiler's port tests.
 
 #[test]
 fn import_unterminated_string() {
@@ -135,9 +125,9 @@ fn garbage_top_level_line() {
 /// Three broken top-level lines among valid ones, exercising the FACT, NOT and
 /// THEN cards in one block list. Reused by the limit and recovery tests.
 const BROKEN: &str = "\
-FACT lonely
+FACT a b c d
 FACT a b
-NOT also_lonely
+NOT a b c d
 CHECK
 PREMISE p:
     WHEN x y
@@ -155,10 +145,10 @@ fn reports_every_error_in_one_pass() {
 /// has several places (for the per-class cap) and there are two classes (for
 /// the class cap).
 const REPEATED: &str = "\
-FACT one
-FACT two
-FACT three
-NOT four
+FACT a b c d
+FACT a b c e
+FACT a b c f
+NOT a b c d
 ";
 
 #[test]
@@ -185,7 +175,7 @@ fn recovery_yields_exactly_one_error_per_broken_statement() {
 #[test]
 fn recovery_does_not_swallow_following_valid_statements() {
     // A valid FACT after a broken one still parses (it is found at resync).
-    let src = "FACT lonely\nFACT good one\n";
+    let src = "FACT a b c d\nFACT good one\n";
     assert_eq!(diags(src).len(), 1);
 }
 
@@ -197,7 +187,7 @@ fn many_errors_are_grouped_without_panicking() {
     // error is collected, grouped under one class, and the per-class cap trims it.
     let mut src = String::new();
     for i in 0..200 {
-        src.push_str(&format!("FACT lonely{i}\n"));
+        src.push_str(&format!("FACT a b c d{i}\n"));
     }
     let d = diags(&src);
     assert_eq!(d.len(), 200);

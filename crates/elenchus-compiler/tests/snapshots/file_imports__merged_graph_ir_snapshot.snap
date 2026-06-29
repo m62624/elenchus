@@ -7,7 +7,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "brakes",
+            predicate: Some(
+                "brakes",
+            ),
             object: Some(
                 "ok",
             ),
@@ -15,7 +17,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "engine",
+            predicate: Some(
+                "engine",
+            ),
             object: Some(
                 "running",
             ),
@@ -23,7 +27,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "engine",
+            predicate: Some(
+                "engine",
+            ),
             object: Some(
                 "warm",
             ),
@@ -31,7 +37,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "gear",
+            predicate: Some(
+                "gear",
+            ),
             object: Some(
                 "drive",
             ),
@@ -39,7 +47,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "gear",
+            predicate: Some(
+                "gear",
+            ),
             object: Some(
                 "park",
             ),
@@ -47,7 +57,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "gear",
+            predicate: Some(
+                "gear",
+            ),
             object: Some(
                 "reverse",
             ),
@@ -55,7 +67,9 @@ Compiled {
         AtomKey {
             domain: "car",
             subject: "Car",
-            predicate: "has",
+            predicate: Some(
+                "has",
+            ),
             object: Some(
                 "fuel",
             ),
@@ -268,4 +282,5 @@ Compiled {
     pending_imports: [],
     unused_imports: [],
     consumed: [],
+    placeholders: [],
 }

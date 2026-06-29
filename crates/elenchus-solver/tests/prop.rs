@@ -191,7 +191,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         .map(|i| AtomKey {
             domain: "t".into(),
             subject: "s".into(),
-            predicate: alloc_p(i),
+            predicate: Some(alloc_p(i)),
             object: None,
         })
         .collect();
@@ -236,6 +236,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         pending_imports: Vec::new(),
         unused_imports: Vec::new(),
         consumed: Vec::new(),
+        placeholders: Vec::new(),
     }
 }
 
@@ -689,7 +690,11 @@ proptest! {
         let mut id_of = vec![None; case.k];
         for (id, key) in compiled.atoms.iter().enumerate() {
             if key.subject == "x"
-                && let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok())
+                && let Some(i) = key
+                    .predicate
+                    .as_deref()
+                    .and_then(|p| p.strip_prefix('a'))
+                    .and_then(|n| n.parse::<usize>().ok())
                 && i < case.k
             {
                 id_of[i] = Some(id as u32);

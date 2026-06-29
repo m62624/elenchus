@@ -131,25 +131,29 @@ fn skip_noise<'a>(input: Span<'a>) -> PResult<'a, ()> {
 
 // --- Atoms & literals ------------------------------------------------------
 
-/// `[<domain>.]<subject> <predicate> [<object>]` — an atom, optionally qualified
-/// by a `domain.` prefix on the subject, then two or three space-separated
+/// `[<domain>.]<subject> [<predicate> [<object>]]` — an atom, optionally qualified
+/// by a `domain.` prefix on the subject, then one to three space-separated
 /// identifiers. The domain is recognised only when an identifier is immediately
 /// followed by `.` (no space), so a bare `engine has_fuel` keeps `engine` as the
-/// subject.
+/// subject. A lone identifier (`db_ready`) is a **bare proposition** — predicate
+/// and object both `None`; the compiler requires it to be a declared `VAR`.
 fn atom<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Atom<'a>>> {
     let start = input;
     let (input, domain) = opt(terminated(identifier, char('.'))).parse(input)?;
     let (input, subject) = identifier(input)?;
-    let (input, _) = space1(input)?;
-    let (input, predicate) = identifier(input)?;
-    let (input, object) = opt(preceded(space1, identifier)).parse(input)?;
+    let (input, predicate) = opt(preceded(space1, identifier)).parse(input)?;
+    // An object can only follow a predicate; a bare proposition has neither.
+    let (input, object) = match predicate {
+        Some(_) => opt(preceded(space1, identifier)).parse(input)?,
+        None => (input, None),
+    };
     Ok((
         input,
         Located {
             data: Atom {
                 domain: domain.map(|d| d.data),
                 subject: subject.data,
-                predicate: predicate.data,
+                predicate: predicate.map(|p| p.data),
                 object: object.map(|o| o.data),
             },
             span: start,
@@ -172,6 +176,19 @@ fn literal<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
             span: start,
         },
     ))
+}
+
+/// A boolean value word `true` or `false` — the value of a `VAR` `DEFAULT` (and,
+/// later, a `PROVIDE`). Parsed through the identifier tokenizer and matched
+/// exactly, so `true`/`false` are not reserved and stay usable as ordinary atom
+/// words; only in value position do they read as booleans.
+fn bool_lit<'a>(input: Span<'a>) -> PResult<'a, bool> {
+    let (rest, sp) = raw_identifier(input)?;
+    match *sp.fragment() {
+        "true" => Ok((rest, true)),
+        "false" => Ok((rest, false)),
+        _ => perr(input),
+    }
 }
 
 /// An atom on its own (possibly indented) line: used inside list bodies.
@@ -475,6 +492,38 @@ fn stmt_set<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Set { name, elements }))
 }
 
+/// `VAR <name> [DEFAULT true|false]` — declare an external boolean port on one
+/// line. The optional `DEFAULT` gives the fallback when no value is supplied.
+fn stmt_var<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::VAR), space1).parse(input)?;
+    let at = input;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "VAR expects a name (a lowercase identifier), e.g. VAR db_ready",
+    )?;
+    // Optional `DEFAULT true|false`. Once DEFAULT matches, a bad value commits.
+    let (input, has_default) = opt(preceded(space1, tag(kw::DEFAULT))).parse(input)?;
+    let (input, default) = if has_default.is_some() {
+        let (input, _) = promote(
+            space1(input),
+            input,
+            "DEFAULT expects a value: DEFAULT true|false",
+        )?;
+        let at = input;
+        let (input, v) = promote(bool_lit(input), at, "DEFAULT expects true or false")?;
+        (input, Some(v))
+    } else {
+        (input, None)
+    };
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the VAR declaration",
+    )?;
+    Ok((input, Statement::Var { name, default }))
+}
+
 /// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.
 fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::CLOSE), space1).parse(input)?;
@@ -630,6 +679,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_import,
         stmt_set,
         stmt_close,
+        stmt_var,
         stmt_fact,
         stmt_assume,
         stmt_premise,

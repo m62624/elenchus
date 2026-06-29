@@ -35,6 +35,8 @@ pub mod kw {
     pub const IN: &str = "IN";
     pub const CLOSE: &str = "CLOSE";
     pub const TRANSITIVE: &str = "TRANSITIVE";
+    pub const VAR: &str = "VAR";
+    pub const DEFAULT: &str = "DEFAULT";
 }
 
 /// The correct-syntax reference for one keyword: its canonical written form (with
@@ -154,6 +156,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "CLOSE <relation> TRANSITIVE",
             "make a relation transitive at compile time (a->b, b->c implies a->c); a cycle is an error",
             "CLOSE depends_on TRANSITIVE",
+        ),
+    },
+    Keyword {
+        text: kw::VAR,
+        top_level: true,
+        card: card(
+            "VAR <name> [DEFAULT true|false]",
+            "declare an external boolean port (a bare proposition); its value comes from CLI/API/data, else DEFAULT, else UNKNOWN",
+            "VAR db_ready DEFAULT false",
         ),
     },
     Keyword {
@@ -289,6 +300,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "CLOSE <relation> TRANSITIVE",
             "the closure kind for CLOSE: a->b and b->c implies a->c",
             "CLOSE depends_on TRANSITIVE",
+        ),
+    },
+    Keyword {
+        text: kw::DEFAULT,
+        top_level: false,
+        card: card(
+            "VAR <name> DEFAULT true|false",
+            "the fallback value of a VAR port when no external value is supplied",
+            "VAR db_ready DEFAULT false",
         ),
     },
 ];

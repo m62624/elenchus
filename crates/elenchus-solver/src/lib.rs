@@ -58,7 +58,8 @@ use elenchus_compiler::{
     AtomId, AtomKey, Clause, Compiled, Fact, KIND_UNSAT, Lit, Origin, Rule, Value, kw, levenshtein,
 };
 pub use elenchus_compiler::{
-    CompileError, MemoryResolver, Resolver, UnusedImport, compile, compile_source,
+    CompileError, MemoryResolver, PlaceholderInfo, PlaceholderStatus, PortBinding, Resolver,
+    UnusedImport, compile, compile_source, compile_source_with, compile_with,
 };
 
 /// The engine version (this crate's package version). Exposed so a wrapper —
@@ -210,6 +211,11 @@ pub struct Report {
     /// inert. Never affects [`Report::status`] or [`Report::exit_code`] — purely
     /// informational. (Carried through from compilation; see [`UnusedImport`].)
     pub unused_imports: Vec<UnusedImport>,
+    /// One record per declared `VAR` port: whether its value was supplied, fell
+    /// back to `DEFAULT`, or stayed UNKNOWN. The report's PLACEHOLDERS section.
+    /// Never affects [`Report::status`] or [`Report::exit_code`] — purely
+    /// informational. (Carried through from compilation; see [`PlaceholderInfo`].)
+    pub placeholders: Vec<PlaceholderInfo>,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two
@@ -381,6 +387,33 @@ impl Report {
             let _ = write!(s, ",\"line\":{}", u.line);
             s.push('}');
         }
+        s.push_str("],\"placeholders\":[");
+        for (i, p) in self.placeholders.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str("{\"key\":");
+            json_str(&p.key, &mut s);
+            let status = match p.status {
+                PlaceholderStatus::Supplied => "supplied",
+                PlaceholderStatus::DefaultUsed => "default",
+                PlaceholderStatus::Unset => "unset",
+            };
+            s.push_str(",\"status\":");
+            json_str(status, &mut s);
+            match p.value {
+                Some(v) => {
+                    let _ = write!(s, ",\"value\":{v}");
+                }
+                None => s.push_str(",\"value\":null"),
+            }
+            s.push_str(",\"origin\":");
+            match &p.origin {
+                Some(o) => json_str(o, &mut s),
+                None => s.push_str("null"),
+            }
+            s.push('}');
+        }
         s.push_str("]}");
         s
     }
@@ -475,9 +508,13 @@ fn json_origin(o: &Origin, out: &mut String) {
 /// is unambiguous (`physics.engine runs` vs `plan.engine runs`).
 fn label(c: &Compiled, a: AtomId) -> String {
     let k = &c.atoms[a as usize];
-    match &k.object {
-        Some(o) => alloc::format!("{}.{} {} {}", k.domain, k.subject, k.predicate, o),
-        None => alloc::format!("{}.{} {}", k.domain, k.subject, k.predicate),
+    match (&k.predicate, &k.object) {
+        // Full triple `domain.subject predicate object`.
+        (Some(p), Some(o)) => alloc::format!("{}.{} {} {}", k.domain, k.subject, p, o),
+        // Two-word atom `domain.subject predicate`.
+        (Some(p), None) => alloc::format!("{}.{} {}", k.domain, k.subject, p),
+        // Bare proposition (a VAR port): just `domain.subject`.
+        (None, _) => alloc::format!("{}.{}", k.domain, k.subject),
     }
 }
 
@@ -862,6 +899,7 @@ impl<'a> Eval<'a> {
             hints: Vec::new(),   // filled by `solve` (advisory, post-verdict)
             orphans: Vec::new(), // filled by `solve` (advisory, post-verdict)
             unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
+            placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
         }
     }
 }
@@ -895,6 +933,9 @@ pub fn solve(c: &Compiled) -> Report {
     // Advisory only: imports a file never references (computed at compile time,
     // carried through the IR). Never influences status/exit code.
     report.unused_imports = c.unused_imports.clone();
+    // Advisory only: the per-port placeholders record (computed at compile time).
+    // Never influences status/exit code.
+    report.placeholders = c.placeholders.clone();
     report
 }
 
@@ -1064,8 +1105,10 @@ fn similar_atom_pairs(c: &Compiled) -> Vec<SimilarAtoms> {
 fn fold_atom(k: &AtomKey) -> Vec<char> {
     let mut raw = String::new();
     raw.push_str(&k.subject);
-    raw.push(' ');
-    raw.push_str(&k.predicate);
+    if let Some(p) = &k.predicate {
+        raw.push(' ');
+        raw.push_str(p);
+    }
     if let Some(o) = &k.object {
         raw.push(' ');
         raw.push_str(o);
@@ -1360,12 +1403,31 @@ fn key(o: &Origin) -> (String, u32) {
 
 /// Parse → compile → solve a single source.
 pub fn verify_source(name: &str, src: &str) -> Result<Report, CompileError> {
-    Ok(solve(&compile_source(name, src)?))
+    verify_source_with(name, src, &[])
+}
+
+/// Like [`verify_source`], but resolving declared `VAR` ports against external
+/// `inputs` (`(name, binding)` pairs from CLI / API / data).
+pub fn verify_source_with(
+    name: &str,
+    src: &str,
+    inputs: &[(String, PortBinding)],
+) -> Result<Report, CompileError> {
+    Ok(solve(&compile_source_with(name, src, inputs)?))
 }
 
 /// Parse → compile (resolving imports) → solve, given a [`Resolver`].
 pub fn verify<R: Resolver>(root: &str, resolver: &R) -> Result<Report, CompileError> {
-    Ok(solve(&compile(root, resolver)?))
+    verify_with(root, resolver, &[])
+}
+
+/// Like [`verify`], but resolving declared `VAR` ports against external `inputs`.
+pub fn verify_with<R: Resolver>(
+    root: &str,
+    resolver: &R,
+    inputs: &[(String, PortBinding)],
+) -> Result<Report, CompileError> {
+    Ok(solve(&compile_with(root, resolver, inputs)?))
 }
 
 // --- human-readable report -------------------------------------------------
@@ -1458,8 +1520,11 @@ macro_rules! emit {
     };
 }
 
-impl fmt::Display for Report {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Report {
+    /// Render the full human report. `show_placeholders` toggles the PLACEHOLDERS
+    /// section; the `Display` impl passes `true`, the CLI `--hide-params` flag
+    /// passes `false` to print only the verdict (the JSON form always keeps it).
+    fn render(&self, f: &mut fmt::Formatter<'_>, show_placeholders: bool) -> fmt::Result {
         use indent::{ITEM, NESTED, ROOT, SECTION};
         let mut out = ReportWriter { f };
 
@@ -1596,6 +1661,38 @@ impl fmt::Display for Report {
                 u.line
             )?;
         }
+        // The PLACEHOLDERS section: every declared VAR port, how it resolved. A
+        // debugging aid for whoever wires the values; suppressed by `--hide-params`.
+        if show_placeholders {
+            for p in &self.placeholders {
+                match p.status {
+                    PlaceholderStatus::Supplied => emit!(
+                        out,
+                        SECTION,
+                        "PARAM     {} = {}   (supplied{})",
+                        p.key,
+                        bool_word(p.value),
+                        p.origin
+                            .as_deref()
+                            .map(|o| alloc::format!(": {o}"))
+                            .unwrap_or_default()
+                    )?,
+                    PlaceholderStatus::DefaultUsed => emit!(
+                        out,
+                        SECTION,
+                        "PARAM     {} = {}   (DEFAULT)",
+                        p.key,
+                        bool_word(p.value)
+                    )?,
+                    PlaceholderStatus::Unset => emit!(
+                        out,
+                        SECTION,
+                        "PARAM     {} = UNKNOWN   (no value supplied, no DEFAULT)",
+                        p.key
+                    )?,
+                }
+            }
+        }
 
         let underdetermined = usize::from(self.status == Status::Underdetermined);
         emit!(
@@ -1608,6 +1705,48 @@ impl fmt::Display for Report {
             self.derived.len()
         )?;
         out.tail(ROOT, format_args!("EXIT_CODE: {}", self.exit_code()))
+    }
+
+    /// The full human report as an owned string. `show_placeholders = false`
+    /// (the CLI `--hide-params` flag) prints only the verdict, exactly as before
+    /// the ports feature. The JSON form (`to_json`) always keeps the section.
+    pub fn render_human(&self, show_placeholders: bool) -> String {
+        alloc::format!(
+            "{}",
+            HumanReport {
+                report: self,
+                show_placeholders
+            }
+        )
+    }
+}
+
+/// A `Display` adapter that renders a [`Report`] with a chosen `show_placeholders`
+/// flag (the plain `Display` impl always shows them).
+struct HumanReport<'a> {
+    report: &'a Report,
+    show_placeholders: bool,
+}
+
+impl fmt::Display for HumanReport<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.report.render(f, self.show_placeholders)
+    }
+}
+
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.render(f, true)
+    }
+}
+
+/// `true`/`false` for a resolved port value (a supplied/default port is always
+/// `Some`); an unset port renders `UNKNOWN` at its own call site.
+fn bool_word(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "UNKNOWN",
     }
 }
 
