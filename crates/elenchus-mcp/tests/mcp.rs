@@ -226,6 +226,57 @@ fn data_file_carrying_logic_is_a_tool_error() {
 }
 
 #[test]
+fn path_reads_a_file_and_resolves_imports_from_disk() {
+    // `path` mode: the server reads the entry `.vrf` from disk and resolves its
+    // IMPORT from disk too (like `elenchus-cli <file>`). The imported `NOT x p`
+    // contradicts the asserted `FACT a.x p` → CONFLICT, proving disk resolution.
+    let dir = env!("CARGO_TARGET_TMPDIR");
+    let root = format!("{dir}/mcp-fs-root.vrf");
+    let dep = format!("{dir}/mcp-fs-dep.vrf");
+    std::fs::write(&dep, "DOMAIN a\nNOT x p\n").unwrap();
+    std::fs::write(
+        &root,
+        "DOMAIN r\nIMPORT \"mcp-fs-dep.vrf\"\nFACT a.x p\nCHECK\n",
+    )
+    .unwrap();
+    // Build the request with serde_json so a Windows path (backslashes) is escaped
+    // into valid JSON; hand-splicing it would emit invalid `\U`-style escapes.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "elenchus_check",
+            "arguments": { "path": root, "format": "json" }
+        }
+    })
+    .to_string();
+    let resps = roundtrip(&[&req]);
+    assert_eq!(resps[0]["result"]["isError"], false, "got: {:?}", resps[0]);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+}
+
+#[test]
+fn program_and_path_together_is_a_tool_error() {
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nCHECK\n","path":"/nope.vrf"}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("not both"), "got: {text}");
+}
+
+#[test]
+fn neither_program_nor_path_is_a_tool_error() {
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"format":"json"}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("missing entry"), "got: {text}");
+}
+
+#[test]
 fn orphan_fact_renders_in_the_human_report_over_mcp() {
     // The `human` format: the advisory ORPHAN line reaches the text field.
     let resps = roundtrip(&[

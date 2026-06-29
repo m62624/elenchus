@@ -358,9 +358,16 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
   binds one from data. The `<name>` is a **one-word proposition** — use it bare in any
   body (`WHEN <name> …`), exactly like a normal atom.
 - **Why:** make a `.vrf` a **template**. The logic is fixed; the boolean inputs arrive
-  from outside — the CLI (`--set "<name>:true"`), a data file (`--data`), or the
-  API/MCP `values`. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
+  from outside. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
   it adds no new meaning, only defers *when* the truth is decided.
+- **Mix freely:** ports are ordinary propositions — combine `VAR` with `FACT`/`NOT`/
+  `PREMISE`/`RULE` in the same file. So you write the logic **once** and re-run it per
+  task by changing only the supplied values (e.g. a deploy gate run for each release).
+- **How to supply the values** (same meaning on every surface):
+  - **CLI:** `--set "<name>:true <name2>:false"` (space-separated, repeatable) and/or
+    `--data values.vrf` (a file of `PROVIDE` lines).
+  - **MCP:** `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE <name>: true\n" }`.
+  - **Inline:** put `PROVIDE <name>: true` lines right in the program.
 - **Resolution (`supplied > DEFAULT > unset`):** an external value wins; else the
   `DEFAULT`; else the port stays **UNKNOWN** — *not* an error, just a WARNING if a
   premise needs it. The report's **PLACEHOLDERS** section shows each port as Supplied /
@@ -370,15 +377,18 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
   (unknown) or a name declared in two domains (ambiguous).
 ```vrf
 DOMAIN deploy
-VAR tests_green
+VAR tests_green                 // ports …
 VAR db_migrated DEFAULT false
+FACT change_window open         // … mixed with ordinary facts and a premise
 PREMISE gate:
     WHEN tests_green
     AND  db_migrated
+    AND  change_window open
     THEN ship a
 NOT ship a            // deny unless the gate forces it
 CHECK
-// elenchus --text "…" --set "tests_green:true db_migrated:true"  → CONFLICT (gate fires)
+// CLI : elenchus deploy.vrf --set "tests_green:true db_migrated:true"   → CONFLICT (gate fires)
+// MCP : elenchus_check { "program": "…", "values": { "tests_green": true, "db_migrated": true } }
 ```
 
 ### `//` — comments
@@ -805,11 +815,13 @@ You have exactly one of two ways in. Detect which:
     `--hide-params` drops the PLACEHOLDERS section from the human report.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
-  (`\n`-separated lines). `program` is the entry source; for a multi-file template
-  with `IMPORT`s, send the imported sources inline as
-  `"files": { "physics.vrf": "<.vrf text>", … }` (no filesystem needed). Bind `VAR`
-  ports with `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE
-  <name>: true\n" }`. The server also has `elenchus_version` and `elenchus_about`.
+  (`\n`-separated lines). The entry is **either** inline `program` **or** a
+  filesystem `path` (not both). With `program`, send any `IMPORT`ed sources inline
+  as `"files": { "physics.vrf": "<.vrf text>", … }` (works on any server, no
+  filesystem needed); use `"path": "<file.vrf>"` only if the server runs locally
+  and you want it to read from disk like the CLI. Bind `VAR` ports with
+  `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE <name>:
+  true\n" }`. The server also has `elenchus_version` and `elenchus_about`.
 - **On a syntax error** (either transport) you get the errors **grouped by
   class** (one per keyword) instead of a verdict — the correct syntax and an
   example shown once per class, with every offending place (line, caret, the

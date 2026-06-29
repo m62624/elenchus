@@ -329,36 +329,39 @@ prune that line from your shell profile if nothing else uses it.
 
 ### CLI or MCP — which one?
 
-Both run the **same engine**, return the **same verdicts**, and now expose the
-**same capabilities** — `IMPORT` / multi-domain, `VAR` ports, and data files all
-work on every surface (CLI, MCP, and the wasm/npm build). All three **resolve
-imports**; they differ only in transport and *where a resolver gets a file's text*:
+Both run the **same engine**, return the **same verdicts**, and expose the **same
+capabilities** — `IMPORT` / multi-domain, `VAR` ports, and data files all work on
+every surface (CLI, MCP, and the wasm/npm build). **All three can read files from
+the filesystem;** they differ only in transport and *how a resolver gets a file's
+text* — so **pick whichever your harness is already wired for**:
 
-- **CLI** — reads the real **filesystem** by path (`FileResolver`).
-- **MCP** — looks the path up in an **in-memory map** (`files: { path: text }`) sent
-  inline in the request; the server itself touches no filesystem.
+- **CLI** — reads the **filesystem** by path (`FileResolver`). The simplest: point
+  it at a file and imports just resolve.
+- **MCP** — *two* entry modes. Inline (`program` + an in-memory `files: { path:
+  text }` map) works on a local **or** remote server. Or `path`: a filesystem path
+  the server reads and resolves imports from disk, exactly like the CLI — this needs
+  the server running **locally with filesystem access** (the one bit of extra setup;
+  a remote server can't see your files).
 - **wasm/npm** — calls a host-supplied **`read(path) => string` callback**. In Node
-  that callback reads the real filesystem (`checkFileWithImports` wires up
-  `fs.readFileSync`); a browser host can back it with any virtual store.
+  that reads the real filesystem (`checkFileWithImports` wires up `fs.readFileSync`);
+  a browser host can back it with any virtual store.
 
 | | CLI (`elenchus-cli`) | MCP (`elenchus-mcp`) |
 |---|---|---|
 | Transport | shell command | stdio JSON-RPC |
-| Entry input | a file, `--text`, or stdin | one `program` string |
-| **`IMPORT` / multi-domain** | ✅ from the **filesystem** (file mode) | ✅ via a `files: { path: text }` map |
-| **`VAR` ports** | `--set "k:true"` and/or `--data file.vrf` | the `values: { k: true }` object and/or `data: { name: text }` |
+| Entry input | a file, `--text`, or stdin | inline `program`, or `path` to a file |
+| **`IMPORT` / multi-domain** | ✅ from the filesystem | ✅ from disk (`path`) **or** inline (`files` map) |
+| **`VAR` ports** | `--set "k:true"` and/or `--data file.vrf` | `values: { k: true }` and/or `data: { name: text }` |
 | Hide the PLACEHOLDERS section | `--hide-params` | n/a (JSON always carries it) |
-| Setup | none | configure the MCP server |
+| Filesystem setup | none | only for `path` mode (local server) |
 
-- **Use the CLI** when your harness can run a shell (Claude Code, CI, a terminal).
-  Files come straight from disk, so multi-file templates and `--data` files need no
-  inlining. **Recommended whenever a shell is available.**
-- **Use the MCP server** when your harness speaks MCP natively and you'd rather not
-  (or can't) run a shell. Same reach — for a multi-file template, send the imported
-  sources inline in `files`; for data, pass `values` and/or `data`.
+**Prefer the CLI** when your harness can run a shell (Claude Code, CI, a terminal):
+no configuration, files come straight from disk. Reach for **MCP** when your harness
+speaks MCP natively and you'd rather not (or can't) run a shell — same capabilities,
+just supply files inline (`files`) or, on a local server, via `path`.
 
-The one shared exception is **pure inline text** (CLI `--text`/stdin, MCP without
-`files`, wasm's `check`): a single source resolves no `IMPORT`. The moment
+The one shared exception is **pure inline text** (CLI `--text`/stdin, MCP `program`
+without `files`, wasm's `check`): a single source resolves no `IMPORT`. The moment
 files/imports are in play, all three resolve them identically — the path normalizer
 is shared, so Windows- and Unix-style import paths behave the same everywhere.
 
@@ -379,11 +382,12 @@ the file form** — `--text`/stdin are a single source. See
 ### MCP server
 
 `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool, `elenchus_check`, for
-AI agents (plus `elenchus_version` / `elenchus_about`). `program` is the entry
-source; optional arguments give it the CLI's full reach without a filesystem:
-`files` (`{ "path": "<.vrf text>" }`) supplies the sources its `IMPORT`s resolve
-against (multi-domain templates), while `values` (`{ "port": true|false }`) and
-`data` (`{ "name": "<PROVIDE text>" }`) bind `VAR` ports. See
+AI agents (plus `elenchus_version` / `elenchus_about`). The entry is **either**
+inline `program` **or** a filesystem `path` (exactly one). With `program`, imports
+resolve against an in-memory `files` (`{ "path": "<.vrf text>" }`) map — portable,
+no filesystem needed; with `path`, the server reads the file and its imports from
+disk like the CLI (local server only). `values` (`{ "port": true|false }`) and
+`data` (`{ "name": "<PROVIDE text>" }`) bind `VAR` ports in either mode. See
 [`crates/elenchus-mcp`](crates/elenchus-mcp).
 
 ### Using the skill
