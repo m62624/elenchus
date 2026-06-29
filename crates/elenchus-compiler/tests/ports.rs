@@ -239,3 +239,94 @@ fn read_data_source_rejects_a_non_provide_statement() {
         "got {err:?}"
     );
 }
+
+// --- qualified domain.port keys + multi-word atom injection ------------------
+
+#[test]
+fn qualified_key_pins_a_port_to_its_domain() {
+    // An inline `PROVIDE <domain>.<port>` resolves the prefix against the file's
+    // own domain (its only alias here), binding the port like a bare key.
+    let c = compile_source("d.vrf", "DOMAIN d\nVAR k\nPROVIDE d.k: true\n").unwrap();
+    assert_eq!(bare_value(&c, "k"), Some(Value::True));
+    assert_eq!(c.placeholders[0].status, PlaceholderStatus::Supplied);
+}
+
+#[test]
+fn multi_word_key_injects_an_atom_like_a_fact() {
+    // A three-word external key asserts the atom `s p o` exactly like `FACT s p o`.
+    let c = compile_source_with(
+        "d.vrf",
+        "DOMAIN d\nFACT s p o\nCHECK\n",
+        &[set("s p o", true)],
+    )
+    .unwrap();
+    let id = c
+        .atoms
+        .iter()
+        .position(|a| a.subject == "s" && a.predicate.as_deref() == Some("p"))
+        .unwrap() as u32;
+    assert!(
+        c.facts
+            .iter()
+            .any(|f| f.atom == id && f.value == Value::True),
+        "expected an injected TRUE fact for `s p o`"
+    );
+}
+
+#[test]
+fn unknown_multi_word_key_is_an_unknown_external_atom() {
+    // A multi-word key (here also domain-qualified) naming an atom no statement
+    // uses is rejected — the typo-guard, and it labels the full `domain.s p o`.
+    let err = compile_source_with(
+        "d.vrf",
+        "DOMAIN d\nFACT s p o\nCHECK\n",
+        &[set("nope.s p o", true)],
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, CompileError::UnknownExternalAtom { ref name } if name == "nope.s p o"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn disagreeing_multi_word_keys_conflict_with_a_qualified_label() {
+    // Two disagreeing values for the atom `s p o` conflict; the message names the
+    // resolved atom in full (`d.s p o`), exercising the atom-key label.
+    let err = compile_source_with(
+        "d.vrf",
+        "DOMAIN d\nFACT s p o\nCHECK\n",
+        &[set("s p o", true), set("s p o", false)],
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, CompileError::PortConflict { ref name, .. } if name == "d.s p o"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_multi_word_atom_in_two_domains_is_ambiguous_when_set() {
+    // `x p` is used in two imported domains; a bare external key cannot tell which
+    // atom it means → AmbiguousPort listing both domains.
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN r\nIMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nCHECK\n",
+    )
+    .add("a.vrf", "DOMAIN a\nFACT x p\n")
+    .add("b.vrf", "DOMAIN b\nFACT x p\n");
+    let err = compile_with("root.vrf", &r, &[set("x p", true)]).unwrap_err();
+    assert!(
+        matches!(err, CompileError::AmbiguousPort { ref name, ref domains } if name == "x p" && domains.contains("a") && domains.contains("b")),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn read_data_source_serializes_a_qualified_three_word_target() {
+    // A `PROVIDE` of a domain-qualified three-word atom round-trips through the
+    // data-file reader into the canonical `domain.subject predicate object` key.
+    let pairs = read_data_source("vals.vrf", "PROVIDE m.s p o: true\n").unwrap();
+    assert_eq!(pairs, vec![("m.s p o".to_string(), true)]);
+}
