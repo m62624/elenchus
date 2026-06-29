@@ -184,6 +184,20 @@ fn files_resolve_imports_across_domains() {
 }
 
 #[test]
+fn files_resolve_a_windows_style_import_path() {
+    // The program IMPORTs `sub\a.vrf` (Windows separators) but the `files` key is
+    // `sub/a.vrf`: the shared normalizer makes them the same path, so the import
+    // resolves and the contradiction fires. Proves MCP's MemoryResolver normalizes
+    // paths the same on every host.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"sub\\a.vrf\"\nFACT a.x p\nCHECK\n","files":{"sub/a.vrf":"DOMAIN a\nNOT x p\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], false, "got: {:?}", resps[0]);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+}
+
+#[test]
 fn data_files_supply_port_values_over_mcp() {
     // The `data` map carries a PROVIDE file, exactly like the CLI's `--data`: it
     // drives the premise to CONFLICT and is reported with a `data:` origin.

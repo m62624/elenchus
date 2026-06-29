@@ -8,7 +8,9 @@
 //! Cargo runs an integration test with the working directory set to the package
 //! root, so these relative paths resolve and stay portable in snapshots.
 
-use elenchus_compiler::{CompileError, FileResolver, compile, normalize_import_path};
+use elenchus_compiler::{
+    CompileError, FileResolver, MemoryResolver, compile, normalize_import_path,
+};
 
 fn fixture(rel: &str) -> String {
     format!("tests/fixtures/{rel}")
@@ -114,4 +116,27 @@ fn normalize_import_path_is_os_independent() {
             "normalize({base:?}, {relative:?})"
         );
     }
+}
+
+#[test]
+fn memory_resolver_resolves_a_windows_style_import_end_to_end() {
+    // A program authored with a Windows-style import path (`sub\dep.vrf`) resolves
+    // through MemoryResolver against the `/`-keyed source — proving the resolver
+    // delegates to the shared normalizer, not just that the normalizer is correct
+    // in isolation. If the `\` were not normalized, the import would not be found.
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN root\nIMPORT \"sub\\dep.vrf\"\nFACT sub.x on\nCHECK\n",
+    )
+    .add("sub/dep.vrf", "DOMAIN sub\nNOT x on\n");
+
+    let ir = compile("root.vrf", &r).expect("the `\\`-style import must resolve");
+    // The imported domain's atom is present → the file was actually loaded.
+    assert!(
+        ir.atoms
+            .iter()
+            .any(|a| a.domain == "sub" && a.subject == "x"),
+        "imported atom missing — the windows-style path did not resolve"
+    );
 }
