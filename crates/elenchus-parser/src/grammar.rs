@@ -524,6 +524,28 @@ fn stmt_var<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Var { name, default }))
 }
 
+/// `PROVIDE <name>: true|false` — bind a `VAR` port's value on one line.
+fn stmt_provide<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PROVIDE), space1).parse(input)?;
+    let at = input;
+    let (input, name) = promote(
+        identifier(input),
+        at,
+        "PROVIDE expects a port name, e.g. PROVIDE db_ready: true",
+    )?;
+    let (input, _) = space0(input)?;
+    let (input, _) = promote(
+        char(':').parse(input),
+        input,
+        "PROVIDE expects ':' then a value: PROVIDE <name>: true|false",
+    )?;
+    let (input, _) = space0(input)?;
+    let at = input;
+    let (input, value) = promote(bool_lit(input), at, "PROVIDE expects true or false")?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the PROVIDE value")?;
+    Ok((input, Statement::Provide { name, value }))
+}
+
 /// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.
 fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::CLOSE), space1).parse(input)?;
@@ -680,6 +702,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_set,
         stmt_close,
         stmt_var,
+        stmt_provide,
         stmt_fact,
         stmt_assume,
         stmt_premise,

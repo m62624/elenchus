@@ -457,6 +457,15 @@ pub enum CompileError {
         /// The second binding's origin tag.
         b_origin: String,
     },
+    /// A data file (loaded via `--data`) contained a statement other than `PROVIDE`
+    /// (or `DOMAIN`). Data files carry only values, never logic.
+    #[error("{file}:{line}: a data file may only contain PROVIDE (and DOMAIN), not this statement")]
+    DataFileStatement {
+        /// The data file with the offending statement.
+        file: String,
+        /// 1-based line of the offending statement.
+        line: u32,
+    },
 }
 
 /// Details of a closed-world violation (see [`CompileError::UnknownValue`]). Kept
@@ -572,6 +581,10 @@ pub struct Compiler {
     /// [`Compiler::resolve_ports`]. The first declaration of a `(domain, name)`
     /// wins; later duplicates are ignored.
     ports: BTreeMap<(String, String), PortDecl>,
+    /// `PROVIDE` bindings seen in compiled sources (origin `"PROVIDE <file>"`).
+    /// They join the same conflict pool as external `--set`/API values in
+    /// [`Compiler::resolve_ports`].
+    provides: Vec<(String, PortBinding)>,
 }
 
 impl Compiler {
@@ -734,6 +747,17 @@ impl Compiler {
                         source: source.to_string(),
                         line: name.span.location_line(),
                     });
+            }
+            // A value binding: queue it into the conflict pool, tagged with its
+            // file, alongside any external `--set`/API values.
+            Statement::Provide { name, value } => {
+                self.provides.push((
+                    name.data.to_string(),
+                    PortBinding {
+                        value: *value,
+                        origin: alloc::format!("PROVIDE {source}"),
+                    },
+                ));
             }
             Statement::Premise { name, quant, body } => {
                 self.add_named(source, name, quant.as_ref(), body, false, ctx)?;
@@ -1204,9 +1228,10 @@ impl Compiler {
             }
         }
 
-        // (2) Merge the external bindings by key; two disagreeing values conflict.
+        // (2) Merge every binding by key (in-file `PROVIDE`s plus external values);
+        // two disagreeing values for one key conflict.
         let mut merged: BTreeMap<String, PortBinding> = BTreeMap::new();
-        for (name, b) in inputs {
+        for (name, b) in self.provides.iter().chain(inputs.iter()) {
             match merged.get(name) {
                 Some(prev) if prev.value != b.value => {
                     return Err(CompileError::PortConflict {
@@ -1366,6 +1391,47 @@ impl Compiler {
             consumed,
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
         }
+    }
+}
+
+/// Parse a data-only `.vrf` source and extract its `PROVIDE` bindings as
+/// `(name, value)` pairs. A data file carries only values: any statement other
+/// than `PROVIDE` (or a `DOMAIN`) is a [`CompileError::DataFileStatement`]. Used to
+/// load a `--data <file>` of port values without compiling it as a program.
+pub fn read_data_source(file: &str, src: &str) -> Result<Vec<(String, bool)>, CompileError> {
+    let program = parse_tagged(file, src)?;
+    let mut out = Vec::new();
+    for stmt in &program.statements {
+        match stmt {
+            Statement::Provide { name, value } => out.push((name.data.to_string(), *value)),
+            Statement::Domain(_) => {}
+            other => {
+                return Err(CompileError::DataFileStatement {
+                    file: file.to_string(),
+                    line: statement_line(other),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The 1-based source line a statement begins on (for diagnostics).
+fn statement_line(s: &Statement) -> u32 {
+    match s {
+        Statement::Domain(n) => n.span.location_line(),
+        Statement::Import { path, .. } => path.span.location_line(),
+        Statement::Fact(a) | Statement::Negation(a) => a.span.location_line(),
+        Statement::Assume(l) => l.span.location_line(),
+        Statement::Set { name, .. } => name.span.location_line(),
+        Statement::Close { relation, .. } => relation.span.location_line(),
+        Statement::Var { name, .. } => name.span.location_line(),
+        Statement::Provide { name, .. } => name.span.location_line(),
+        Statement::Premise { name, .. } | Statement::Rule { name, .. } => name.span.location_line(),
+        Statement::Check { subject, .. } => subject
+            .as_ref()
+            .map(|s| s.span.location_line())
+            .unwrap_or(0),
     }
 }
 
@@ -1813,7 +1879,8 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
         | Statement::Check { .. }
         | Statement::Set { .. }
         | Statement::Close { .. }
-        | Statement::Var { .. } => {}
+        | Statement::Var { .. }
+        | Statement::Provide { .. } => {}
     }
 }
 

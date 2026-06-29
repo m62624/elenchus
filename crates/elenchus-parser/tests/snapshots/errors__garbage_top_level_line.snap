@@ -16,7 +16,8 @@ statement  (1 problem)
       SET <name>  then one element per line (>= 1)
       CLOSE <relation> TRANSITIVE
       VAR <name> [DEFAULT true|false]
+      PROVIDE <name>: true|false
       IMPORT "<path>" [AS <alias>]
-    line 3, col 9 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, VAR, or IMPORT
+    line 3, col 9 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
       |         %%% not a statement
       |         ^^^^^^^^^^^^^^^^^^^

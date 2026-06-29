@@ -28,6 +28,49 @@ fn elenchus_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
 }
 
 #[test]
+fn set_supplies_a_port_value() {
+    // A VAR port driven true by --set fires the premise → CONSISTENT (exit 0), and
+    // the PLACEHOLDERS section reports it.
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nPREMISE g:\n    WHEN k\n    THEN x a\nFACT x a\nCHECK\n",
+        "--set",
+        "k:true",
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PARAM     k = true"), "stdout = {stdout}");
+}
+
+#[test]
+fn hide_params_suppresses_the_placeholders_section() {
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k DEFAULT true\nFACT x a\nCHECK\n",
+        "--hide-params",
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("PARAM"), "stdout = {stdout}");
+}
+
+#[test]
+fn conflicting_set_values_exit_2() {
+    // The same key set to two values is a hard error (determinism), exit 2.
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--set",
+        "k:true k:false",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("set to two different values"),
+        "stderr = {stderr}"
+    );
+}
+
+#[test]
 fn no_args_prints_help_instead_of_waiting_for_stdin() {
     let out = elenchus(&[]);
     assert_eq!(out.status.code(), Some(2));

@@ -37,6 +37,7 @@ pub mod kw {
     pub const TRANSITIVE: &str = "TRANSITIVE";
     pub const VAR: &str = "VAR";
     pub const DEFAULT: &str = "DEFAULT";
+    pub const PROVIDE: &str = "PROVIDE";
 }
 
 /// The correct-syntax reference for one keyword: its canonical written form (with
@@ -165,6 +166,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "VAR <name> [DEFAULT true|false]",
             "declare an external boolean port (a bare proposition); its value comes from CLI/API/data, else DEFAULT, else UNKNOWN",
             "VAR db_ready DEFAULT false",
+        ),
+    },
+    Keyword {
+        text: kw::PROVIDE,
+        top_level: true,
+        card: card(
+            "PROVIDE <name>: true|false",
+            "bind a VAR port's value (in a data file loaded via --data, or alongside the program)",
+            "PROVIDE db_ready: true",
         ),
     },
     Keyword {

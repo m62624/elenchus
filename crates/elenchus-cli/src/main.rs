@@ -7,7 +7,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, ValueEnum};
-use elenchus_compiler::FileResolver;
+use elenchus_compiler::{FileResolver, read_data_source};
 use elenchus_solver::{CompileError, PortBinding, Report, verify_source_with, verify_with};
 
 #[derive(Parser)]
@@ -61,6 +61,12 @@ struct Cli {
     /// error).
     #[arg(long)]
     set: Vec<String>,
+
+    /// A data file of `PROVIDE <name>: true|false` lines, supplying port values.
+    /// Repeatable. A key set to different values by two sources (any `--data` or
+    /// `--set`) is an error.
+    #[arg(long)]
+    data: Vec<String>,
 
     /// Hide the PLACEHOLDERS section from the human report (print only the verdict,
     /// as before ports existed). The JSON form always includes it.
@@ -123,7 +129,8 @@ fn print_error(e: &CliError, max_classes: usize, max_per_class: usize) {
 }
 
 fn build_report(cli: &Cli) -> Result<Report, CliError> {
-    let inputs = parse_set(&cli.set)?;
+    let mut inputs = parse_set(&cli.set)?;
+    inputs.extend(load_data_files(&cli.data)?);
     if let Some(text) = &cli.text {
         return verify_source_with("<text>", text, &inputs).map_err(CliError::Compile);
     }
@@ -175,6 +182,28 @@ fn parse_set(values: &[String]) -> Result<Vec<(String, PortBinding)>, CliError> 
                 PortBinding {
                     value,
                     origin: "CLI".to_string(),
+                },
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// Read each `--data <file>` of `PROVIDE` lines into `(name, binding)` pairs,
+/// tagged `data:<file>`. A read error is a usage error; a non-`PROVIDE` statement
+/// surfaces as a compile error (exit 2).
+fn load_data_files(paths: &[String]) -> Result<Vec<(String, PortBinding)>, CliError> {
+    let mut out = Vec::new();
+    for path in paths {
+        let src = std::fs::read_to_string(path)
+            .map_err(|e| CliError::Other(format!("reading data file {path}: {e}")))?;
+        let pairs = read_data_source(path, &src).map_err(CliError::Compile)?;
+        for (name, value) in pairs {
+            out.push((
+                name,
+                PortBinding {
+                    value,
+                    origin: format!("data:{path}"),
                 },
             ));
         }

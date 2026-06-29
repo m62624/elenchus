@@ -196,6 +196,16 @@ pub enum Statement<'a> {
         /// The `DEFAULT true|false` fallback, if written.
         default: Option<bool>,
     },
+    /// `PROVIDE <name>: true|false` — bind a `VAR` port's value. The data-carrying
+    /// counterpart of `VAR`: it supplies a value (like a CLI/API binding) rather
+    /// than declaring a port. Used in a data-only file (loaded via `--data`) or
+    /// alongside the program. Conflicting bindings for one port are a hard error.
+    Provide {
+        /// The port name this binds.
+        name: Located<'a, &'a str>,
+        /// The boolean value supplied for it.
+        value: bool,
+    },
     /// `PREMISE <name> [FOR EACH …]: ...` — a checked first principle, optionally
     /// quantified over a declared set.
     Premise {

@@ -165,6 +165,23 @@ mod tests {
     }
 
     #[test]
+    fn provide_parses_name_and_value() {
+        let p = prog("PROVIDE db_ready: true\nPROVIDE deploy_ok: false\n");
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[0] {
+            Statement::Provide { name, value } => {
+                assert_eq!(name.data, "db_ready");
+                assert!(*value);
+            }
+            other => panic!("expected provide, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Provide { value, .. } => assert!(!*value),
+            other => panic!("expected provide, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parses_assume_positive_and_negated() {
         let p = prog(
             r#"

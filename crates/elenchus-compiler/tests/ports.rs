@@ -3,7 +3,7 @@
 
 use elenchus_compiler::{
     AtomKey, CompileError, Compiled, PlaceholderStatus, PortBinding, Value, compile_source,
-    compile_source_with,
+    compile_source_with, read_data_source,
 };
 
 /// One `(name, binding)` external input with a test origin.
@@ -115,4 +115,51 @@ fn a_used_bare_prop_resolves_against_its_declaration() {
     let src = "DOMAIN d\nVAR k\nPREMISE p:\n    WHEN k\n    THEN x a\n";
     let c = compile_source_with("d.vrf", src, &[set("k", true)]).unwrap();
     assert_eq!(bare_value(&c, "k"), Some(Value::True));
+}
+
+#[test]
+fn in_file_provide_supplies_a_value() {
+    let c = compile_source("d.vrf", "DOMAIN d\nVAR k\nPROVIDE k: true\n").unwrap();
+    assert_eq!(bare_value(&c, "k"), Some(Value::True));
+    assert_eq!(c.placeholders[0].status, PlaceholderStatus::Supplied);
+    assert_eq!(c.placeholders[0].origin.as_deref(), Some("PROVIDE d.vrf"));
+}
+
+#[test]
+fn provide_conflicts_with_a_disagreeing_external_value() {
+    let err = compile_source_with(
+        "d.vrf",
+        "DOMAIN d\nVAR k\nPROVIDE k: true\n",
+        &[set("k", false)],
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, CompileError::PortConflict { ref name, .. } if name == "k"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn read_data_source_extracts_provide_pairs() {
+    let pairs = read_data_source(
+        "vals.vrf",
+        "PROVIDE db_ready: true\nPROVIDE deploy_ok: false\n",
+    )
+    .unwrap();
+    assert_eq!(
+        pairs,
+        vec![
+            ("db_ready".to_string(), true),
+            ("deploy_ok".to_string(), false)
+        ]
+    );
+}
+
+#[test]
+fn read_data_source_rejects_a_non_provide_statement() {
+    let err = read_data_source("vals.vrf", "PROVIDE k: true\nFACT x a\n").unwrap_err();
+    assert!(
+        matches!(err, CompileError::DataFileStatement { ref file, line } if file == "vals.vrf" && line == 2),
+        "got {err:?}"
+    );
 }
