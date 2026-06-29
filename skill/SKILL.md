@@ -358,9 +358,16 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
   binds one from data. The `<name>` is a **one-word proposition** — use it bare in any
   body (`WHEN <name> …`), exactly like a normal atom.
 - **Why:** make a `.vrf` a **template**. The logic is fixed; the boolean inputs arrive
-  from outside — the CLI (`--set "<name>:true"`), a data file (`--data`), or the
-  API/MCP `values`. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
+  from outside. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
   it adds no new meaning, only defers *when* the truth is decided.
+- **Mix freely:** ports are ordinary propositions — combine `VAR` with `FACT`/`NOT`/
+  `PREMISE`/`RULE` in the same file. So you write the logic **once** and re-run it per
+  task by changing only the supplied values (e.g. a deploy gate run for each release).
+- **How to supply the values** (same meaning on every surface):
+  - **CLI:** `--set "<name>:true <name2>:false"` (space-separated, repeatable) and/or
+    `--data values.vrf` (a file of `PROVIDE` lines).
+  - **MCP:** `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE <name>: true\n" }`.
+  - **Inline:** put `PROVIDE <name>: true` lines right in the program.
 - **Resolution (`supplied > DEFAULT > unset`):** an external value wins; else the
   `DEFAULT`; else the port stays **UNKNOWN** — *not* an error, just a WARNING if a
   premise needs it. The report's **PLACEHOLDERS** section shows each port as Supplied /
@@ -370,15 +377,18 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
   (unknown) or a name declared in two domains (ambiguous).
 ```vrf
 DOMAIN deploy
-VAR tests_green
+VAR tests_green                 // ports …
 VAR db_migrated DEFAULT false
+FACT change_window open         // … mixed with ordinary facts and a premise
 PREMISE gate:
     WHEN tests_green
     AND  db_migrated
+    AND  change_window open
     THEN ship a
 NOT ship a            // deny unless the gate forces it
 CHECK
-// elenchus --text "…" --set "tests_green:true db_migrated:true"  → CONFLICT (gate fires)
+// CLI : elenchus deploy.vrf --set "tests_green:true db_migrated:true"   → CONFLICT (gate fires)
+// MCP : elenchus_check { "program": "…", "values": { "tests_green": true, "db_migrated": true } }
 ```
 
 ### `//` — comments
