@@ -101,7 +101,7 @@ statement  (2 problems)
       SET <name>  then one element per line (>= 1)
       CLOSE <relation> TRANSITIVE
       VAR <name> [DEFAULT true|false]
-      PROVIDE <name>: true|false
+      PROVIDE [<domain>.]<port|atom>: true|false
       IMPORT "<path>" [AS <alias>]
     line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
       | %%% this line starts no keyword

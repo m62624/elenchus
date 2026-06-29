@@ -55,3 +55,29 @@ test("checkFileWithImports: a missing import surfaces as an error, not a crash",
   const out = e.checkFileWithImports(fx("entry-missing.vrf"));
   assert.match(out, /not found/i);
 });
+
+test("values: an inline VAR template is driven by a values record", () => {
+  // The template's RULE only fires when both ports are true.
+  const out = e.checkFile(fx("template.vrf"), "json", 0, 0, {
+    feature_flag: true,
+    tests_pass: true,
+  });
+  assert.match(out, /"status":"CONSISTENT"/);
+  assert.match(out, /deploy is_auto/);
+});
+
+test("dataFiles: a PROVIDE-only file path drives the template (CLI --data parity)", () => {
+  const out = e.checkFile(fx("template.vrf"), "json", 0, 0, undefined, undefined, [
+    fx("provide.vrf"),
+  ]);
+  assert.match(out, /"status":"CONSISTENT"/);
+  assert.match(out, /deploy is_auto/);
+});
+
+test("dataFiles: disagreeing with a values record is a hard PortConflict", () => {
+  // provide.vrf sets feature_flag true; values sets it false → conflict (exit 2).
+  const out = e.checkFile(fx("template.vrf"), "json", 0, 0, { feature_flag: false }, undefined, [
+    fx("provide.vrf"),
+  ]);
+  assert.match(out, /two different values/);
+});

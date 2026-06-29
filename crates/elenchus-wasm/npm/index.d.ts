@@ -6,11 +6,14 @@
 export type Format = "json" | "human";
 
 /** External `VAR` port values: `{ portName: true | false }`. A key set to two
- * different values across sources is a hard error. */
+ * different values across sources is a hard error. A key may be qualified with a
+ * `domain.` prefix (`"self.has_vision"`) to disambiguate a port name shared by
+ * several imported domains, or name a multi-word atom (`"engine has_fuel"`). */
 export type Values = Record<string, boolean>;
 
-/** `VAR` port values carried as data-file text: `{ name: "<PROVIDE-only .vrf>" }`.
- * Each value is parsed like a CLI `--data` file (only `PROVIDE` lines allowed). */
+/** `VAR` port values carried as data-file text: `{ label: "<PROVIDE-only .vrf>" }`.
+ * Each value is parsed like a CLI `--data` file (only `PROVIDE` lines allowed). To
+ * pass data-file PATHS instead of inline text, use the `dataFiles` parameter. */
 export type Data = Record<string, string>;
 
 /**
@@ -26,6 +29,7 @@ export function check(
   maxPerClass?: number,
   values?: Values,
   data?: Data,
+  dataFiles?: string[],
 ): string;
 
 /**
@@ -41,6 +45,7 @@ export function checkWithResolver(
   maxPerClass?: number,
   values?: Values,
   data?: Data,
+  dataFiles?: string[],
 ): string;
 
 /** Read a single `.vrf` file (Node) and check it (no IMPORT resolution). */
@@ -51,6 +56,7 @@ export function checkFile(
   maxPerClass?: number,
   values?: Values,
   data?: Data,
+  dataFiles?: string[],
 ): string;
 
 /** Check a `.vrf` file (Node), resolving IMPORTs through the filesystem. */
@@ -61,6 +67,7 @@ export function checkFileWithImports(
   maxPerClass?: number,
   values?: Values,
   data?: Data,
+  dataFiles?: string[],
 ): string;
 
 /** The running engine version, e.g. `"elenchus 0.9.1"` (engine, not package). */

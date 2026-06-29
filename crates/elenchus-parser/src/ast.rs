@@ -196,13 +196,17 @@ pub enum Statement<'a> {
         /// The `DEFAULT true|false` fallback, if written.
         default: Option<bool>,
     },
-    /// `PROVIDE <name>: true|false` — bind a `VAR` port's value. The data-carrying
-    /// counterpart of `VAR`: it supplies a value (like a CLI/API binding) rather
-    /// than declaring a port. Used in a data-only file (loaded via `--data`) or
-    /// alongside the program. Conflicting bindings for one port are a hard error.
+    /// `PROVIDE [<domain>.]<port|atom>: true|false` — bind an external value. The
+    /// data-carrying counterpart of `VAR`: it supplies a value (like a CLI/API
+    /// binding) rather than declaring a port. The target is parsed as a full
+    /// [`Atom`], so a lone word binds a `VAR` port (`PROVIDE db_ready: true`), a
+    /// multi-word form asserts an atom (`PROVIDE engine has_fuel: true`), and a
+    /// `domain.` prefix disambiguates across imports (`PROVIDE self.has_vision:
+    /// true`). Used in a data-only file (loaded via `--data`) or alongside the
+    /// program. Conflicting bindings for one target are a hard error.
     Provide {
-        /// The port name this binds.
-        name: Located<'a, &'a str>,
+        /// The port or atom this binds (a lone-subject atom is a `VAR` port).
+        atom: Located<'a, Atom<'a>>,
         /// The boolean value supplied for it.
         value: bool,
     },

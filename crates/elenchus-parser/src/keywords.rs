@@ -172,8 +172,8 @@ pub const KEYWORDS: &[Keyword] = &[
         text: kw::PROVIDE,
         top_level: true,
         card: card(
-            "PROVIDE <name>: true|false",
-            "bind a VAR port's value (in a data file loaded via --data, or alongside the program)",
+            "PROVIDE [<domain>.]<port|atom>: true|false",
+            "bind an external value (a VAR port, or an atom); a domain. prefix disambiguates across imports. In a --data file or alongside the program",
             "PROVIDE db_ready: true",
         ),
     },

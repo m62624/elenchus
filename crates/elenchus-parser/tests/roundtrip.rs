@@ -21,7 +21,7 @@ enum Stmt {
         default: Option<bool>,
     },
     Provide {
-        name: String,
+        atom: Atom3,
         value: bool,
     },
     PremiseList {
@@ -75,8 +75,12 @@ fn render(stmts: &[Stmt]) -> String {
                 }
                 s.push('\n');
             }
-            Stmt::Provide { name, value } => {
-                s.push_str(&format!("PROVIDE {name}: {}\n", render_bool(*value)));
+            Stmt::Provide { atom, value } => {
+                s.push_str(&format!(
+                    "PROVIDE {}: {}\n",
+                    render_atom(atom),
+                    render_bool(*value)
+                ));
             }
             Stmt::PremiseList { name, op, atoms } => {
                 s.push_str(&format!("PREMISE {name}:\n    {op}\n"));
@@ -153,8 +157,8 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 default: d,
             },
         ) => name.data == n && default == d,
-        (Statement::Provide { name, value }, Stmt::Provide { name: n, value: v }) => {
-            name.data == n && value == v
+        (Statement::Provide { atom, value }, Stmt::Provide { atom: a, value: v }) => {
+            atom_eq(&atom.data, a) && value == v
         }
         (
             Statement::Premise {
@@ -251,7 +255,7 @@ fn stmt() -> impl Strategy<Value = Stmt> {
         "[a-z][a-z0-9_.]{0,8}".prop_map(Stmt::Import),
         (ident(), prop::option::of(any::<bool>()))
             .prop_map(|(name, default)| Stmt::Var { name, default }),
-        (ident(), any::<bool>()).prop_map(|(name, value)| Stmt::Provide { name, value }),
+        (atom(), any::<bool>()).prop_map(|(atom, value)| Stmt::Provide { atom, value }),
         (
             ident(),
             prop::sample::select(vec!["EXCLUSIVE", "FORBIDS", "ONEOF", "ATLEAST"]),

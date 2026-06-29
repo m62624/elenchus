@@ -146,7 +146,7 @@ fn two_disagreeing_bindings_conflict() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, CompileError::PortConflict { ref name, .. } if name == "k"),
+        matches!(err, CompileError::PortConflict { ref name, .. } if name == "d.k"),
         "got {err:?}"
     );
 }
@@ -188,7 +188,7 @@ fn provide_conflicts_with_a_disagreeing_external_value() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, CompileError::PortConflict { ref name, .. } if name == "k"),
+        matches!(err, CompileError::PortConflict { ref name, .. } if name == "d.k"),
         "got {err:?}"
     );
 }

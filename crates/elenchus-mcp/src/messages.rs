@@ -41,7 +41,9 @@ each class (0 or omitted = all). Only affects parse-error output.";
 /// `elenchus_check` — description of the optional `values` argument.
 pub const CHECK_ARG_VALUES: &str = "External values for VAR ports, as an object of \
 { \"portName\": true|false }. Each named port must be declared with `VAR <name>` in the program; \
-a port set to two different values is an error.";
+a port set to two different values is an error. Qualify a key with a `domain.` prefix \
+(\"self.has_vision\") to pick one of several imported domains that declare the same port name, \
+or name a multi-word atom (\"engine has_fuel\") to assert it directly.";
 
 /// `elenchus_check` — description of the optional `files` argument (the in-memory
 /// import set, which is how the resolver-less MCP server resolves IMPORT).
@@ -56,6 +58,14 @@ pub const CHECK_ARG_DATA: &str = "VAR port values supplied from data files, as a
 { \"name\": \"<PROVIDE-only .vrf text>\" }. Each value is read like a CLI `--data` file: it may \
 contain only `PROVIDE <port>: true|false` lines. Equivalent to `values`, just carried as file text; \
 a port set to two different values (across `values`/`data`/the program) is an error.";
+
+/// `elenchus_check` — description of the optional `data_paths` argument (the
+/// filesystem counterpart of `data`, mirroring how `path` relates to `program`).
+pub const CHECK_ARG_DATA_PATHS: &str = "VAR port values from PROVIDE-only .vrf files on disk, as an \
+array of filesystem paths. The server reads each — like a CLI `--data <file>` — so each file may \
+contain only `PROVIDE <port>: true|false` lines. Use this only on a locally-run server with \
+filesystem access; a remote server cannot see your files, so prefer inline `data` for portability. \
+Merged with `values`/`data`; a port set to two different values is an error.";
 
 /// `elenchus_version` tool description — the MCP analog of `elenchus --version`.
 pub const VERSION_TOOL: &str = "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \

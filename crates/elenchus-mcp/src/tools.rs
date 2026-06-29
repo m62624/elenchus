@@ -70,6 +70,11 @@ fn check_def() -> Value {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
                     "description": messages::CHECK_ARG_DATA
+                },
+                "data_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": messages::CHECK_ARG_DATA_PATHS
                 }
             },
             // Exactly one of `program` / `path` is required; the body enforces it
@@ -227,6 +232,20 @@ fn collect_inputs(args: Option<&Value>) -> Result<Vec<(String, PortBinding)>, Co
         for (name, content) in m {
             if let Some(src) = content.as_str() {
                 inputs.extend(read_data_bindings(name, src)?);
+            }
+        }
+    }
+    // `data_paths`: read each PROVIDE-only file off disk (the filesystem analog of
+    // `data`, mirroring the `path` entry mode). Only meaningful on a local server.
+    if let Some(arr) = args
+        .and_then(|a| a.get("data_paths"))
+        .and_then(Value::as_array)
+    {
+        for entry in arr {
+            if let Some(path) = entry.as_str() {
+                let src = std::fs::read_to_string(path)
+                    .map_err(|e| CompileError::ImportNotFound(format!("{path}: {e}")))?;
+                inputs.extend(read_data_bindings(path, &src)?);
             }
         }
     }

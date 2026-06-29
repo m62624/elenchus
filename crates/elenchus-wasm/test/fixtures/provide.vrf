@@ -1,0 +1,2 @@
+PROVIDE feature_flag: true
+PROVIDE tests_pass: true
