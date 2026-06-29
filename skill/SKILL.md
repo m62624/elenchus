@@ -118,6 +118,9 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `FOR EACH … IN …` | `PREMISE`/`RULE` header | instantiate the body once per element of a `SET`, binding a name |
 | `FOR EACH … <rel> …` | `PREMISE`/`RULE` header | instantiate the body once per declared `FACT` pair of a relation |
 | `CLOSE` | statement | `CLOSE <rel> TRANSITIVE` — make a relation transitive at compile time; a cycle is an error |
+| `VAR` | statement | declare an **external port** — a one-word proposition supplied from outside (`VAR <name> [DEFAULT true\|false]`) |
+| `PROVIDE` | statement | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) |
+| `DEFAULT` | `VAR` modifier | the fallback value used when nothing is supplied for the port |
 | `//` | anywhere | line comment (to end of line) |
 
 The line-oriented rules that hold everywhere: **every file begins with `DOMAIN
@@ -348,6 +351,34 @@ CHECK alice BIDIRECTIONAL
 DOMAIN demo
 IMPORT "physics.vrf"
 FACT physics.Motor over_200   // a fact placed into the imported domain
+```
+
+### `VAR` / `PROVIDE` / `DEFAULT` — external ports (templating)
+- **Syntax:** `VAR <name> [DEFAULT true|false]` declares a port; `PROVIDE <name>: true|false`
+  binds one from data. The `<name>` is a **one-word proposition** — use it bare in any
+  body (`WHEN <name> …`), exactly like a normal atom.
+- **Why:** make a `.vrf` a **template**. The logic is fixed; the boolean inputs arrive
+  from outside — the CLI (`--set "<name>:true"`), a data file (`--data`), or the
+  API/MCP `values`. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
+  it adds no new meaning, only defers *when* the truth is decided.
+- **Resolution (`supplied > DEFAULT > unset`):** an external value wins; else the
+  `DEFAULT`; else the port stays **UNKNOWN** — *not* an error, just a WARNING if a
+  premise needs it. The report's **PLACEHOLDERS** section shows each port as Supplied /
+  DEFAULT / Unset (`--hide-params` hides it; JSON always keeps it).
+- **Hard errors (exit 2):** two sources disagreeing on one port (conflict); a bare
+  proposition used with no `VAR` (undeclared); an external value naming no port
+  (unknown) or a name declared in two domains (ambiguous).
+```vrf
+DOMAIN deploy
+VAR tests_green
+VAR db_migrated DEFAULT false
+PREMISE gate:
+    WHEN tests_green
+    AND  db_migrated
+    THEN ship a
+NOT ship a            // deny unless the gate forces it
+CHECK
+// elenchus --text "…" --set "tests_green:true db_migrated:true"  → CONFLICT (gate fires)
 ```
 
 ### `//` — comments
@@ -769,9 +800,13 @@ You have exactly one of two ways in. Detect which:
   - `elenchus-cli program.vrf` — check a file (the only mode where `IMPORT` resolves).
   - `elenchus-cli --text "DOMAIN d\nFACT x a\nCHECK x"` — inline (newlines required between lines).
   - `cat program.vrf | elenchus-cli` — stdin. `--format json` for machine output.
+  - **Templates (`VAR` ports):** supply values with `--set "<name>:true <name2>:false"`
+    (space-separated, repeatable) and/or `--data values.vrf` (a file of `PROVIDE` lines).
+    `--hide-params` drops the PLACEHOLDERS section from the human report.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
-  (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). The
+  (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). For a
+  template, pass `"values": { "<name>": true }` to bind `VAR` ports. The
   server also has `elenchus_version` and `elenchus_about`.
 - **On a syntax error** (either transport) you get the errors **grouped by
   class** (one per keyword) instead of a verdict — the correct syntax and an
@@ -803,7 +838,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.9.2 -->
+<!-- skill-version: 0.10.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
