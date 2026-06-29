@@ -7,16 +7,16 @@ RESULT: 3 syntax errors
 FACT  (1 problem)
   syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
   example : FACT socrates is human
-    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT lonely
-      |      ^^^^^^
+    line 1, col 11 - unexpected text after the FACT atom
+      | FACT a b c d
+      |           ^^
 
 NOT  (1 problem)
   syntax  : NOT <Subject> <predicate> [<object>]
   example : NOT socrates is immortal
-    line 3, col 5 - NOT expects an atom: <Subject> <predicate> [<object>]
-      | NOT also_lonely
-      |     ^^^^^^^^^^^
+    line 3, col 10 - unexpected text after the NOT atom
+      | NOT a b c d
+      |          ^^
 
 THEN  (1 problem)
   syntax  : THEN <literal>

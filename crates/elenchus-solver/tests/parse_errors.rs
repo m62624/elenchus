@@ -5,7 +5,9 @@ use elenchus_solver::{CompileError, verify_source};
 
 #[test]
 fn syntax_error_propagates_as_parse_diagnostics() {
-    let err = verify_source("demo.vrf", "FACT lonely\n").unwrap_err();
+    // Trailing text after a FACT atom is a real syntax error (a single-word
+    // `FACT lonely` now parses as a bare proposition).
+    let err = verify_source("demo.vrf", "FACT a b c d\n").unwrap_err();
     match err {
         CompileError::Parse(diag) => {
             let shown = diag.render(None, None);
@@ -13,7 +15,10 @@ fn syntax_error_propagates_as_parse_diagnostics() {
                 shown.contains("RESULT: 1 syntax error in demo.vrf"),
                 "shown = {shown}"
             );
-            assert!(shown.contains("FACT expects an atom"), "shown = {shown}");
+            assert!(
+                shown.contains("unexpected text after the FACT atom"),
+                "shown = {shown}"
+            );
         }
         other => panic!("expected a Parse error, got {other:?}"),
     }

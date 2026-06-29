@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"VAR DEFAULT true\\n\")"
+---
+RESULT: 1 syntax error
+
+VAR  (1 problem)
+  syntax  : VAR <name> [DEFAULT true|false]
+  example : VAR db_ready DEFAULT false
+    line 1, col 5 - VAR expects a name (a lowercase identifier), e.g. VAR db_ready
+      | VAR DEFAULT true
+      |     ^^^^^^^^^^^^

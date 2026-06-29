@@ -125,6 +125,107 @@ fn orphan_fact_rides_through_json_over_mcp() {
 }
 
 #[test]
+fn values_supply_a_port_and_flip_the_verdict() {
+    // The VAR port `k` drives the premise `WHEN k THEN x a` against `NOT x a`:
+    // `{"k":false}` satisfies it (CONSISTENT), `{"k":true}` violates it (CONFLICT).
+    // A raw string so each `\n` is the two-char JSON escape, not a real newline
+    // (a literal newline would break the one-line JSON-RPC request).
+    const PROG: &str = r"DOMAIN d\nVAR k\nNOT x a\nPREMISE g:\n    WHEN k\n    THEN x a\nCHECK\n";
+    let req = |id: u32, values: &str| {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"elenchus_check","arguments":{{"program":"{PROG}","format":"json","values":{values}}}}}}}"#
+        )
+    };
+    let resps = roundtrip(&[&req(1, r#"{"k":false}"#), &req(2, r#"{"k":true}"#)]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let consistent: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(consistent["status"], "CONSISTENT");
+    // The placeholders section round-trips with the supplied value and origin.
+    assert_eq!(consistent["placeholders"][0]["key"], "k");
+    assert_eq!(consistent["placeholders"][0]["status"], "supplied");
+    assert_eq!(consistent["placeholders"][0]["value"], false);
+
+    let conflict: Value =
+        serde_json::from_str(resps[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(conflict["status"], "CONFLICT");
+}
+
+#[test]
+fn values_conflicting_with_in_file_provide_is_a_tool_error() {
+    // `PROVIDE k: true` in the program and `{"k":false}` in `values` disagree → a
+    // hard error surfaced as a tool error.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nPROVIDE k: true\nFACT x a\nCHECK\n","values":{"k":false}}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("set to two different values"), "got: {text}");
+}
+
+#[test]
+fn files_resolve_imports_across_domains() {
+    // The root IMPORTs `a.vrf` (a second domain) and asserts a fact into it that
+    // contradicts that file's `NOT x p` → CONFLICT. Without `files` the same
+    // program can't resolve the import and errors, so this proves `files` is what
+    // wires IMPORT over MCP (the resolver-less transport).
+    let with_files = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"a.vrf\"\nFACT a.x p\nCHECK\n","files":{"a.vrf":"DOMAIN a\nNOT x p\n"}}}}"#;
+    let without_files = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"a.vrf\"\nFACT a.x p\nCHECK\n"}}}"#;
+    let resps = roundtrip(&[with_files, without_files]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+
+    // No `files` → the import can't be resolved → a tool error.
+    assert_eq!(resps[1]["result"]["isError"], true);
+}
+
+#[test]
+fn files_resolve_a_windows_style_import_path() {
+    // The program IMPORTs `sub\a.vrf` (Windows separators) but the `files` key is
+    // `sub/a.vrf`: the shared normalizer makes them the same path, so the import
+    // resolves and the contradiction fires. Proves MCP's MemoryResolver normalizes
+    // paths the same on every host.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"sub\\a.vrf\"\nFACT a.x p\nCHECK\n","files":{"sub/a.vrf":"DOMAIN a\nNOT x p\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], false, "got: {:?}", resps[0]);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+}
+
+#[test]
+fn data_files_supply_port_values_over_mcp() {
+    // The `data` map carries a PROVIDE file, exactly like the CLI's `--data`: it
+    // drives the premise to CONFLICT and is reported with a `data:` origin.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nNOT x a\nPREMISE g:\n    WHEN k\n    THEN x a\nCHECK\n","data":{"vals.vrf":"PROVIDE k: true\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+    assert_eq!(report["placeholders"][0]["status"], "supplied");
+    assert_eq!(report["placeholders"][0]["origin"], "data:vals.vrf");
+}
+
+#[test]
+fn data_file_carrying_logic_is_a_tool_error() {
+    // A `data` source may hold only PROVIDE lines; a FACT in it is a hard error.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nFACT x a\nCHECK\n","data":{"bad.vrf":"PROVIDE k: true\nFACT y b\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("data file may only contain PROVIDE"),
+        "got: {text}"
+    );
+}
+
+#[test]
 fn orphan_fact_renders_in_the_human_report_over_mcp() {
     // The `human` format: the advisory ORPHAN line reaches the text field.
     let resps = roundtrip(&[
@@ -141,12 +242,15 @@ fn orphan_fact_renders_in_the_human_report_over_mcp() {
 #[test]
 fn parse_error_is_a_tool_error() {
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT lonely\n"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT a b c d\n"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], true);
     // The full diagnostic block (not a one-liner) arrives in the text field.
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("FACT expects an atom"), "got: {text}");
+    assert!(
+        text.contains("unexpected text after the FACT atom"),
+        "got: {text}"
+    );
 }
 
 #[test]
@@ -156,7 +260,7 @@ fn grouped_block_stays_valid_json_and_respects_max_per_class() {
     // `roundtrip` parses each reply with serde_json, so if the wire were broken
     // it would already have panicked; reaching the asserts proves valid JSON.
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nFACT two\nFACT three\nNOT four\n","max_per_class":1}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT a b c d\nFACT a b c e\nFACT a b c f\nNOT a b c d\n","max_per_class":1}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], true);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
@@ -171,7 +275,7 @@ fn grouped_block_stays_valid_json_and_respects_max_per_class() {
 #[test]
 fn max_classes_caps_classes_over_mcp() {
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nNOT two\n","max_classes":1}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT a b c d\nNOT a b c d\n","max_classes":1}}}"#,
     ]);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("... and 1 more class"), "got: {text}");
@@ -181,7 +285,7 @@ fn max_classes_caps_classes_over_mcp() {
 fn all_syntax_errors_grouped_when_no_caps() {
     // Without caps every class and place comes back, no "more" footers.
     let resps = roundtrip(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT one\nFACT two\nNOT three\n"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT a b c d\nFACT a b c e\nNOT a b c d\n"}}}"#,
     ]);
     assert_eq!(resps[0]["result"]["isError"], true);
     let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();

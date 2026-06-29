@@ -7,8 +7,8 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, ValueEnum};
-use elenchus_compiler::FileResolver;
-use elenchus_solver::{CompileError, Report, verify, verify_source};
+use elenchus_compiler::{FileResolver, read_data_bindings};
+use elenchus_solver::{CompileError, PortBinding, Report, verify_source_with, verify_with};
 
 #[derive(Parser)]
 #[command(
@@ -54,6 +54,24 @@ struct Cli {
     /// line, so a class with hundreds of hits does not flood the output.
     #[arg(long, default_value_t = 0)]
     max_per_class: usize,
+
+    /// Supply external values for `VAR` ports, as a space-separated string of
+    /// `name:true|false` pairs, e.g. `--set "db_ready:true deploy_ok:false"`.
+    /// Repeatable; all pairs are merged (a key set twice to different values is an
+    /// error).
+    #[arg(long)]
+    set: Vec<String>,
+
+    /// A data file of `PROVIDE <name>: true|false` lines, supplying port values.
+    /// Repeatable. A key set to different values by two sources (any `--data` or
+    /// `--set`) is an error.
+    #[arg(long)]
+    data: Vec<String>,
+
+    /// Hide the PLACEHOLDERS section from the human report (print only the verdict,
+    /// as before ports existed). The JSON form always includes it.
+    #[arg(long)]
+    hide_params: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -82,7 +100,7 @@ fn main() -> ExitCode {
         }
     };
     match cli.format {
-        Format::Human => println!("{report}"),
+        Format::Human => println!("{}", report.render_human(!cli.hide_params)),
         Format::Json => println!("{}", report.to_json()),
     }
     ExitCode::from(report.exit_code() as u8)
@@ -111,8 +129,10 @@ fn print_error(e: &CliError, max_classes: usize, max_per_class: usize) {
 }
 
 fn build_report(cli: &Cli) -> Result<Report, CliError> {
+    let mut inputs = parse_set(&cli.set)?;
+    inputs.extend(load_data_files(&cli.data)?);
     if let Some(text) = &cli.text {
-        return verify_source("<text>", text).map_err(CliError::Compile);
+        return verify_source_with("<text>", text, &inputs).map_err(CliError::Compile);
     }
     match cli.file.as_deref() {
         Some(path) => {
@@ -122,14 +142,65 @@ fn build_report(cli: &Cli) -> Result<Report, CliError> {
                 std::io::stdin()
                     .read_to_string(&mut buf)
                     .map_err(|e| CliError::Other(format!("reading stdin: {e}")))?;
-                verify_source("<stdin>", &buf).map_err(CliError::Compile)
+                verify_source_with("<stdin>", &buf, &inputs).map_err(CliError::Compile)
             } else {
                 // A real file: resolve IMPORTs relative to it.
-                verify(path, &FileResolver).map_err(CliError::Compile)
+                verify_with(path, &FileResolver, &inputs).map_err(CliError::Compile)
             }
         }
         None => Err(CliError::Other(
             "no input provided; pass a file, --text, or - for stdin".to_string(),
         )),
     }
+}
+
+/// Parse the `--set` strings into `(name, binding)` pairs. Each string is a
+/// whitespace-separated list of `name:true|false` tokens (so one `--set
+/// "a:true b:false"` and two `--set a:true --set b:false` are equivalent). A
+/// malformed token is a usage error (exit 2). Duplicate/conflicting keys are
+/// detected later, by the compiler, so both origins can be named.
+fn parse_set(values: &[String]) -> Result<Vec<(String, PortBinding)>, CliError> {
+    let mut out = Vec::new();
+    for chunk in values {
+        for tok in chunk.split_whitespace() {
+            let (name, val) = tok.split_once(':').ok_or_else(|| {
+                CliError::Other(format!(
+                    "bad --set token `{tok}` — expected name:true|false"
+                ))
+            })?;
+            let value = match val {
+                "true" => true,
+                "false" => false,
+                _ => {
+                    return Err(CliError::Other(format!(
+                        "bad --set value in `{tok}` — expected true or false"
+                    )));
+                }
+            };
+            out.push((
+                name.to_string(),
+                PortBinding {
+                    value,
+                    origin: "CLI".to_string(),
+                },
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// Read each `--data <file>` of `PROVIDE` lines into `(name, binding)` pairs,
+/// tagged `data:<file>`. A read error is a usage error; a non-`PROVIDE` statement
+/// surfaces as a compile error (exit 2).
+fn load_data_files(paths: &[String]) -> Result<Vec<(String, PortBinding)>, CliError> {
+    let mut out = Vec::new();
+    for path in paths {
+        let src = std::fs::read_to_string(path)
+            .map_err(|e| CliError::Other(format!("reading data file {path}: {e}")))?;
+        // `read_data_bindings` is the shared bridge (origin `data:<path>`) used by
+        // every surface, so a `--data` file resolves identically here, in wasm, and
+        // in MCP.
+        out.extend(read_data_bindings(path, &src).map_err(CliError::Compile)?);
+    }
+    Ok(out)
 }

@@ -21,7 +21,9 @@ fn premise_redefinition() {
 
 #[test]
 fn parse_error_is_wrapped_with_source() {
-    let e = compile_source("main.vrf", "FACT lonely\n").unwrap_err();
+    // Trailing text after the atom is a genuine syntax error (a single-word
+    // `FACT lonely` now parses as a bare proposition, so it is no longer one).
+    let e = compile_source("main.vrf", "FACT a b c d\n").unwrap_err();
     insta::assert_snapshot!(format!("{e}"));
 }
 

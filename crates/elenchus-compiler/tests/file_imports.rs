@@ -8,7 +8,9 @@
 //! Cargo runs an integration test with the working directory set to the package
 //! root, so these relative paths resolve and stay portable in snapshots.
 
-use elenchus_compiler::{CompileError, FileResolver, compile};
+use elenchus_compiler::{
+    CompileError, FileResolver, MemoryResolver, compile, normalize_import_path,
+};
 
 fn fixture(rel: &str) -> String {
     format!("tests/fixtures/{rel}")
@@ -35,7 +37,9 @@ fn fact_unifies_with_imported_premise_atom() {
         .atoms
         .iter()
         .position(|a| {
-            a.subject == "Car" && a.predicate == "has" && a.object.as_deref() == Some("fuel")
+            a.subject == "Car"
+                && a.predicate.as_deref() == Some("has")
+                && a.object.as_deref() == Some("fuel")
         })
         .expect("Car has fuel atom") as u32;
 
@@ -84,4 +88,55 @@ fn parse_error_in_imported_file_names_that_file() {
         }
         other => panic!("expected a Parse error naming the imported file, got {other:?}"),
     }
+}
+
+// --- import-path normalization (shared by every Resolver, OS-independent) -----
+
+#[test]
+fn normalize_import_path_is_os_independent() {
+    // Resolution is identical whether the path uses `/` or `\`, and `.`/`..`
+    // collapse the same way — so a Windows and a Unix import reach the same
+    // virtual path on every transport (CLI FileResolver, wasm JsResolver, MCP
+    // MemoryResolver), regardless of the host or the compile target.
+    let cases = [
+        // (base, relative, expected)
+        ("root.vrf", "a.vrf", "a.vrf"),                   // flat
+        ("dir/root.vrf", "a.vrf", "dir/a.vrf"),           // sibling in base's dir
+        ("dir/root.vrf", "./a.vrf", "dir/a.vrf"),         // explicit current dir
+        ("dir/sub/root.vrf", "../a.vrf", "dir/a.vrf"),    // parent
+        ("dir\\sub\\root.vrf", "a.vrf", "dir/sub/a.vrf"), // Windows base separators
+        ("dir/root.vrf", "sub\\a.vrf", "dir/sub/a.vrf"),  // Windows relative separators
+        ("a/b/c.vrf", "..\\d\\e.vrf", "a/d/e.vrf"),       // mixed separators + parent
+        ("/x/y/root.vrf", "a.vrf", "/x/y/a.vrf"),         // absolute base is preserved
+    ];
+    for (base, relative, expected) in cases {
+        assert_eq!(
+            normalize_import_path(base, relative),
+            expected,
+            "normalize({base:?}, {relative:?})"
+        );
+    }
+}
+
+#[test]
+fn memory_resolver_resolves_a_windows_style_import_end_to_end() {
+    // A program authored with a Windows-style import path (`sub\dep.vrf`) resolves
+    // through MemoryResolver against the `/`-keyed source — proving the resolver
+    // delegates to the shared normalizer, not just that the normalizer is correct
+    // in isolation. If the `\` were not normalized, the import would not be found.
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN root\nIMPORT \"sub\\dep.vrf\"\nFACT sub.x on\nCHECK\n",
+    )
+    .add("sub/dep.vrf", "DOMAIN sub\nNOT x on\n");
+
+    let ir = compile("root.vrf", &r).expect("the `\\`-style import must resolve");
+    // The imported domain's atom is present → the file was actually loaded.
+    assert!(
+        ir.atoms
+            .iter()
+            .any(|a| a.domain == "sub" && a.subject == "x"),
+        "imported atom missing — the windows-style path did not resolve"
+    );
 }

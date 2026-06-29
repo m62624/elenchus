@@ -8,7 +8,10 @@
 
 use elenchus_compiler::{AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, Rule, Value};
 use elenchus_solver::sat::{self, Cnf, SatLit, Solved, Var};
-use elenchus_solver::{Status, TraceReason, compile_source, solve, verify_source};
+use elenchus_solver::{
+    CompileError, MemoryResolver, PortBinding, Status, TraceReason, compile_source,
+    compile_source_with, solve, verify_source, verify_source_with, verify_with,
+};
 use proptest::prelude::*;
 
 // --- brute-force oracle ----------------------------------------------------
@@ -191,7 +194,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         .map(|i| AtomKey {
             domain: "t".into(),
             subject: "s".into(),
-            predicate: alloc_p(i),
+            predicate: Some(alloc_p(i)),
             object: None,
         })
         .collect();
@@ -236,6 +239,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         pending_imports: Vec::new(),
         unused_imports: Vec::new(),
         consumed: Vec::new(),
+        placeholders: Vec::new(),
     }
 }
 
@@ -689,7 +693,11 @@ proptest! {
         let mut id_of = vec![None; case.k];
         for (id, key) in compiled.atoms.iter().enumerate() {
             if key.subject == "x"
-                && let Some(i) = key.predicate.strip_prefix('a').and_then(|n| n.parse::<usize>().ok())
+                && let Some(i) = key
+                    .predicate
+                    .as_deref()
+                    .and_then(|p| p.strip_prefix('a'))
+                    .and_then(|n| n.parse::<usize>().ok())
                 && i < case.k
             {
                 id_of[i] = Some(id as u32);
@@ -719,5 +727,223 @@ proptest! {
             });
             prop_assert_eq!(impl_ok, clauses_ok, "mask={} case={:?}", mask, case);
         }
+    }
+}
+
+// --- external boolean ports (VAR / DEFAULT / values) -------------------------
+// The eight port invariants (plan §7). The load-bearing one is the substitution
+// oracle: a resolved port must be observationally equal to a plain `FACT`/`NOT`
+// of the same proposition — ports add scheduling of truth, never new semantics.
+
+/// A declared port: `(name, optional DEFAULT, negated-in-antecedent)`. Names are
+/// `p0..pN`, distinct by construction.
+type PortSpec = (String, Option<bool>, bool);
+
+/// A bare port name that can never collide with the CAPS reserved words.
+fn port_name() -> impl Strategy<Value = String> {
+    "[a-z][a-z0-9_]{0,4}"
+}
+
+/// 1..=4 distinct ports, each with an optional `DEFAULT` and a use-polarity, plus
+/// an external value per port (`None` = not supplied).
+fn port_case() -> impl Strategy<Value = (Vec<PortSpec>, Vec<Option<bool>>)> {
+    (1usize..=4)
+        .prop_flat_map(|n| {
+            let specs = prop::collection::vec((prop::option::of(any::<bool>()), any::<bool>()), n);
+            (Just(n), specs)
+        })
+        .prop_flat_map(|(n, specs)| {
+            let ports: Vec<PortSpec> = specs
+                .into_iter()
+                .enumerate()
+                .map(|(i, (default, neg))| (format!("p{i}"), default, neg))
+                .collect();
+            let binds = prop::collection::vec(prop::option::of(any::<bool>()), n);
+            (Just(ports), binds)
+        })
+}
+
+fn bool_word(b: bool) -> &'static str {
+    if b { "true" } else { "false" }
+}
+
+fn lit_src(name: &str, neg: bool) -> String {
+    if neg {
+        format!("NOT {name}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The shared body: a single premise whose antecedent is the conjunction of every
+/// port's (possibly negated) literal, forcing `goal x` — which `NOT goal x` denies.
+/// So the verdict is a pure function of the resolved port values (CONFLICT when the
+/// antecedent holds, WARNING when an UNKNOWN port leaves it undecided, else CONSISTENT).
+fn port_body(ports: &[PortSpec]) -> String {
+    let mut s = String::from("NOT goal x\nPREMISE g:\n");
+    let (first, rest) = ports.split_first().unwrap();
+    s.push_str(&format!("    WHEN {}\n", lit_src(&first.0, first.2)));
+    for (name, _, neg) in rest {
+        s.push_str(&format!("    AND {}\n", lit_src(name, *neg)));
+    }
+    s.push_str("    THEN goal x\nCHECK\n");
+    s
+}
+
+/// Program A: ports declared with their `DEFAULT`s, values supplied externally.
+fn build_ports(ports: &[PortSpec]) -> String {
+    let mut s = String::from("DOMAIN d\n");
+    for (name, default, _) in ports {
+        s.push_str(&format!("VAR {name}"));
+        if let Some(d) = default {
+            s.push_str(&format!(" DEFAULT {}", bool_word(*d)));
+        }
+        s.push('\n');
+    }
+    s.push_str(&port_body(ports));
+    s
+}
+
+/// Program B (the oracle): the *same* logic, but every resolved port is written out
+/// as a literal `FACT name` / `NOT name` (and an UNKNOWN port is simply omitted),
+/// with no external values. Ports keep their `VAR` so the bare atoms stay declared,
+/// but carry no `DEFAULT` — resolution is done by hand here.
+fn build_substituted(ports: &[PortSpec], binds: &[Option<bool>]) -> String {
+    let mut s = String::from("DOMAIN d\n");
+    for (name, _, _) in ports {
+        s.push_str(&format!("VAR {name}\n"));
+    }
+    for ((name, default, _), b) in ports.iter().zip(binds) {
+        if let Some(v) = b.or(*default) {
+            s.push_str(&format!("{} {name}\n", if v { "FACT" } else { "NOT" }));
+        }
+    }
+    s.push_str(&port_body(ports));
+    s
+}
+
+/// External bindings from the supplied values (origin is irrelevant to the verdict).
+fn inputs_from(ports: &[PortSpec], binds: &[Option<bool>]) -> Vec<(String, PortBinding)> {
+    ports
+        .iter()
+        .zip(binds)
+        .filter_map(|((name, _, _), b)| {
+            b.map(|value| {
+                (
+                    name.clone(),
+                    PortBinding {
+                        value,
+                        origin: "CLI".into(),
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+/// The verdict-relevant shape of a report: status plus each conflict's sorted atom
+/// labels. Atom *labels* are identical between a port and its `FACT` substitution
+/// (same atom key), whereas the fact's *origin* (VAR vs FACT) is not — so we compare
+/// the shape, not the trace provenance.
+fn verdict_shape(r: &elenchus_solver::Report) -> (Status, Vec<Vec<String>>) {
+    let mut conflicts: Vec<Vec<String>> = r
+        .conflicts
+        .iter()
+        .map(|c| {
+            let mut a = c.atoms.clone();
+            a.sort();
+            a
+        })
+        .collect();
+    conflicts.sort();
+    (r.status, conflicts)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    /// (1,3,4) Substitution oracle: a program with `VAR` ports + external/`DEFAULT`
+    /// values yields the same verdict as the program where each resolved port is a
+    /// literal `FACT`/`NOT` (external overrides `DEFAULT`; an unset port with no
+    /// `DEFAULT` stays UNKNOWN). Ports add no semantics beyond `FACT`/`NOT`.
+    #[test]
+    fn ports_are_equivalent_to_fact_substitution((ports, binds) in port_case()) {
+        let a = verify_source_with("<a>", &build_ports(&ports), &inputs_from(&ports, &binds))
+            .map_err(|e| TestCaseError::fail(format!("A: {e}")))?;
+        let b = verify_source_with("<b>", &build_substituted(&ports, &binds), &[])
+            .map_err(|e| TestCaseError::fail(format!("B: {e}")))?;
+        prop_assert_eq!(verdict_shape(&a), verdict_shape(&b));
+    }
+
+    /// (7) Determinism: identical program + inputs ⇒ byte-identical result.
+    #[test]
+    fn port_resolution_is_deterministic((ports, binds) in port_case()) {
+        let src = build_ports(&ports);
+        let inputs = inputs_from(&ports, &binds);
+        prop_assert_eq!(
+            verify_source_with("<d>", &src, &inputs),
+            verify_source_with("<d>", &src, &inputs)
+        );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// (2) Two disagreeing bindings on one port are *always* a hard error — never a
+    /// silent pick. Determinism over override.
+    #[test]
+    fn disagreeing_bindings_always_conflict(name in port_name(), v in any::<bool>()) {
+        let src = format!("DOMAIN d\nVAR {name}\nCHECK\n");
+        let inputs = vec![
+            (name.clone(), PortBinding { value: v, origin: "CLI".into() }),
+            (name.clone(), PortBinding { value: !v, origin: "api".into() }),
+        ];
+        let err = verify_source_with("<c>", &src, &inputs).unwrap_err();
+        prop_assert!(matches!(err, CompileError::PortConflict { .. }), "{err:?}");
+    }
+
+    /// (5) A used bare proposition with no `VAR` is a hard `UndeclaredPort` error.
+    #[test]
+    fn undeclared_bare_proposition_is_an_error(name in port_name()) {
+        let src = format!("DOMAIN d\nFACT {name}\nCHECK\n");
+        let err = verify_source_with("<u>", &src, &[]).unwrap_err();
+        prop_assert!(matches!(err, CompileError::UndeclaredPort { .. }), "{err:?}");
+    }
+
+    /// (6) A bare name declared in two *domains* (each its own file, aggregated by
+    /// import) is ambiguous once externally set — which port the value means is
+    /// undecidable, so it is a hard error.
+    #[test]
+    fn cross_domain_name_is_ambiguous_when_set(name in port_name(), v in any::<bool>()) {
+        let mut r = MemoryResolver::new();
+        r.add("root.vrf", "DOMAIN r\nIMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nCHECK\n")
+            .add("a.vrf", &format!("DOMAIN a\nVAR {name}\n"))
+            .add("b.vrf", &format!("DOMAIN b\nVAR {name}\n"));
+        let inputs = vec![(name.clone(), PortBinding { value: v, origin: "CLI".into() })];
+        let err = verify_with("root.vrf", &r, &inputs).unwrap_err();
+        prop_assert!(matches!(err, CompileError::AmbiguousPort { .. }), "{err:?}");
+    }
+
+    /// (8) Encoding size stays linear in the number of ports — no combinatorial
+    /// blow-up. Each of the `n` one-port premises lowers to a single clause.
+    #[test]
+    fn clause_count_is_linear_in_ports(n in 1usize..=12) {
+        let mut src = String::from("DOMAIN d\n");
+        for i in 0..n {
+            src.push_str(&format!("VAR p{i}\n"));
+        }
+        src.push_str("NOT goal x\n");
+        for i in 0..n {
+            src.push_str(&format!("PREMISE g{i}:\n    WHEN p{i}\n    THEN goal x\n"));
+        }
+        src.push_str("CHECK\n");
+        let compiled = compile_source_with("<l>", &src, &[]).unwrap();
+        prop_assert!(
+            compiled.clauses.len() <= 2 * n + 2,
+            "clauses={} n={}",
+            compiled.clauses.len(),
+            n
+        );
     }
 }

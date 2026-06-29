@@ -2,7 +2,9 @@
 //! `elenchus_about` — their schema definitions and the `tools/call` executor.
 //! Descriptions come from [`crate::messages`]; envelopes from [`crate::rpc`].
 
-use elenchus_solver::{CompileError, verify_source};
+use elenchus_solver::{
+    CompileError, MemoryResolver, PortBinding, read_data_bindings, verify_source_with, verify_with,
+};
 use serde_json::{Value, json};
 
 use crate::{messages, rpc};
@@ -51,6 +53,21 @@ fn check_def() -> Value {
                     "type": "integer",
                     "minimum": 0,
                     "description": messages::CHECK_ARG_MAX_PER_CLASS
+                },
+                "values": {
+                    "type": "object",
+                    "additionalProperties": { "type": "boolean" },
+                    "description": messages::CHECK_ARG_VALUES
+                },
+                "files": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": messages::CHECK_ARG_FILES
+                },
+                "data": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": messages::CHECK_ARG_DATA
                 }
             },
             "required": ["program"]
@@ -90,6 +107,12 @@ pub fn call(id: Value, params: Option<&Value>) -> Value {
 /// The `elenchus_check` body: pull `program` (required) and `format` (default
 /// `"json"`), run the engine, and return the human or JSON report. A missing
 /// `program` or a parse/compile error is a tool-level error (`isError`).
+///
+/// `program` is the entry source. Two optional surfaces mirror the CLI's reach so
+/// the three transports behave identically: `files` (an in-memory `{ path: text }`
+/// import set, the resolver-less server's stand-in for the filesystem, enabling
+/// IMPORT / multi-domain) and `data` (`{ name: PROVIDE-only text }`, the analog of
+/// `--data`). `values` + `data` both feed VAR ports.
 fn check(id: Value, args: Option<&Value>) -> Value {
     let Some(program) = args.and_then(|a| a.get("program")).and_then(Value::as_str) else {
         return rpc::tool_result(id, "missing required argument: program".into(), true);
@@ -105,8 +128,31 @@ fn check(id: Value, args: Option<&Value>) -> Value {
             .unwrap_or(0) as usize;
         (n > 0).then_some(n)
     };
+    // Port values: inline `values` ({ port: bool }) plus `data` ({ name: PROVIDE
+    // text }). A bad data file (a non-PROVIDE statement) is a tool error.
+    let inputs = match collect_inputs(args) {
+        Ok(inputs) => inputs,
+        Err(e) => return rpc::tool_result(id, e.to_string(), true),
+    };
 
-    match verify_source("<mcp>", program) {
+    // IMPORT: when `files` is present, resolve the graph through an in-memory store
+    // (program registered as the `<mcp>` root); otherwise it is a single source.
+    let result = match args.and_then(|a| a.get("files")).and_then(Value::as_object) {
+        Some(files) if !files.is_empty() => {
+            let mut resolver = MemoryResolver::new();
+            for (path, content) in files {
+                if let Some(text) = content.as_str() {
+                    resolver.add(path, text);
+                }
+            }
+            // Add the root last so a stray `files["<mcp>"]` can never shadow it.
+            resolver.add("<mcp>", program);
+            verify_with("<mcp>", &resolver, &inputs)
+        }
+        _ => verify_source_with("<mcp>", program, &inputs),
+    };
+
+    match result {
         Ok(report) => {
             let text = if format == "human" {
                 format!("{report}")
@@ -124,4 +170,36 @@ fn check(id: Value, args: Option<&Value>) -> Value {
         }
         Err(other) => rpc::tool_result(id, other.to_string(), true),
     }
+}
+
+/// Merge `values` (inline `{ port: bool }`, origin `api`) and `data` (`{ name:
+/// PROVIDE-only text }`, parsed like a `--data` file) into one input list. A
+/// non-boolean `values` entry is skipped; a non-`PROVIDE` statement in a `data`
+/// source is a compile error.
+fn collect_inputs(args: Option<&Value>) -> Result<Vec<(String, PortBinding)>, CompileError> {
+    let mut inputs: Vec<(String, PortBinding)> = Vec::new();
+    if let Some(m) = args
+        .and_then(|a| a.get("values"))
+        .and_then(Value::as_object)
+    {
+        for (k, v) in m {
+            if let Some(value) = v.as_bool() {
+                inputs.push((
+                    k.clone(),
+                    PortBinding {
+                        value,
+                        origin: "api".to_string(),
+                    },
+                ));
+            }
+        }
+    }
+    if let Some(m) = args.and_then(|a| a.get("data")).and_then(Value::as_object) {
+        for (name, content) in m {
+            if let Some(src) = content.as_str() {
+                inputs.extend(read_data_bindings(name, src)?);
+            }
+        }
+    }
+    Ok(inputs)
 }

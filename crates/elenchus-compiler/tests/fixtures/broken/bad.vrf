@@ -1,2 +1,2 @@
-// Intentionally malformed: a FACT with no predicate.
-FACT lonely
+// Intentionally malformed: trailing text after a FACT atom (a real syntax error).
+FACT a b c d

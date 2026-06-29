@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"VAR k DEFAULT\\n\")"
+---
+RESULT: 1 syntax error
+
+DEFAULT  (1 problem)
+  syntax  : VAR <name> DEFAULT true|false
+  example : VAR db_ready DEFAULT false
+    line 1, col 14 - DEFAULT expects a value: DEFAULT true|false
+      | VAR k DEFAULT
+      |              ^

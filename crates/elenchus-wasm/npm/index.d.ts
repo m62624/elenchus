@@ -5,17 +5,27 @@
 /** Output format for the verdict. Defaults to `"json"`. */
 export type Format = "json" | "human";
 
+/** External `VAR` port values: `{ portName: true | false }`. A key set to two
+ * different values across sources is a hard error. */
+export type Values = Record<string, boolean>;
+
+/** `VAR` port values carried as data-file text: `{ name: "<PROVIDE-only .vrf>" }`.
+ * Each value is parsed like a CLI `--data` file (only `PROVIDE` lines allowed). */
+export type Data = Record<string, string>;
+
 /**
  * Check an inline `.vrf` program. `IMPORT` is NOT resolved here — use
  * {@link checkWithResolver} or {@link checkFileWithImports} for multi-file
  * programs. `maxClasses` / `maxPerClass` cap the grouped output on a syntax
- * error (0 / omitted = no cap).
+ * error (0 / omitted = no cap). `values` and `data` supply `VAR` port values.
  */
 export function check(
   program: string,
   format?: Format,
   maxClasses?: number,
   maxPerClass?: number,
+  values?: Values,
+  data?: Data,
 ): string;
 
 /**
@@ -29,6 +39,8 @@ export function checkWithResolver(
   format?: Format,
   maxClasses?: number,
   maxPerClass?: number,
+  values?: Values,
+  data?: Data,
 ): string;
 
 /** Read a single `.vrf` file (Node) and check it (no IMPORT resolution). */
@@ -37,6 +49,8 @@ export function checkFile(
   format?: Format,
   maxClasses?: number,
   maxPerClass?: number,
+  values?: Values,
+  data?: Data,
 ): string;
 
 /** Check a `.vrf` file (Node), resolving IMPORTs through the filesystem. */
@@ -45,6 +59,8 @@ export function checkFileWithImports(
   format?: Format,
   maxClasses?: number,
   maxPerClass?: number,
+  values?: Values,
+  data?: Data,
 ): string;
 
 /** The running engine version, e.g. `"elenchus 0.9.1"` (engine, not package). */

@@ -57,8 +57,9 @@ mod tests {
         parse(src).expect("should parse")
     }
 
-    /// `(subject, predicate, object?)` of one atom, borrowed from the source.
-    type AtomShape<'a> = (&'a str, &'a str, Option<&'a str>);
+    /// `(subject, predicate?, object?)` of one atom, borrowed from the source.
+    /// `predicate` is `None` for a bare proposition (a `VAR` port used in a body).
+    type AtomShape<'a> = (&'a str, Option<&'a str>, Option<&'a str>);
     /// A list premise flattened to `(operator, its atoms)`.
     type ListShape<'a> = (ListOp, Vec<AtomShape<'a>>);
 
@@ -97,7 +98,7 @@ mod tests {
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "Creature_A");
-                assert_eq!(a.data.predicate, "has");
+                assert_eq!(a.data.predicate, Some("has"));
                 assert_eq!(a.data.object, Some("flying"));
             }
             other => panic!("expected fact, got {:?}", other),
@@ -116,10 +117,67 @@ mod tests {
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "Motor");
-                assert_eq!(a.data.predicate, "over_100");
+                assert_eq!(a.data.predicate, Some("over_100"));
                 assert_eq!(a.data.object, None);
             }
             other => panic!("expected fact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_proposition_parses_with_no_predicate() {
+        // A lone identifier is a bare proposition (a VAR port used as an atom):
+        // predicate and object both None. Legality (declared VAR) is the compiler's.
+        let p = prog("FACT db_ready\n");
+        match &p.statements[0] {
+            Statement::Fact(a) => {
+                assert_eq!(a.data.subject, "db_ready");
+                assert_eq!(a.data.predicate, None);
+                assert_eq!(a.data.object, None);
+            }
+            other => panic!("expected fact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn var_parses_with_and_without_default() {
+        let p = prog(
+            r#"
+        VAR db_ready DEFAULT false
+        VAR deploy_ok
+        "#,
+        );
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[0] {
+            Statement::Var { name, default } => {
+                assert_eq!(name.data, "db_ready");
+                assert_eq!(*default, Some(false));
+            }
+            other => panic!("expected var, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Var { name, default } => {
+                assert_eq!(name.data, "deploy_ok");
+                assert_eq!(*default, None);
+            }
+            other => panic!("expected var, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn provide_parses_name_and_value() {
+        let p = prog("PROVIDE db_ready: true\nPROVIDE deploy_ok: false\n");
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[0] {
+            Statement::Provide { name, value } => {
+                assert_eq!(name.data, "db_ready");
+                assert!(*value);
+            }
+            other => panic!("expected provide, got {:?}", other),
+        }
+        match &p.statements[1] {
+            Statement::Provide { value, .. } => assert!(!*value),
+            other => panic!("expected provide, got {:?}", other),
         }
     }
 
@@ -136,7 +194,7 @@ mod tests {
             Statement::Assume(l) => {
                 assert!(!l.data.negated);
                 assert_eq!(l.data.atom.subject, "rel");
-                assert_eq!(l.data.atom.predicate, "in_prod");
+                assert_eq!(l.data.atom.predicate, Some("in_prod"));
                 assert_eq!(l.data.atom.object, None);
             }
             other => panic!("expected assume, got {:?}", other),
@@ -144,7 +202,7 @@ mod tests {
         match &p.statements[1] {
             Statement::Assume(l) => {
                 assert!(l.data.negated);
-                assert_eq!(l.data.atom.predicate, "has_rollback");
+                assert_eq!(l.data.atom.predicate, Some("has_rollback"));
             }
             other => panic!("expected negated assume, got {:?}", other),
         }
@@ -196,7 +254,7 @@ mod tests {
             Statement::Fact(a) => {
                 assert_eq!(a.data.domain, Some("physics"));
                 assert_eq!(a.data.subject, "Motor");
-                assert_eq!(a.data.predicate, "over_200");
+                assert_eq!(a.data.predicate, Some("over_200"));
             }
             other => panic!("expected fact, got {:?}", other),
         }
@@ -392,7 +450,7 @@ mod tests {
                 ..
             } => {
                 assert!(antecedent[0].data.negated);
-                assert_eq!(antecedent[0].data.atom.predicate, "over_100");
+                assert_eq!(antecedent[0].data.atom.predicate, Some("over_100"));
             }
             other => panic!("expected rule, got {:?}", other),
         }
@@ -496,7 +554,7 @@ mod tests {
         match &p.statements[0] {
             Statement::Fact(a) => {
                 assert_eq!(a.data.subject, "кот");
-                assert_eq!(a.data.predicate, "пушистый2");
+                assert_eq!(a.data.predicate, Some("пушистый2"));
                 assert_eq!(a.data.object, None);
             }
             other => panic!("expected fact, got {:?}", other),
@@ -528,7 +586,7 @@ mod tests {
                     } => {
                         assert_eq!(antecedent[0].data.atom.subject, "собака");
                         assert_eq!(consequent[0].data.atom.subject, "собака");
-                        assert_eq!(consequent[0].data.atom.predicate, "умеет_лаять");
+                        assert_eq!(consequent[0].data.atom.predicate, Some("умеет_лаять"));
                     }
                     other => panic!("expected impl body, got {:?}", other),
                 }
@@ -574,8 +632,10 @@ FACT c d
     #[test]
     fn collects_every_error_in_one_pass() {
         // Three broken top-level lines among valid ones → exactly three errors,
-        // no cascade from recovery.
-        let src = "FACT lonely\nFACT a b\nNOT also_lonely\nCHECK\nIMPORT nothx\n";
+        // no cascade from recovery. (Single-word atoms are NOT errors anymore —
+        // they are bare propositions — so each broken line is broken for a real
+        // reason: a non-statement line, an unquoted IMPORT path, and trailing text.)
+        let src = "!nope\nFACT a b\nIMPORT nothx\nNOT a b c d\n";
         let diags = parse(src).expect_err("should fail");
         assert_eq!(diags.len(), 3);
     }
@@ -676,7 +736,7 @@ FACT c d
                 ..
             } => {
                 assert!(consequent[0].data.negated);
-                assert_eq!(consequent[0].data.atom.predicate, "off");
+                assert_eq!(consequent[0].data.atom.predicate, Some("off"));
             }
             other => panic!("unexpected {other:?}"),
         }

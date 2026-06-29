@@ -28,6 +28,126 @@ fn elenchus_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
 }
 
 #[test]
+fn set_supplies_a_port_value() {
+    // A VAR port driven true by --set fires the premise → CONSISTENT (exit 0), and
+    // the PLACEHOLDERS section reports it.
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nPREMISE g:\n    WHEN k\n    THEN x a\nFACT x a\nCHECK\n",
+        "--set",
+        "k:true",
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PARAM     k = true"), "stdout = {stdout}");
+}
+
+#[test]
+fn hide_params_suppresses_the_placeholders_section() {
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k DEFAULT true\nFACT x a\nCHECK\n",
+        "--hide-params",
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("PARAM"), "stdout = {stdout}");
+}
+
+#[test]
+fn conflicting_set_values_exit_2() {
+    // The same key set to two values is a hard error (determinism), exit 2.
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--set",
+        "k:true k:false",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("set to two different values"),
+        "stderr = {stderr}"
+    );
+}
+
+/// Write `content` to a uniquely named file under the test target's temp dir and
+/// return its path (cleaned up with the target dir, not per-test).
+fn temp_vrf(tag: &str, content: &str) -> String {
+    let path = format!("{}/cli-data-{tag}.vrf", env!("CARGO_TARGET_TMPDIR"));
+    std::fs::write(&path, content).expect("write temp data file");
+    path
+}
+
+#[test]
+fn data_file_supplies_a_port_value() {
+    // A PROVIDE in a --data file drives the premise and is reported with its origin.
+    let data = temp_vrf("supply", "PROVIDE k: true\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nPREMISE g:\n    WHEN k\n    THEN x a\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PARAM     k = true"), "stdout = {stdout}");
+    assert!(
+        stdout.contains(&format!("data:{data}")),
+        "stdout = {stdout}"
+    );
+}
+
+#[test]
+fn data_file_conflicting_with_set_exits_2() {
+    let data = temp_vrf("conflict", "PROVIDE k: false\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+        "--set",
+        "k:true",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("set to two different values"),
+        "stderr = {stderr}"
+    );
+}
+
+#[test]
+fn missing_data_file_is_a_usage_error() {
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        "definitely-not-here.vrf",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("reading data file"), "stderr = {stderr}");
+}
+
+#[test]
+fn data_file_with_logic_is_rejected() {
+    // A data file may carry only PROVIDE (and DOMAIN); a FACT in it is an error.
+    let data = temp_vrf("logic", "PROVIDE k: true\nFACT x a\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("data file may only contain PROVIDE"),
+        "stderr = {stderr}"
+    );
+}
+
+#[test]
 fn no_args_prints_help_instead_of_waiting_for_stdin() {
     let out = elenchus(&[]);
     assert_eq!(out.status.code(), Some(2));
@@ -159,7 +279,7 @@ fn help_points_agents_at_the_skill() {
 
 #[test]
 fn parse_error_exits_2_with_message() {
-    let out = elenchus(&["--text", "FACT lonely\n"]);
+    let out = elenchus(&["--text", "FACT a b c d\n"]);
     assert_eq!(out.status.code(), Some(2));
     // A syntax error prints the diagnostic block (header + caret + card), not a
     // bare `elenchus:` one-liner.
@@ -168,7 +288,10 @@ fn parse_error_exits_2_with_message() {
         stderr.contains("RESULT: 1 syntax error"),
         "stderr = {stderr}"
     );
-    assert!(stderr.contains("FACT expects an atom"), "stderr = {stderr}");
+    assert!(
+        stderr.contains("unexpected text after the FACT atom"),
+        "stderr = {stderr}"
+    );
 }
 
 #[test]
@@ -176,7 +299,7 @@ fn max_per_class_caps_places_within_a_class() {
     // Three FACT problems + one NOT; --max-per-class 1 shows one place per class.
     let out = elenchus(&[
         "--text",
-        "FACT one\nFACT two\nFACT three\nNOT four\n",
+        "FACT a b c d\nFACT a b c e\nFACT a b c f\nNOT a b c d\n",
         "--max-per-class",
         "1",
     ]);
@@ -197,7 +320,7 @@ fn max_classes_caps_the_number_of_classes() {
     // Two classes (FACT, NOT); --max-classes 1 shows only the first + a footer.
     let out = elenchus(&[
         "--text",
-        "FACT one\nFACT two\nNOT three\n",
+        "FACT a b c d\nFACT a b c e\nNOT a b c d\n",
         "--max-classes",
         "1",
     ]);
@@ -209,7 +332,7 @@ fn max_classes_caps_the_number_of_classes() {
 #[test]
 fn all_syntax_errors_grouped_by_class_by_default() {
     // No caps → every class and place is rendered, no "more" footers.
-    let out = elenchus(&["--text", "FACT one\nFACT two\nNOT three\n"]);
+    let out = elenchus(&["--text", "FACT a b c d\nFACT a b c e\nNOT a b c d\n"]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

@@ -329,19 +329,36 @@ prune that line from your shell profile if nothing else uses it.
 
 ### CLI or MCP — which one?
 
-Both let an LLM run elenchus; the output is the same either way. The difference
-is setup cost:
+Both run the **same engine**, return the **same verdicts**, and now expose the
+**same capabilities** — `IMPORT` / multi-domain, `VAR` ports, and data files all
+work on every surface (CLI, MCP, and the wasm/npm build). The only differences are
+the transport and *how files are supplied*: the CLI reads them from the filesystem
+by path, while MCP and wasm — which have no filesystem — carry the file contents
+**inline** in the request.
 
-- **CLI (`elenchus-cli`)** — `elenchus-cli <file>` or `elenchus-cli --text "…"` from
-  the shell. Works in every harness that can run shell commands (Claude Code, any
-  CI pipeline, terminal). **Recommended: it needs no extra configuration, so if your
-  harness can run shell commands, use the CLI.**
-- **MCP server (`elenchus-mcp`)** — speaks stdio JSON-RPC. Worth the extra setup only
-  when your harness natively supports MCP and you'd rather not (or can't) run a
-  shell. Same output, more to configure.
+| | CLI (`elenchus-cli`) | MCP (`elenchus-mcp`) |
+|---|---|---|
+| Transport | shell command | stdio JSON-RPC |
+| Entry input | a file, `--text`, or stdin | one `program` string |
+| **`IMPORT` / multi-domain** | ✅ from the **filesystem** (file mode) | ✅ via a `files: { path: text }` map |
+| **`VAR` ports** | `--set "k:true"` and/or `--data file.vrf` | the `values: { k: true }` object and/or `data: { name: text }` |
+| Hide the PLACEHOLDERS section | `--hide-params` | n/a (JSON always carries it) |
+| Setup | none | configure the MCP server |
 
-The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both — it works
-identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.
+- **Use the CLI** when your harness can run a shell (Claude Code, CI, a terminal).
+  Files come straight from disk, so multi-file templates and `--data` files need no
+  inlining. **Recommended whenever a shell is available.**
+- **Use the MCP server** when your harness speaks MCP natively and you'd rather not
+  (or can't) run a shell. Same reach — for a multi-file template, send the imported
+  sources inline in `files`; for data, pass `values` and/or `data`.
+
+The one shared exception is **pure inline text** (CLI `--text`/stdin, MCP/wasm with
+no `files`): a single source resolves no `IMPORT`. The moment files/imports are in
+play, all three resolve them identically (the path normalizer is shared, so Windows-
+and Unix-style import paths behave the same everywhere).
+
+The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both and tells the
+agent how to drive whichever transport it has.
 
 ### CLI
 
@@ -349,13 +366,20 @@ One input three ways: a positional `elenchus-cli <file.vrf>`, inline
 `--text "<program>"`, or explicit stdin with `-`; `--text` and a file are
 mutually exclusive. Running `elenchus-cli` with no input prints help instead of
 waiting on stdin. `--format json` for tooling; exit code is the verdict (CI gate).
-Note: **`IMPORT` resolves only for the file form** — `--text`/stdin are a single
-source. See [`crates/elenchus-cli`](crates/elenchus-cli).
+`VAR` ports take values via `--set "k:true"` and/or `--data file.vrf`;
+`--hide-params` drops the PLACEHOLDERS section. Note: **`IMPORT` resolves only for
+the file form** — `--text`/stdin are a single source. See
+[`crates/elenchus-cli`](crates/elenchus-cli).
 
 ### MCP server
 
 `elenchus-mcp` speaks stdio JSON-RPC and exposes one tool, `elenchus_check`, for
-AI agents. See [`crates/elenchus-mcp`](crates/elenchus-mcp).
+AI agents (plus `elenchus_version` / `elenchus_about`). `program` is the entry
+source; optional arguments give it the CLI's full reach without a filesystem:
+`files` (`{ "path": "<.vrf text>" }`) supplies the sources its `IMPORT`s resolve
+against (multi-domain templates), while `values` (`{ "port": true|false }`) and
+`data` (`{ "name": "<PROVIDE text>" }`) bind `VAR` ports. See
+[`crates/elenchus-mcp`](crates/elenchus-mcp).
 
 ### Using the skill
 
@@ -389,9 +413,12 @@ the skill is loaded and elenchus is installed, it will know to do exactly that.
 | [`elenchus-solver`](crates/elenchus-solver) | `no_std` | The interpreter: three-valued Kleene forward pass + a compact CDCL SAT core (varisat algorithm) for the backward pass. |
 | [`elenchus-cli`](crates/elenchus-cli) | std | The `elenchus` command-line interface. |
 | [`elenchus-mcp`](crates/elenchus-mcp) | std | The Model Context Protocol server. |
+| [`elenchus-wasm`](crates/elenchus-wasm) | std | WebAssembly/JS build (`wasm-pack` → the `elenchus-wasm` npm package): `check(program, …, values)` in, JSON verdict out — for embedding the engine in a Node/browser host. |
 
 The three library crates build for a `no_std` target (`wasm32v1-none`), verified
-in CI.
+in CI. The same engine is also shipped to JavaScript as a WebAssembly module
+(`elenchus-wasm`), so a JS/TS host can embed it directly — same verdicts, same
+`VAR`-port `values` API.
 
 ## License
 

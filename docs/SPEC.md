@@ -365,6 +365,9 @@ namespacing and reuse.
 | `CLOSE … TRANSITIVE` | make a relation transitive at compile time (cycle = error) | quantification |
 | `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
 | `AS` | local alias for an imported domain | reuse |
+| `VAR` | declare an external boolean **port** — a single-word proposition whose truth is supplied from outside (`VAR <name> [DEFAULT true\|false]`) | templating |
+| `PROVIDE` | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) | templating |
+| `DEFAULT` | the fallback value for a `VAR` when nothing is supplied | templating |
 | `CHECK` / `BIDIRECTIONAL` | a query | query |
 
 ### Case convention (mandatory)
@@ -467,6 +470,75 @@ time graph step (zero solver cost), so a relation `FOR EACH` then ranges over
 *reachability*; a node that reaches itself is a **compile error**, making `CLOSE`
 double as an acyclicity (DAG) check.
 
+## External boolean ports: `VAR`, `PROVIDE`, `DEFAULT`
+
+A `.vrf` file is a **template** when its logic is fixed but some inputs arrive from
+outside — a CLI flag, an API call, the wasm/MCP surface, or a data file. `VAR`
+declares a named **port**: a single-word proposition whose truth is *deferred* to
+the caller. It is the parametrized counterpart of `ASSUME` — the engine schedules
+*when* the truth is decided, never *what* the proposition means. The "form, not
+content" rule still holds: a port is a deferred truth value, not string
+substitution into an atom.
+
+```
+// Declare a port — a bare proposition usable directly in bodies.
+VAR db_ready
+VAR deploy_ok DEFAULT false      // a fallback when nothing is supplied
+
+// Use the bare name like any atom (no subject/predicate needed):
+PREMISE gate:
+    WHEN db_ready
+    AND  deploy_ok
+    THEN release a
+
+// Supply a value from a data file (loaded via --data), or inline:
+PROVIDE db_ready: true
+```
+
+A port name doubles as **the proposition** (`WHEN db_ready …`) and as **the key**
+external values bind to. It extends the atom model: the predicate becomes optional,
+so a one-word atom (`db_ready`) is a legal *bare proposition*. An atom's identity is
+still `(domain, subject, predicate?, object?)`; a port is `(domain, name, ⊥, ⊥)`.
+
+**Resolution (`supplied > DEFAULT > unset`).** For each declared port:
+
+- an **external value** (`--set`, API `values`, or a `PROVIDE`) wins;
+- else its **`DEFAULT`**, if written;
+- else it stays **UNKNOWN** — *not* an error. An unsupplied port with no default is
+  simply absent information, so a premise that needs it yields WARNING (and
+  `CHECK BIDIRECTIONAL` UNDERDETERMINED). This is the three-valued engine working as
+  designed, not a failure.
+
+A resolved port is observationally **exactly** a `FACT name` / `NOT name` of the same
+proposition — it adds no semantics beyond asserting that atom. (This equivalence is
+pinned by a property test: a program with `VAR` + values yields the same verdict as
+the program with each resolved port written out as a literal `FACT`/`NOT`.)
+
+**Hard errors (exit 2), by design — the engine is about determinism and clarity:**
+
+- a **conflict** — two sources set one port to different values (`--set db_ready:true`
+  with `PROVIDE db_ready: false`) — is never silently resolved; it is a `PortConflict`.
+- a used bare proposition with **no `VAR`** is an `UndeclaredPort` (catches a typo'd
+  `FACT engien`).
+- an external value naming **no declared port** is an `UnknownPort` (a silent ignore
+  would hide a mistake).
+- a value naming a port whose bare name is declared in **more than one domain** is an
+  `AmbiguousPort` (ports match by bare name across the import graph).
+
+**Data files (`--data`).** A `--data` file carries *only* values: it may contain
+`PROVIDE` (and `DOMAIN`) and nothing else — logic in a data file is a hard error.
+Bindings from every compiled file and every external source land in one pool, so a
+conflict is detected wherever the two disagreeing values come from. A runnable pair
+ships in `docs/examples/`: the template `deploy-gate.vrf` (which declares the
+`VAR` ports) and the values-only `deploy-gate.data.vrf` (`PROVIDE` lines) —
+`elenchus deploy-gate.vrf --data deploy-gate.data.vrf`.
+
+**The placeholders report.** Every run prints a PLACEHOLDERS section (and a
+`placeholders` array in JSON) listing each port as **Supplied** (value + origin),
+**DEFAULT** (value), or **Unset** (UNKNOWN) — so a caller sees at a glance which keys
+were used, defaulted, or left open. It is advisory: it never changes the verdict or
+exit code. `--hide-params` suppresses it from the human report (JSON always keeps it).
+
 ## IMPORT — reuse over a source-agnostic engine
 
 The engine is **source-agnostic: it consumes strings.** A file is merely one way
@@ -564,7 +636,7 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = domain | import | set | close | fact | negation | assume | premise | rule | check ;
+statement   = domain | import | set | close | fact | negation | assume | var | provide | premise | rule | check ;
 
 domain      = "DOMAIN" , name , NEWLINE ;      (* required, first statement of a file *)
 import      = "IMPORT" , string , [ "AS" , name ] , NEWLINE ;
@@ -574,6 +646,9 @@ close       = "CLOSE" , name , "TRANSITIVE" , NEWLINE ;
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
+var         = "VAR" , name , [ "DEFAULT" , bool ] , NEWLINE ;  (* external boolean port *)
+provide     = "PROVIDE" , name , ":" , bool , NEWLINE ;        (* bind a port's value *)
+bool        = "true" | "false" ;               (* positional, not reserved as identifiers *)
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
 premise       = "PREMISE" , name , [ for_each ] , ":" , NEWLINE , ( list_body | impl_body ) ;
@@ -592,7 +667,8 @@ then_line   = "THEN" , literal , NEWLINE ;
 cont_line   = ( "AND" | "OR" ) , literal , NEWLINE ;
             (* one group (antecedent or consequent) may not mix AND and OR *)
 
-atom        = [ domain_ref , "." ] , subject , predicate , [ object ] ;
+atom        = [ domain_ref , "." ] , subject , [ predicate , [ object ] ] ;
+            (* a bare subject alone is a single-word proposition — a VAR port *)
 domain_ref  = identifier ;                     (* an imported domain or the file's own *)
 literal     = [ "NOT" ] , atom ;
 subject     = identifier ;
@@ -617,12 +693,15 @@ names are yours.
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
 identifier (list atoms), and ends at the first line with a top-level word
-(`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`FACT`/`NOT`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
+(`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`FACT`/`NOT`/`VAR`/`PROVIDE`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
-Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME PREMISE
-RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS ONEOF ATLEAST SET FOR
-EACH IN CLOSE TRANSITIVE`. An identifier may not coincide with a reserved word.
+Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME VAR
+PROVIDE DEFAULT PREMISE RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS
+ONEOF ATLEAST SET FOR EACH IN CLOSE TRANSITIVE`. An identifier may not coincide
+with a reserved word. (`true`/`false` are *not* reserved — they are parsed
+positionally after `VAR … DEFAULT` and `PROVIDE …:`, so they remain usable as
+ordinary names elsewhere.)
 
 ## Name normalization
 

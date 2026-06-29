@@ -7,14 +7,14 @@ RESULT: 4 syntax errors
 FACT  (3 problems)
   syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
   example : FACT socrates is human
-    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT one
-      |      ^^^
-    line 2, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT two
-      |      ^^^
-    line 3, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT three
-      |      ^^^^^
+    line 1, col 11 - unexpected text after the FACT atom
+      | FACT a b c d
+      |           ^^
+    line 2, col 11 - unexpected text after the FACT atom
+      | FACT a b c e
+      |           ^^
+    line 3, col 11 - unexpected text after the FACT atom
+      | FACT a b c f
+      |           ^^
 
 ... and 1 more class — pass --max-classes 0 for all
