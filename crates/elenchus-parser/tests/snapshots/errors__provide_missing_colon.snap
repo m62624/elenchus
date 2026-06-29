@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"PROVIDE k true\\n\")"
+---
+RESULT: 1 syntax error
+
+PROVIDE  (1 problem)
+  syntax  : PROVIDE <name>: true|false
+  example : PROVIDE db_ready: true
+    line 1, col 11 - PROVIDE expects ':' then a value: PROVIDE <name>: true|false
+      | PROVIDE k true
+      |           ^^^^

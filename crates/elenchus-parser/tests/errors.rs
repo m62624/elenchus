@@ -100,6 +100,37 @@ fn rule_body_not_an_implication() {
 }
 
 #[test]
+fn var_missing_name() {
+    // A reserved word where the port name belongs trips the "VAR expects a name" card.
+    insta::assert_snapshot!(err("VAR DEFAULT true\n"));
+}
+
+#[test]
+fn var_default_without_a_value() {
+    insta::assert_snapshot!(err("VAR k DEFAULT\n"));
+}
+
+#[test]
+fn var_default_with_a_non_boolean() {
+    insta::assert_snapshot!(err("VAR k DEFAULT maybe\n"));
+}
+
+#[test]
+fn var_trailing_text() {
+    insta::assert_snapshot!(err("VAR k extra\n"));
+}
+
+#[test]
+fn provide_missing_colon() {
+    insta::assert_snapshot!(err("PROVIDE k true\n"));
+}
+
+#[test]
+fn provide_without_a_value() {
+    insta::assert_snapshot!(err("PROVIDE k:\n"));
+}
+
+#[test]
 fn reserved_word_as_subject() {
     insta::assert_snapshot!(err("FACT WHEN has flying\n"));
 }

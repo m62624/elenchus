@@ -50,6 +50,49 @@ fn supplied_value_is_reported_with_origin() {
 }
 
 #[test]
+fn all_three_placeholder_states_render_in_human_and_json() {
+    // One port of each kind in a single report: supplied (with origin), DEFAULT,
+    // and unset (UNKNOWN) — so every branch of the human PARAM lines and the JSON
+    // placeholder encoding (value + origin present/absent) is exercised.
+    let r = verify_source_with(
+        "d.vrf",
+        "DOMAIN d\nVAR sup\nVAR def DEFAULT true\nVAR un\nFACT x a\nCHECK\n",
+        &[set("sup", false)],
+    )
+    .unwrap();
+
+    let human = r.render_human(true);
+    assert!(
+        human.contains("PARAM     sup = false   (supplied: CLI)"),
+        "{human}"
+    );
+    assert!(
+        human.contains("PARAM     def = true   (DEFAULT)"),
+        "{human}"
+    );
+    assert!(
+        human.contains("PARAM     un = UNKNOWN   (no value supplied, no DEFAULT)"),
+        "{human}"
+    );
+
+    let json = r.to_json();
+    assert!(
+        json.contains(
+            "{\"key\":\"sup\",\"status\":\"supplied\",\"value\":false,\"origin\":\"CLI\"}"
+        ),
+        "{json}"
+    );
+    assert!(
+        json.contains("{\"key\":\"def\",\"status\":\"default\",\"value\":true,\"origin\":null}"),
+        "{json}"
+    );
+    assert!(
+        json.contains("{\"key\":\"un\",\"status\":\"unset\",\"value\":null,\"origin\":null}"),
+        "{json}"
+    );
+}
+
+#[test]
 fn supplied_but_unused_port_is_not_an_orphan() {
     // `k` is supplied but referenced by no premise/rule; it must NOT be flagged as
     // an ORPHAN (ports are registered as consumed). The plain `FACT x a` still is.

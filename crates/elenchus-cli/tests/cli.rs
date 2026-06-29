@@ -70,6 +70,83 @@ fn conflicting_set_values_exit_2() {
     );
 }
 
+/// Write `content` to a uniquely named file under the test target's temp dir and
+/// return its path (cleaned up with the target dir, not per-test).
+fn temp_vrf(tag: &str, content: &str) -> String {
+    let path = format!("{}/cli-data-{tag}.vrf", env!("CARGO_TARGET_TMPDIR"));
+    std::fs::write(&path, content).expect("write temp data file");
+    path
+}
+
+#[test]
+fn data_file_supplies_a_port_value() {
+    // A PROVIDE in a --data file drives the premise and is reported with its origin.
+    let data = temp_vrf("supply", "PROVIDE k: true\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nPREMISE g:\n    WHEN k\n    THEN x a\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PARAM     k = true"), "stdout = {stdout}");
+    assert!(
+        stdout.contains(&format!("data:{data}")),
+        "stdout = {stdout}"
+    );
+}
+
+#[test]
+fn data_file_conflicting_with_set_exits_2() {
+    let data = temp_vrf("conflict", "PROVIDE k: false\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+        "--set",
+        "k:true",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("set to two different values"),
+        "stderr = {stderr}"
+    );
+}
+
+#[test]
+fn missing_data_file_is_a_usage_error() {
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        "definitely-not-here.vrf",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("reading data file"), "stderr = {stderr}");
+}
+
+#[test]
+fn data_file_with_logic_is_rejected() {
+    // A data file may carry only PROVIDE (and DOMAIN); a FACT in it is an error.
+    let data = temp_vrf("logic", "PROVIDE k: true\nFACT x a\n");
+    let out = elenchus(&[
+        "--text",
+        "DOMAIN d\nVAR k\nFACT x a\nCHECK\n",
+        "--data",
+        &data,
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("data file may only contain PROVIDE"),
+        "stderr = {stderr}"
+    );
+}
+
 #[test]
 fn no_args_prints_help_instead_of_waiting_for_stdin() {
     let out = elenchus(&[]);

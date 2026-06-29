@@ -2,8 +2,8 @@
 //! errors (undeclared bare proposition, unknown external key, conflict, ambiguity).
 
 use elenchus_compiler::{
-    AtomKey, CompileError, Compiled, PlaceholderStatus, PortBinding, Value, compile_source,
-    compile_source_with, read_data_source,
+    AtomKey, CompileError, Compiled, MemoryResolver, PlaceholderStatus, PortBinding, Value,
+    compile_source, compile_source_with, compile_with, read_data_source,
 };
 
 /// One `(name, binding)` external input with a test origin.
@@ -72,6 +72,60 @@ fn bare_proposition_in_a_body_must_be_declared() {
         matches!(err, CompileError::UndeclaredPort { ref name, .. } if name == "k"),
         "got {err:?}"
     );
+}
+
+#[test]
+fn bare_proposition_in_a_rule_must_be_declared() {
+    // An undeclared bare prop in a RULE body (not just a PREMISE) is also caught.
+    let err = compile_source("d.vrf", "DOMAIN d\nRULE r:\n    WHEN k\n    THEN x a\n").unwrap_err();
+    assert!(
+        matches!(err, CompileError::UndeclaredPort { ref name, .. } if name == "k"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_name_declared_in_two_domains_is_ambiguous_when_set() {
+    // Same bare name `k` declared in two imported domains; an external value cannot
+    // tell which port it means → AmbiguousPort (lists both domains).
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN r\nIMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nCHECK\n",
+    )
+    .add("a.vrf", "DOMAIN a\nVAR k\n")
+    .add("b.vrf", "DOMAIN b\nVAR k\n");
+    let err = compile_with("root.vrf", &r, &[set("k", true)]).unwrap_err();
+    assert!(
+        matches!(err, CompileError::AmbiguousPort { ref name, ref domains } if name == "k" && domains.contains("a") && domains.contains("b")),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn data_file_rejects_each_non_provide_statement_with_its_line() {
+    // read_data_source stops at the first non-PROVIDE statement and names its line.
+    // One representative of every statement kind that can appear, so each arm of
+    // `statement_line` is exercised.
+    for stmt in [
+        "FACT x a",
+        "NOT x a",
+        "ASSUME x a",
+        "IMPORT \"o.vrf\"",
+        "VAR k",
+        "RULE r:\n    WHEN x a\n    THEN x b",
+        "PREMISE p:\n    WHEN x a\n    THEN x b",
+        "CHECK x",
+        "SET s\n    one",
+        "CLOSE rel TRANSITIVE",
+    ] {
+        let src = format!("PROVIDE ok: true\n{stmt}\n");
+        let err = read_data_source("vals.vrf", &src).unwrap_err();
+        assert!(
+            matches!(err, CompileError::DataFileStatement { line, .. } if line == 2),
+            "stmt {stmt:?} → {err:?}"
+        );
+    }
 }
 
 #[test]
