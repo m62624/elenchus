@@ -239,9 +239,18 @@ fn path_reads_a_file_and_resolves_imports_from_disk() {
         "DOMAIN r\nIMPORT \"mcp-fs-dep.vrf\"\nFACT a.x p\nCHECK\n",
     )
     .unwrap();
-    let req = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"elenchus_check","arguments":{{"path":"{root}","format":"json"}}}}}}"#
-    );
+    // Build the request with serde_json so a Windows path (backslashes) is escaped
+    // into valid JSON; hand-splicing it would emit invalid `\U`-style escapes.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "elenchus_check",
+            "arguments": { "path": root, "format": "json" }
+        }
+    })
+    .to_string();
     let resps = roundtrip(&[&req]);
     assert_eq!(resps[0]["result"]["isError"], false, "got: {:?}", resps[0]);
     let report: Value =
