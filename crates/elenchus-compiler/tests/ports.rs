@@ -3,7 +3,7 @@
 
 use elenchus_compiler::{
     AtomKey, CompileError, Compiled, MemoryResolver, PlaceholderStatus, PortBinding, Value,
-    compile_source, compile_source_with, compile_with, read_data_source,
+    compile_source, compile_source_with, compile_with, read_data_bindings, read_data_source,
 };
 
 /// One `(name, binding)` external input with a test origin.
@@ -206,6 +206,28 @@ fn read_data_source_extracts_provide_pairs() {
             ("db_ready".to_string(), true),
             ("deploy_ok".to_string(), false)
         ]
+    );
+}
+
+#[test]
+fn read_data_bindings_tags_each_pair_with_a_data_origin() {
+    // The shared bridge every surface (CLI --data, wasm/MCP data map) uses: pairs
+    // become PortBindings tagged `data:<file>`, so origins read identically.
+    let binds = read_data_bindings("vals.vrf", "PROVIDE k: true\nPROVIDE j: false\n").unwrap();
+    assert_eq!(binds.len(), 2);
+    assert_eq!(binds[0].0, "k");
+    assert!(binds[0].1.value);
+    assert_eq!(binds[0].1.origin, "data:vals.vrf");
+    assert_eq!(binds[1].0, "j");
+    assert!(!binds[1].1.value);
+}
+
+#[test]
+fn read_data_bindings_rejects_logic() {
+    let err = read_data_bindings("vals.vrf", "PROVIDE k: true\nFACT x a\n").unwrap_err();
+    assert!(
+        matches!(err, CompileError::DataFileStatement { line, .. } if line == 2),
+        "got {err:?}"
     );
 }
 

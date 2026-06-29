@@ -7,7 +7,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, ValueEnum};
-use elenchus_compiler::{FileResolver, read_data_source};
+use elenchus_compiler::{FileResolver, read_data_bindings};
 use elenchus_solver::{CompileError, PortBinding, Report, verify_source_with, verify_with};
 
 #[derive(Parser)]
@@ -197,16 +197,10 @@ fn load_data_files(paths: &[String]) -> Result<Vec<(String, PortBinding)>, CliEr
     for path in paths {
         let src = std::fs::read_to_string(path)
             .map_err(|e| CliError::Other(format!("reading data file {path}: {e}")))?;
-        let pairs = read_data_source(path, &src).map_err(CliError::Compile)?;
-        for (name, value) in pairs {
-            out.push((
-                name,
-                PortBinding {
-                    value,
-                    origin: format!("data:{path}"),
-                },
-            ));
-        }
+        // `read_data_bindings` is the shared bridge (origin `data:<path>`) used by
+        // every surface, so a `--data` file resolves identically here, in wasm, and
+        // in MCP.
+        out.extend(read_data_bindings(path, &src).map_err(CliError::Compile)?);
     }
     Ok(out)
 }

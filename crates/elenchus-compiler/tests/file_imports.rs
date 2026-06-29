@@ -8,7 +8,7 @@
 //! Cargo runs an integration test with the working directory set to the package
 //! root, so these relative paths resolve and stay portable in snapshots.
 
-use elenchus_compiler::{CompileError, FileResolver, compile};
+use elenchus_compiler::{CompileError, FileResolver, compile, normalize_import_path};
 
 fn fixture(rel: &str) -> String {
     format!("tests/fixtures/{rel}")
@@ -85,5 +85,33 @@ fn parse_error_in_imported_file_names_that_file() {
             assert!(shown.contains("bad.vrf"), "shown = {shown}");
         }
         other => panic!("expected a Parse error naming the imported file, got {other:?}"),
+    }
+}
+
+// --- import-path normalization (shared by every Resolver, OS-independent) -----
+
+#[test]
+fn normalize_import_path_is_os_independent() {
+    // Resolution is identical whether the path uses `/` or `\`, and `.`/`..`
+    // collapse the same way — so a Windows and a Unix import reach the same
+    // virtual path on every transport (CLI FileResolver, wasm JsResolver, MCP
+    // MemoryResolver), regardless of the host or the compile target.
+    let cases = [
+        // (base, relative, expected)
+        ("root.vrf", "a.vrf", "a.vrf"),                   // flat
+        ("dir/root.vrf", "a.vrf", "dir/a.vrf"),           // sibling in base's dir
+        ("dir/root.vrf", "./a.vrf", "dir/a.vrf"),         // explicit current dir
+        ("dir/sub/root.vrf", "../a.vrf", "dir/a.vrf"),    // parent
+        ("dir\\sub\\root.vrf", "a.vrf", "dir/sub/a.vrf"), // Windows base separators
+        ("dir/root.vrf", "sub\\a.vrf", "dir/sub/a.vrf"),  // Windows relative separators
+        ("a/b/c.vrf", "..\\d\\e.vrf", "a/d/e.vrf"),       // mixed separators + parent
+        ("/x/y/root.vrf", "a.vrf", "/x/y/a.vrf"),         // absolute base is preserved
+    ];
+    for (base, relative, expected) in cases {
+        assert_eq!(
+            normalize_import_path(base, relative),
+            expected,
+            "normalize({base:?}, {relative:?})"
+        );
     }
 }

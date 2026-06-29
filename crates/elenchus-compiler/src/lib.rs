@@ -1416,6 +1416,28 @@ pub fn read_data_source(file: &str, src: &str) -> Result<Vec<(String, bool)>, Co
     Ok(out)
 }
 
+/// Parse a data-only `.vrf` source into ready-to-merge port [`PortBinding`]s, each
+/// tagged with origin `data:<file>`. The shared bridge every surface uses to turn a
+/// `--data` / data-map source into engine inputs, so a data file behaves identically
+/// whether it arrives from the CLI, wasm, or MCP.
+pub fn read_data_bindings(
+    file: &str,
+    src: &str,
+) -> Result<Vec<(String, PortBinding)>, CompileError> {
+    Ok(read_data_source(file, src)?
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                name,
+                PortBinding {
+                    value,
+                    origin: alloc::format!("data:{file}"),
+                },
+            )
+        })
+        .collect())
+}
+
 /// The 1-based source line a statement begins on (for diagnostics).
 fn statement_line(s: &Statement) -> u32 {
     match s {
@@ -1494,12 +1516,59 @@ impl MemoryResolver {
     }
 }
 
+/// Normalize an `IMPORT` path **identically on every OS and every surface**: treat
+/// both `/` and `\` as separators, resolve `relative` against `base`'s directory,
+/// collapse `.` / `..`, and re-join with `/`. Pure and `no_std`, so it does not
+/// depend on the host (or the compile target's) path semantics — a Windows-style
+/// and a Unix-style import resolve to the same virtual path whether the resolver is
+/// filesystem-, JS-callback-, or in-memory-backed. The single source of truth all
+/// three [`Resolver`]s share.
+pub fn normalize_import_path(base: &str, relative: &str) -> String {
+    fn is_sep(c: char) -> bool {
+        c == '/' || c == '\\'
+    }
+    fn push<'a>(parts: &mut Vec<&'a str>, seg: &'a str) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(seg),
+        }
+    }
+    let mut absolute = base.starts_with(is_sep);
+    let mut parts: Vec<&str> = Vec::new();
+    // `base`'s directory = every segment but the last (the importing file's name).
+    let base_segs: Vec<&str> = base.split(is_sep).collect();
+    for seg in base_segs.iter().take(base_segs.len().saturating_sub(1)) {
+        push(&mut parts, seg);
+    }
+    // An absolute `relative` replaces the base directory entirely.
+    if relative.starts_with(is_sep) {
+        parts.clear();
+        absolute = true;
+    }
+    for seg in relative.split(is_sep) {
+        push(&mut parts, seg);
+    }
+    let joined = parts.join("/");
+    if absolute {
+        alloc::format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
 impl Resolver for MemoryResolver {
     fn load(&self, path: &str) -> Result<String, CompileError> {
         self.sources
             .get(path)
             .cloned()
             .ok_or_else(|| CompileError::ImportNotFound(path.to_string()))
+    }
+
+    fn resolve(&self, base: &str, relative: &str) -> String {
+        normalize_import_path(base, relative)
     }
 }
 
@@ -1517,23 +1586,11 @@ impl Resolver for FileResolver {
     }
 
     fn resolve(&self, base: &str, relative: &str) -> String {
-        use std::path::{Component, Path, PathBuf};
-        let parent = Path::new(base).parent().unwrap_or_else(|| Path::new("."));
-        let joined = parent.join(relative);
-        let mut out = PathBuf::new();
-        for component in joined.components() {
-            match component {
-                Component::ParentDir => {
-                    out.pop();
-                }
-                Component::CurDir => {}
-                c => out.push(c),
-            }
-        }
-        // Normalize to forward slashes so resolved paths (and therefore the
-        // provenance recorded in the IR) are identical on Windows and Unix.
+        // Share the one OS-independent normalizer (forward slashes, `..` collapsed)
+        // so a resolved path — and the provenance recorded in the IR — is identical
+        // on Windows and Unix, and identical to the in-memory and JS resolvers.
         // Windows `std::fs` accepts `/` just fine.
-        out.to_string_lossy().replace('\\', "/")
+        normalize_import_path(base, relative)
     }
 }
 

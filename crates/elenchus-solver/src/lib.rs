@@ -60,6 +60,7 @@ use elenchus_compiler::{
 pub use elenchus_compiler::{
     CompileError, MemoryResolver, PlaceholderInfo, PlaceholderStatus, PortBinding, Resolver,
     UnusedImport, compile, compile_source, compile_source_with, compile_with,
+    normalize_import_path, read_data_bindings, read_data_source,
 };
 
 /// The engine version (this crate's package version). Exposed so a wrapper —

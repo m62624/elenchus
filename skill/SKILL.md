@@ -805,9 +805,11 @@ You have exactly one of two ways in. Detect which:
     `--hide-params` drops the PLACEHOLDERS section from the human report.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
-  (`\n`-separated lines; one source, so no `IMPORT` — inline the premises). For a
-  template, pass `"values": { "<name>": true }` to bind `VAR` ports. The
-  server also has `elenchus_version` and `elenchus_about`.
+  (`\n`-separated lines). `program` is the entry source; for a multi-file template
+  with `IMPORT`s, send the imported sources inline as
+  `"files": { "physics.vrf": "<.vrf text>", … }` (no filesystem needed). Bind `VAR`
+  ports with `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE
+  <name>: true\n" }`. The server also has `elenchus_version` and `elenchus_about`.
 - **On a syntax error** (either transport) you get the errors **grouped by
   class** (one per keyword) instead of a verdict — the correct syntax and an
   example shown once per class, with every offending place (line, caret, the

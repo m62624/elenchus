@@ -34,6 +34,20 @@ pub const CHECK_ARG_VALUES: &str = "External values for VAR ports, as an object 
 { \"portName\": true|false }. Each named port must be declared with `VAR <name>` in the program; \
 a port set to two different values is an error.";
 
+/// `elenchus_check` — description of the optional `files` argument (the in-memory
+/// import set, which is how the resolver-less MCP server resolves IMPORT).
+pub const CHECK_ARG_FILES: &str = "Extra sources for IMPORT resolution, as an object of \
+{ \"path\": \"<.vrf text>\" }. `program` is the entry file; its `IMPORT \"path\"` statements load \
+the matching keys here. This is how multi-domain templates work over MCP (which has no filesystem) \
+— send every imported file's text inline. Paths are matched after normalizing `/`, `\\`, `.` and \
+`..`, so a Windows- or Unix-style import resolves the same way.";
+
+/// `elenchus_check` — description of the optional `data` argument.
+pub const CHECK_ARG_DATA: &str = "VAR port values supplied from data files, as an object of \
+{ \"name\": \"<PROVIDE-only .vrf text>\" }. Each value is read like a CLI `--data` file: it may \
+contain only `PROVIDE <port>: true|false` lines. Equivalent to `values`, just carried as file text; \
+a port set to two different values (across `values`/`data`/the program) is an error.";
+
 /// `elenchus_version` tool description — the MCP analog of `elenchus --version`.
 pub const VERSION_TOOL: &str = "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \
 Call this once up front and compare it to the version your skill targets; if they differ, \

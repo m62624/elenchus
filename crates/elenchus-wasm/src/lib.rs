@@ -9,7 +9,8 @@
 //! bridged to a JavaScript `read(path) -> string` callback.
 
 use elenchus_solver::{
-    CompileError, PortBinding, Report, Resolver, verify_source_with, verify_with,
+    CompileError, PortBinding, Report, Resolver, normalize_import_path, read_data_bindings,
+    verify_source_with, verify_with,
 };
 use wasm_bindgen::prelude::*;
 
@@ -80,6 +81,29 @@ fn decode_values(values: Option<js_sys::Object>) -> Vec<(String, PortBinding)> {
     out
 }
 
+/// Merge inline `values` and `data` sources into one input list — the wasm analog
+/// of the CLI's `--set` + `--data`. `data` is a `Record<string, string>` of
+/// filename → PROVIDE-only `.vrf` text, parsed exactly like a CLI `--data` file
+/// (origin `data:<name>`); a non-`PROVIDE` statement in one is a compile error.
+/// `values` come first, then `data`; a disagreement between them is a port conflict
+/// the engine rejects.
+fn collect_inputs(
+    values: Option<js_sys::Object>,
+    data: Option<js_sys::Object>,
+) -> Result<Vec<(String, PortBinding)>, CompileError> {
+    let mut inputs = decode_values(values);
+    if let Some(obj) = data {
+        for entry in js_sys::Object::entries(&obj).iter() {
+            let pair = js_sys::Array::from(&entry);
+            if let (Some(name), Some(content)) = (pair.get(0).as_string(), pair.get(1).as_string())
+            {
+                inputs.extend(read_data_bindings(&name, &content)?);
+            }
+        }
+    }
+    Ok(inputs)
+}
+
 /// Check a single `.vrf` program (inline text; `IMPORT` is not resolved — use
 /// [`check_with_resolver`] for multi-file programs). Mirrors `elenchus_check`.
 /// `values` supplies `VAR` port values as a `Record<string, boolean>`.
@@ -90,14 +114,17 @@ pub fn check(
     max_classes: Option<u32>,
     max_per_class: Option<u32>,
     values: Option<js_sys::Object>,
+    data: Option<js_sys::Object>,
 ) -> String {
-    let inputs = decode_values(values);
-    render(
-        verify_source_with("<wasm>", program, &inputs),
-        format,
-        max_classes,
-        max_per_class,
-    )
+    match collect_inputs(values, data) {
+        Ok(inputs) => render(
+            verify_source_with("<wasm>", program, &inputs),
+            format,
+            max_classes,
+            max_per_class,
+        ),
+        Err(e) => render(Err(e), format, max_classes, max_per_class),
+    }
 }
 
 /// Check a `.vrf` program that may `IMPORT` other sources, resolving every import
@@ -113,15 +140,18 @@ pub fn check_with_resolver(
     max_classes: Option<u32>,
     max_per_class: Option<u32>,
     values: Option<js_sys::Object>,
+    data: Option<js_sys::Object>,
 ) -> String {
     let resolver = JsResolver { read: read.clone() };
-    let inputs = decode_values(values);
-    render(
-        verify_with(root, &resolver, &inputs),
-        format,
-        max_classes,
-        max_per_class,
-    )
+    match collect_inputs(values, data) {
+        Ok(inputs) => render(
+            verify_with(root, &resolver, &inputs),
+            format,
+            max_classes,
+            max_per_class,
+        ),
+        Err(e) => render(Err(e), format, max_classes, max_per_class),
+    }
 }
 
 /// Bridges the engine's [`Resolver`] to a JS `read(path) -> string` callback.
@@ -149,20 +179,11 @@ impl Resolver for JsResolver {
     }
 
     fn resolve(&self, base: &str, relative: &str) -> String {
-        use std::path::{Component, Path, PathBuf};
-        let parent = Path::new(base).parent().unwrap_or_else(|| Path::new("."));
-        let joined = parent.join(relative);
-        let mut out = PathBuf::new();
-        for component in joined.components() {
-            match component {
-                Component::ParentDir => {
-                    out.pop();
-                }
-                Component::CurDir => {}
-                c => out.push(c),
-            }
-        }
-        out.to_string_lossy().replace('\\', "/")
+        // Share the engine's OS-independent normalizer rather than `std::path`,
+        // whose separator rules follow the *compile target* (wasm = Unix-like) and
+        // would mishandle a Windows-style `sub\a.vrf` import. This makes the JS
+        // resolver match the CLI's `FileResolver` byte-for-byte.
+        normalize_import_path(base, relative)
     }
 }
 
@@ -215,6 +236,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(
             out.contains("CONFLICT"),
@@ -228,10 +250,11 @@ mod tests {
 
     #[test]
     fn check_human_format_differs_from_json() {
-        let json = check("DOMAIN d\nFACT x a\nCHECK x", None, None, None, None);
+        let json = check("DOMAIN d\nFACT x a\nCHECK x", None, None, None, None, None);
         let human = check(
             "DOMAIN d\nFACT x a\nCHECK x",
             Some("human".to_string()),
+            None,
             None,
             None,
             None,
@@ -269,7 +292,7 @@ mod tests {
     fn check_syntax_error_is_not_a_json_verdict() {
         // A malformed program goes through the diagnostics renderer / error
         // message path, never the JSON report path.
-        let out = check("this is not a valid program", None, None, None, None);
+        let out = check("this is not a valid program", None, None, None, None, None);
         assert!(
             !out.contains("exit_code"),
             "a syntax/compile error must not look like a JSON verdict: {out}"

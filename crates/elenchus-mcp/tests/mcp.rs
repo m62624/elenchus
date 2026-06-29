@@ -165,6 +165,53 @@ fn values_conflicting_with_in_file_provide_is_a_tool_error() {
 }
 
 #[test]
+fn files_resolve_imports_across_domains() {
+    // The root IMPORTs `a.vrf` (a second domain) and asserts a fact into it that
+    // contradicts that file's `NOT x p` → CONFLICT. Without `files` the same
+    // program can't resolve the import and errors, so this proves `files` is what
+    // wires IMPORT over MCP (the resolver-less transport).
+    let with_files = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"a.vrf\"\nFACT a.x p\nCHECK\n","files":{"a.vrf":"DOMAIN a\nNOT x p\n"}}}}"#;
+    let without_files = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN r\nIMPORT \"a.vrf\"\nFACT a.x p\nCHECK\n"}}}"#;
+    let resps = roundtrip(&[with_files, without_files]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+
+    // No `files` → the import can't be resolved → a tool error.
+    assert_eq!(resps[1]["result"]["isError"], true);
+}
+
+#[test]
+fn data_files_supply_port_values_over_mcp() {
+    // The `data` map carries a PROVIDE file, exactly like the CLI's `--data`: it
+    // drives the premise to CONFLICT and is reported with a `data:` origin.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nNOT x a\nPREMISE g:\n    WHEN k\n    THEN x a\nCHECK\n","data":{"vals.vrf":"PROVIDE k: true\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+    assert_eq!(report["placeholders"][0]["status"], "supplied");
+    assert_eq!(report["placeholders"][0]["origin"], "data:vals.vrf");
+}
+
+#[test]
+fn data_file_carrying_logic_is_a_tool_error() {
+    // A `data` source may hold only PROVIDE lines; a FACT in it is a hard error.
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nFACT x a\nCHECK\n","data":{"bad.vrf":"PROVIDE k: true\nFACT y b\n"}}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("data file may only contain PROVIDE"),
+        "got: {text}"
+    );
+}
+
+#[test]
 fn orphan_fact_renders_in_the_human_report_over_mcp() {
     // The `human` format: the advisory ORPHAN line reaches the text field.
     let resps = roundtrip(&[
