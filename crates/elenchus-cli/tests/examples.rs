@@ -26,6 +26,19 @@ fn run_text(program: &str) -> i32 {
         .expect("exit code")
 }
 
+/// Run a `docs/examples` program with a `docs/examples` `--data` file.
+fn run_file_with_data(name: &str, data: &str) -> i32 {
+    let dir = format!("{}/../../docs/examples", env!("CARGO_MANIFEST_DIR"));
+    Command::new(env!("CARGO_BIN_EXE_elenchus-cli"))
+        .arg(format!("{dir}/{name}"))
+        .args(["--data", &format!("{dir}/{data}")])
+        .output()
+        .expect("run elenchus")
+        .status
+        .code()
+        .expect("exit code")
+}
+
 #[test]
 fn shipped_examples_match_their_verdicts() {
     let cases = [
@@ -75,6 +88,24 @@ FACT rel deployable
 FACT rel has_migration
 FACT rel has_feature_flag
 "#;
+
+#[test]
+fn deploy_gate_template_is_filled_from_its_data_file() {
+    // The shipped templating example: deploy-gate.vrf declares VAR ports; standalone
+    // a defaulted-false gate can't be satisfied → CONFLICT (exit 2). The companion
+    // values-only data file (PROVIDE lines) supplies every gate → CONSISTENT (0).
+    // Pins both the example pair and the `--data` fill path to their verdicts.
+    assert_eq!(
+        run_file("deploy-gate.vrf"),
+        2,
+        "the template alone must not pass the gate"
+    );
+    assert_eq!(
+        run_file_with_data("deploy-gate.vrf", "deploy-gate.data.vrf"),
+        0,
+        "the data file must satisfy every gate"
+    );
+}
 
 #[test]
 fn skill_capstone_stage_a_warns_about_the_missing_backup() {

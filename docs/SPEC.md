@@ -528,7 +528,10 @@ the program with each resolved port written out as a literal `FACT`/`NOT`.)
 **Data files (`--data`).** A `--data` file carries *only* values: it may contain
 `PROVIDE` (and `DOMAIN`) and nothing else — logic in a data file is a hard error.
 Bindings from every compiled file and every external source land in one pool, so a
-conflict is detected wherever the two disagreeing values come from.
+conflict is detected wherever the two disagreeing values come from. A runnable pair
+ships in `docs/examples/`: the template `deploy-gate.vrf` (which declares the
+`VAR` ports) and the values-only `deploy-gate.data.vrf` (`PROVIDE` lines) —
+`elenchus deploy-gate.vrf --data deploy-gate.data.vrf`.
 
 **The placeholders report.** Every run prints a PLACEHOLDERS section (and a
 `placeholders` array in JSON) listing each port as **Supplied** (value + origin),

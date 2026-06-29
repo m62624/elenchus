@@ -1,0 +1,8 @@
+// Data file for deploy-gate.vrf — VALUES ONLY, no logic. A data file may contain
+// only `PROVIDE <port>: true|false` lines (a FACT/PREMISE/etc. here is an error).
+// Load it with `--data`; a port set here AND elsewhere to a different value is a
+// hard error (the engine never silently picks one).
+PROVIDE tests_green: true
+PROVIDE security_scanned: true
+PROVIDE db_migrated: true
+PROVIDE change_approved: true

@@ -1,0 +1,26 @@
+// A reusable TEMPLATE. The logic is fixed; the boolean inputs are external `VAR`
+// ports, filled at run time from `--set`, the API, or a data file:
+//
+//     elenchus deploy-gate.vrf --data deploy-gate.data.vrf      -> CONSISTENT
+//     elenchus deploy-gate.vrf                                  -> CONFLICT
+//
+// Each `VAR` is a single-word proposition usable directly in a body. With no value
+// and no DEFAULT a port stays UNKNOWN (the run WARNs, it does not error); a DEFAULT
+// supplies a fallback.
+DOMAIN deploy
+
+VAR tests_green
+VAR security_scanned
+VAR db_migrated DEFAULT false
+VAR change_approved DEFAULT false
+
+// First principle: a release may ship only when every gate holds.
+PREMISE ship_gate:
+    WHEN rel ships
+    THEN tests_green
+    AND  security_scanned
+    AND  db_migrated
+    AND  change_approved
+
+FACT rel ships
+CHECK
