@@ -331,10 +331,15 @@ prune that line from your shell profile if nothing else uses it.
 
 Both run the **same engine**, return the **same verdicts**, and now expose the
 **same capabilities** — `IMPORT` / multi-domain, `VAR` ports, and data files all
-work on every surface (CLI, MCP, and the wasm/npm build). The only differences are
-the transport and *how files are supplied*: the CLI reads them from the filesystem
-by path, while MCP and wasm — which have no filesystem — carry the file contents
-**inline** in the request.
+work on every surface (CLI, MCP, and the wasm/npm build). All three **resolve
+imports**; they differ only in transport and *where a resolver gets a file's text*:
+
+- **CLI** — reads the real **filesystem** by path (`FileResolver`).
+- **MCP** — looks the path up in an **in-memory map** (`files: { path: text }`) sent
+  inline in the request; the server itself touches no filesystem.
+- **wasm/npm** — calls a host-supplied **`read(path) => string` callback**. In Node
+  that callback reads the real filesystem (`checkFileWithImports` wires up
+  `fs.readFileSync`); a browser host can back it with any virtual store.
 
 | | CLI (`elenchus-cli`) | MCP (`elenchus-mcp`) |
 |---|---|---|
@@ -352,10 +357,10 @@ by path, while MCP and wasm — which have no filesystem — carry the file cont
   (or can't) run a shell. Same reach — for a multi-file template, send the imported
   sources inline in `files`; for data, pass `values` and/or `data`.
 
-The one shared exception is **pure inline text** (CLI `--text`/stdin, MCP/wasm with
-no `files`): a single source resolves no `IMPORT`. The moment files/imports are in
-play, all three resolve them identically (the path normalizer is shared, so Windows-
-and Unix-style import paths behave the same everywhere).
+The one shared exception is **pure inline text** (CLI `--text`/stdin, MCP without
+`files`, wasm's `check`): a single source resolves no `IMPORT`. The moment
+files/imports are in play, all three resolve them identically — the path normalizer
+is shared, so Windows- and Unix-style import paths behave the same everywhere.
 
 The skill ([`skill/SKILL.md`](skill/SKILL.md)) is written for both and tells the
 agent how to drive whichever transport it has.
