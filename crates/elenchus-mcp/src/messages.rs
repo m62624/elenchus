@@ -29,6 +29,11 @@ pub const CHECK_ARG_MAX_CLASSES: &str = "On a syntax error, show at most this ma
 pub const CHECK_ARG_MAX_PER_CLASS: &str = "On a syntax error, show at most this many places within \
 each class (0 or omitted = all). Only affects parse-error output.";
 
+/// `elenchus_check` — description of the optional `values` argument.
+pub const CHECK_ARG_VALUES: &str = "External values for VAR ports, as an object of \
+{ \"portName\": true|false }. Each named port must be declared with `VAR <name>` in the program; \
+a port set to two different values is an error.";
+
 /// `elenchus_version` tool description — the MCP analog of `elenchus --version`.
 pub const VERSION_TOOL: &str = "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \
 Call this once up front and compare it to the version your skill targets; if they differ, \

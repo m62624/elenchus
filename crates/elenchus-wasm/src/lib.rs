@@ -8,7 +8,9 @@
 //! persist the companion skill next to the engine) and an `IMPORT` resolver
 //! bridged to a JavaScript `read(path) -> string` callback.
 
-use elenchus_solver::{CompileError, Report, Resolver, verify, verify_source};
+use elenchus_solver::{
+    CompileError, PortBinding, Report, Resolver, verify_source_with, verify_with,
+};
 use wasm_bindgen::prelude::*;
 
 /// The companion skill (the whole DSL how-to + the verdict loop), embedded so a
@@ -56,17 +58,42 @@ fn render(
     }
 }
 
+/// Decode an optional JS `Record<string, boolean>` of port values into the
+/// engine's `(name, binding)` inputs (origin `"api"`). Non-boolean entries are
+/// skipped. Only ever called from wasm (the host test build passes `None`).
+fn decode_values(values: Option<js_sys::Object>) -> Vec<(String, PortBinding)> {
+    let mut out = Vec::new();
+    if let Some(obj) = values {
+        for entry in js_sys::Object::entries(&obj).iter() {
+            let pair = js_sys::Array::from(&entry);
+            if let (Some(name), Some(value)) = (pair.get(0).as_string(), pair.get(1).as_bool()) {
+                out.push((
+                    name,
+                    PortBinding {
+                        value,
+                        origin: "api".to_string(),
+                    },
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// Check a single `.vrf` program (inline text; `IMPORT` is not resolved — use
 /// [`check_with_resolver`] for multi-file programs). Mirrors `elenchus_check`.
+/// `values` supplies `VAR` port values as a `Record<string, boolean>`.
 #[wasm_bindgen]
 pub fn check(
     program: &str,
     format: Option<String>,
     max_classes: Option<u32>,
     max_per_class: Option<u32>,
+    values: Option<js_sys::Object>,
 ) -> String {
+    let inputs = decode_values(values);
     render(
-        verify_source("<wasm>", program),
+        verify_source_with("<wasm>", program, &inputs),
         format,
         max_classes,
         max_per_class,
@@ -85,9 +112,16 @@ pub fn check_with_resolver(
     format: Option<String>,
     max_classes: Option<u32>,
     max_per_class: Option<u32>,
+    values: Option<js_sys::Object>,
 ) -> String {
     let resolver = JsResolver { read: read.clone() };
-    render(verify(root, &resolver), format, max_classes, max_per_class)
+    let inputs = decode_values(values);
+    render(
+        verify_with(root, &resolver, &inputs),
+        format,
+        max_classes,
+        max_per_class,
+    )
 }
 
 /// Bridges the engine's [`Resolver`] to a JS `read(path) -> string` callback.
@@ -175,7 +209,13 @@ mod tests {
 
     #[test]
     fn check_reports_conflict_as_json() {
-        let out = check("DOMAIN d\nFACT x a\nNOT x a\nCHECK x", None, None, None);
+        let out = check(
+            "DOMAIN d\nFACT x a\nNOT x a\nCHECK x",
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(
             out.contains("CONFLICT"),
             "expected a CONFLICT verdict, got: {out}"
@@ -188,10 +228,11 @@ mod tests {
 
     #[test]
     fn check_human_format_differs_from_json() {
-        let json = check("DOMAIN d\nFACT x a\nCHECK x", None, None, None);
+        let json = check("DOMAIN d\nFACT x a\nCHECK x", None, None, None, None);
         let human = check(
             "DOMAIN d\nFACT x a\nCHECK x",
             Some("human".to_string()),
+            None,
             None,
             None,
         );
@@ -228,7 +269,7 @@ mod tests {
     fn check_syntax_error_is_not_a_json_verdict() {
         // A malformed program goes through the diagnostics renderer / error
         // message path, never the JSON report path.
-        let out = check("this is not a valid program", None, None, None);
+        let out = check("this is not a valid program", None, None, None, None);
         assert!(
             !out.contains("exit_code"),
             "a syntax/compile error must not look like a JSON verdict: {out}"

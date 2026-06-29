@@ -125,6 +125,46 @@ fn orphan_fact_rides_through_json_over_mcp() {
 }
 
 #[test]
+fn values_supply_a_port_and_flip_the_verdict() {
+    // The VAR port `k` drives the premise `WHEN k THEN x a` against `NOT x a`:
+    // `{"k":false}` satisfies it (CONSISTENT), `{"k":true}` violates it (CONFLICT).
+    // A raw string so each `\n` is the two-char JSON escape, not a real newline
+    // (a literal newline would break the one-line JSON-RPC request).
+    const PROG: &str = r"DOMAIN d\nVAR k\nNOT x a\nPREMISE g:\n    WHEN k\n    THEN x a\nCHECK\n";
+    let req = |id: u32, values: &str| {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"elenchus_check","arguments":{{"program":"{PROG}","format":"json","values":{values}}}}}}}"#
+        )
+    };
+    let resps = roundtrip(&[&req(1, r#"{"k":false}"#), &req(2, r#"{"k":true}"#)]);
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let consistent: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(consistent["status"], "CONSISTENT");
+    // The placeholders section round-trips with the supplied value and origin.
+    assert_eq!(consistent["placeholders"][0]["key"], "k");
+    assert_eq!(consistent["placeholders"][0]["status"], "supplied");
+    assert_eq!(consistent["placeholders"][0]["value"], false);
+
+    let conflict: Value =
+        serde_json::from_str(resps[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(conflict["status"], "CONFLICT");
+}
+
+#[test]
+fn values_conflicting_with_in_file_provide_is_a_tool_error() {
+    // `PROVIDE k: true` in the program and `{"k":false}` in `values` disagree → a
+    // hard error surfaced as a tool error.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nPROVIDE k: true\nFACT x a\nCHECK\n","values":{"k":false}}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("set to two different values"), "got: {text}");
+}
+
+#[test]
 fn orphan_fact_renders_in_the_human_report_over_mcp() {
     // The `human` format: the advisory ORPHAN line reaches the text field.
     let resps = roundtrip(&[

@@ -2,7 +2,7 @@
 //! `elenchus_about` — their schema definitions and the `tools/call` executor.
 //! Descriptions come from [`crate::messages`]; envelopes from [`crate::rpc`].
 
-use elenchus_solver::{CompileError, verify_source};
+use elenchus_solver::{CompileError, PortBinding, verify_source_with};
 use serde_json::{Value, json};
 
 use crate::{messages, rpc};
@@ -51,6 +51,11 @@ fn check_def() -> Value {
                     "type": "integer",
                     "minimum": 0,
                     "description": messages::CHECK_ARG_MAX_PER_CLASS
+                },
+                "values": {
+                    "type": "object",
+                    "additionalProperties": { "type": "boolean" },
+                    "description": messages::CHECK_ARG_VALUES
                 }
             },
             "required": ["program"]
@@ -105,8 +110,29 @@ fn check(id: Value, args: Option<&Value>) -> Value {
             .unwrap_or(0) as usize;
         (n > 0).then_some(n)
     };
+    // Optional `values`: an object of `{ port: bool }`. Non-boolean entries are
+    // skipped; a conflict (same key, two values) is caught by the engine.
+    let inputs: Vec<(String, PortBinding)> = args
+        .and_then(|a| a.get("values"))
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| {
+                    v.as_bool().map(|value| {
+                        (
+                            k.clone(),
+                            PortBinding {
+                                value,
+                                origin: "api".to_string(),
+                            },
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    match verify_source("<mcp>", program) {
+    match verify_source_with("<mcp>", program, &inputs) {
         Ok(report) => {
             let text = if format == "human" {
                 format!("{report}")
