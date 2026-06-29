@@ -169,8 +169,9 @@ mod tests {
         let p = prog("PROVIDE db_ready: true\nPROVIDE deploy_ok: false\n");
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
-            Statement::Provide { name, value } => {
-                assert_eq!(name.data, "db_ready");
+            Statement::Provide { atom, value } => {
+                assert_eq!(atom.data.subject, "db_ready");
+                assert_eq!(atom.data.predicate, None);
                 assert!(*value);
             }
             other => panic!("expected provide, got {:?}", other),

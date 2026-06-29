@@ -947,3 +947,86 @@ proptest! {
         );
     }
 }
+
+// --- qualified domain.port keys + multi-word atom injection ------------------
+// Extends the eight port invariants for cross-domain addressing: a `domain.`
+// prefix pins a port to one domain (and is identical to the bare key when the name
+// is unique), and a multi-word external key injects an *atom* exactly like a
+// hand-written FACT/NOT — the same substitution oracle, lifted to atoms.
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// A `domain.`-qualified key is observationally identical to the bare key when
+    /// the port name is unique (one domain): qualification is free to add.
+    #[test]
+    fn qualified_key_equals_bare_when_unique((ports, binds) in port_case()) {
+        let src = build_ports(&ports);
+        let bare = inputs_from(&ports, &binds);
+        let qual: Vec<(String, PortBinding)> = bare
+            .iter()
+            .map(|(k, b)| (format!("d.{k}"), b.clone()))
+            .collect();
+        prop_assert_eq!(
+            verify_source_with("<q>", &src, &bare),
+            verify_source_with("<q>", &src, &qual)
+        );
+    }
+
+    /// Two imported domains declare the same port name; qualified keys set each
+    /// independently (no AmbiguousPort), matching a hand FACT/NOT substitution per
+    /// domain. This is the exact wall the decoded test session hit, now resolvable.
+    #[test]
+    fn qualified_disambiguates_cross_domain_collision(va in any::<bool>(), vb in any::<bool>()) {
+        let root = "DOMAIN r\nIMPORT \"a.vrf\"\nIMPORT \"b.vrf\"\nCHECK\n";
+        let body = |dom: &str| {
+            format!("DOMAIN {dom}\nVAR k\nNOT goal x\nPREMISE g:\n    WHEN k\n    THEN goal x\n")
+        };
+        let mut ports = MemoryResolver::new();
+        ports
+            .add("root.vrf", root)
+            .add("a.vrf", &body("a"))
+            .add("b.vrf", &body("b"));
+        let inputs = vec![
+            ("a.k".to_string(), PortBinding { value: va, origin: "CLI".into() }),
+            ("b.k".to_string(), PortBinding { value: vb, origin: "CLI".into() }),
+        ];
+        let got = verify_with("root.vrf", &ports, &inputs)
+            .map_err(|e| TestCaseError::fail(format!("ports: {e}")))?;
+
+        // Oracle: the same two files, each port value written out as a FACT/NOT.
+        let sub = |dom: &str, v: bool| {
+            format!(
+                "DOMAIN {dom}\nVAR k\n{} k\nNOT goal x\nPREMISE g:\n    WHEN k\n    THEN goal x\n",
+                if v { "FACT" } else { "NOT" }
+            )
+        };
+        let mut subr = MemoryResolver::new();
+        subr.add("root.vrf", root)
+            .add("a.vrf", &sub("a", va))
+            .add("b.vrf", &sub("b", vb));
+        let want = verify_with("root.vrf", &subr, &[])
+            .map_err(|e| TestCaseError::fail(format!("sub: {e}")))?;
+        prop_assert_eq!(verdict_shape(&got), verdict_shape(&want));
+    }
+
+    /// A multi-word external key asserting an atom equals an in-file `FACT`/`NOT`
+    /// of that atom — external atom injection adds no semantics beyond the fact.
+    #[test]
+    fn multiword_external_key_equals_fact(v in any::<bool>()) {
+        let logic =
+            "NOT motor runs\nPREMISE g:\n    WHEN engine has_fuel\n    THEN motor runs\nCHECK\n";
+        let ext = verify_source_with(
+            "<e>",
+            &format!("DOMAIN d\n{logic}"),
+            &[("engine has_fuel".to_string(), PortBinding { value: v, origin: "CLI".into() })],
+        )
+        .map_err(|e| TestCaseError::fail(format!("ext: {e}")))?;
+        let inline = verify_source(
+            "<i>",
+            &format!("DOMAIN d\n{} engine has_fuel\n{logic}", if v { "FACT" } else { "NOT" }),
+        )
+        .map_err(|e| TestCaseError::fail(format!("inline: {e}")))?;
+        prop_assert_eq!(verdict_shape(&ext), verdict_shape(&inline));
+    }
+}

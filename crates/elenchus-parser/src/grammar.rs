@@ -524,26 +524,29 @@ fn stmt_var<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Var { name, default }))
 }
 
-/// `PROVIDE <name>: true|false` — bind a `VAR` port's value on one line.
+/// `PROVIDE [<domain>.]<port|atom>: true|false` — bind an external value on one
+/// line. The target reuses the [`atom`] grammar, so it accepts a lone port
+/// (`PROVIDE db_ready: true`), a multi-word atom (`PROVIDE engine has_fuel:
+/// true`), and a `domain.` prefix (`PROVIDE self.has_vision: true`).
 fn stmt_provide<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::PROVIDE), space1).parse(input)?;
     let at = input;
-    let (input, name) = promote(
-        identifier(input),
+    let (input, atom) = promote(
+        atom(input),
         at,
-        "PROVIDE expects a port name, e.g. PROVIDE db_ready: true",
+        "PROVIDE expects a port or atom, e.g. PROVIDE db_ready: true",
     )?;
     let (input, _) = space0(input)?;
     let (input, _) = promote(
         char(':').parse(input),
         input,
-        "PROVIDE expects ':' then a value: PROVIDE <name>: true|false",
+        "PROVIDE expects ':' then a value: PROVIDE <port>: true|false",
     )?;
     let (input, _) = space0(input)?;
     let at = input;
     let (input, value) = promote(bool_lit(input), at, "PROVIDE expects true or false")?;
     let (input, _) = promote(eol(input), input, "unexpected text after the PROVIDE value")?;
-    Ok((input, Statement::Provide { name, value }))
+    Ok((input, Statement::Provide { atom, value }))
 }
 
 /// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.

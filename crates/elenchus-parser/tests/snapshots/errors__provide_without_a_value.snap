@@ -5,7 +5,7 @@ expression: "err(\"PROVIDE k:\\n\")"
 RESULT: 1 syntax error
 
 PROVIDE  (1 problem)
-  syntax  : PROVIDE <name>: true|false
+  syntax  : PROVIDE [<domain>.]<port|atom>: true|false
   example : PROVIDE db_ready: true
     line 1, col 11 - PROVIDE expects true or false
       | PROVIDE k:

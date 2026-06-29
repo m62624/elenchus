@@ -366,7 +366,7 @@ namespacing and reuse.
 | `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
 | `AS` | local alias for an imported domain | reuse |
 | `VAR` | declare an external boolean **port** — a single-word proposition whose truth is supplied from outside (`VAR <name> [DEFAULT true\|false]`) | templating |
-| `PROVIDE` | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) | templating |
+| `PROVIDE` | bind a port's value or assert an atom from data (`PROVIDE [<domain>.]<port\|atom>: true\|false`) | templating |
 | `DEFAULT` | the fallback value for a `VAR` when nothing is supplied | templating |
 | `CHECK` / `BIDIRECTIONAL` | a query | query |
 
@@ -522,8 +522,23 @@ the program with each resolved port written out as a literal `FACT`/`NOT`.)
   `FACT engien`).
 - an external value naming **no declared port** is an `UnknownPort` (a silent ignore
   would hide a mistake).
-- a value naming a port whose bare name is declared in **more than one domain** is an
-  `AmbiguousPort` (ports match by bare name across the import graph).
+- a **bare** value naming a port declared in **more than one domain** is an
+  `AmbiguousPort` — resolve it by qualifying the key (see below).
+
+**Qualified keys (`domain.port`).** External keys match by bare name across the whole
+import graph. When the same name is declared in several imported domains, prefix the
+key with a `domain.` to pick one: `--set "self.has_vision:true capabilities.has_vision:false"`,
+or `PROVIDE self.has_vision: true`. The domain is the canonical domain name (an
+imported file's own `DOMAIN`). An unprefixed key still searches every domain — only a
+collision forces qualification.
+
+**Atom injection (multi-word keys).** A key (or `PROVIDE`) with more than one word
+names a regular **atom**, not a `VAR` port: `PROVIDE engine has_fuel: true` (or a
+`values`/`data` key `"engine has_fuel"`) asserts that atom externally, exactly like an
+in-file `FACT engine has_fuel` / `NOT …`. The atom must already occur in the program
+(in a `FACT`/`PREMISE`/`RULE`); naming an atom no statement uses is an
+`UnknownExternalAtom` (the same typo-guard as `UnknownPort`). This is how an external
+caller selects a `ONEOF` variant without editing the file.
 
 **Data files (`--data`).** A `--data` file carries *only* values: it may contain
 `PROVIDE` (and `DOMAIN`) and nothing else — logic in a data file is a hard error.
@@ -647,7 +662,7 @@ fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
 var         = "VAR" , name , [ "DEFAULT" , bool ] , NEWLINE ;  (* external boolean port *)
-provide     = "PROVIDE" , name , ":" , bool , NEWLINE ;        (* bind a port's value *)
+provide     = "PROVIDE" , atom , ":" , bool , NEWLINE ;        (* bind a port (bare atom) or assert an atom; atom may carry a domain. prefix *)
 bool        = "true" | "false" ;               (* positional, not reserved as identifiers *)
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 

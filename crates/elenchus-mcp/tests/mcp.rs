@@ -226,6 +226,48 @@ fn data_file_carrying_logic_is_a_tool_error() {
 }
 
 #[test]
+fn data_paths_read_provide_files_from_disk() {
+    // `data_paths` mode: the server reads a PROVIDE-only file off disk (like CLI
+    // `--data <file>`) and it drives the premise to CONFLICT, reported with a
+    // `data:<path>` origin — the filesystem analog of the `data` map above.
+    let dir = env!("CARGO_TARGET_TMPDIR");
+    let data = format!("{dir}/mcp-data-paths.vrf");
+    std::fs::write(&data, "PROVIDE k: true\n").unwrap();
+    // Build the request with serde_json so a Windows path (backslashes) escapes
+    // into valid JSON rather than emitting invalid `\U`-style sequences.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "elenchus_check",
+            "arguments": {
+                "program": "DOMAIN d\nVAR k\nNOT x a\nPREMISE g:\n    WHEN k\n    THEN x a\nCHECK\n",
+                "data_paths": [data],
+                "format": "json"
+            }
+        }
+    })
+    .to_string();
+    let resps = roundtrip(&[&req]);
+    assert_eq!(resps[0]["result"]["isError"], false, "got: {:?}", resps[0]);
+    let report: Value =
+        serde_json::from_str(resps[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["status"], "CONFLICT");
+    assert_eq!(report["placeholders"][0]["status"], "supplied");
+    assert_eq!(report["placeholders"][0]["origin"], format!("data:{data}"));
+}
+
+#[test]
+fn data_paths_missing_file_is_a_tool_error() {
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nVAR k\nFACT x a\nCHECK\n","data_paths":["/no/such/data.vrf"]}}}"#;
+    let resps = roundtrip(&[req]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("/no/such/data.vrf"), "got: {text}");
+}
+
+#[test]
 fn path_reads_a_file_and_resolves_imports_from_disk() {
     // `path` mode: the server reads the entry `.vrf` from disk and resolves its
     // IMPORT from disk too (like `elenchus-cli <file>`). The imported `NOT x p`

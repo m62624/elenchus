@@ -1,0 +1,8 @@
+DOMAIN d
+VAR feature_flag
+VAR tests_pass DEFAULT false
+RULE gate:
+    WHEN feature_flag
+    AND  tests_pass
+    THEN deploy is_auto
+CHECK

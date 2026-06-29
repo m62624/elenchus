@@ -354,7 +354,7 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
 ```
 
 ### `VAR` / `PROVIDE` / `DEFAULT` — external ports (templating)
-- **Syntax:** `VAR <name> [DEFAULT true|false]` declares a port; `PROVIDE <name>: true|false`
+- **Syntax:** `VAR <name> [DEFAULT true|false]` declares a port; `PROVIDE [<domain>.]<port|atom>: true|false`
   binds one from data. The `<name>` is a **one-word proposition** — use it bare in any
   body (`WHEN <name> …`), exactly like a normal atom.
 - **Why:** make a `.vrf` a **template**. The logic is fixed; the boolean inputs arrive
@@ -372,9 +372,19 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
   `DEFAULT`; else the port stays **UNKNOWN** — *not* an error, just a WARNING if a
   premise needs it. The report's **PLACEHOLDERS** section shows each port as Supplied /
   DEFAULT / Unset (`--hide-params` hides it; JSON always keeps it).
+- **Qualify across domains:** when several imported domains declare the same port name,
+  prefix the key with the canonical `domain.` to pick one — `--set "self.has_vision:true
+  capabilities.has_vision:false"`, or `PROVIDE self.has_vision: true`. A bare key still
+  searches every domain; only a collision needs qualifying.
+- **Inject an atom (multi-word key):** a key with more than one word names an **atom**,
+  not a port — `PROVIDE engine has_fuel: true` (or a `values`/`data` key `"engine
+  has_fuel"`) asserts it exactly like `FACT engine has_fuel`. Use it to pick a `ONEOF`
+  variant from outside. The atom must already appear in the program (else it is a typo'd
+  unknown atom — exit 2).
 - **Hard errors (exit 2):** two sources disagreeing on one port (conflict); a bare
   proposition used with no `VAR` (undeclared); an external value naming no port
-  (unknown) or a name declared in two domains (ambiguous).
+  (unknown), an atom no statement uses (unknown atom), or a bare name declared in two
+  domains (ambiguous — qualify it).
 ```vrf
 DOMAIN deploy
 VAR tests_green                 // ports …
@@ -812,7 +822,8 @@ You have exactly one of two ways in. Detect which:
   - `cat program.vrf | elenchus-cli` — stdin. `--format json` for machine output.
   - **Templates (`VAR` ports):** supply values with `--set "<name>:true <name2>:false"`
     (space-separated, repeatable) and/or `--data values.vrf` (a file of `PROVIDE` lines).
-    `--hide-params` drops the PLACEHOLDERS section from the human report.
+    Qualify a clashing name across imports as `--set "domain.name:true"`. `--hide-params`
+    drops the PLACEHOLDERS section from the human report.
 - **No shell, but your tools include `elenchus_check` →** use **MCP**. Call
   `elenchus_check` with `{ "program": "<.vrf text>", "format": "json" }`
   (`\n`-separated lines). The entry is **either** inline `program` **or** a
@@ -821,7 +832,10 @@ You have exactly one of two ways in. Detect which:
   filesystem needed); use `"path": "<file.vrf>"` only if the server runs locally
   and you want it to read from disk like the CLI. Bind `VAR` ports with
   `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE <name>:
-  true\n" }`. The server also has `elenchus_version` and `elenchus_about`.
+  true\n" }`; a key may be qualified (`"domain.name"`) or name a multi-word atom
+  (`"engine has_fuel"`). On a local server, `"data_paths": ["vals.vrf"]` reads
+  PROVIDE files off disk (the npm wrapper's `dataFiles` is the Node equivalent).
+  The server also has `elenchus_version` and `elenchus_about`.
 - **On a syntax error** (either transport) you get the errors **grouped by
   class** (one per keyword) instead of a verdict — the correct syntax and an
   example shown once per class, with every offending place (line, caret, the
@@ -852,7 +866,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.10.0 -->
+<!-- skill-version: 0.11.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
