@@ -54,6 +54,9 @@ use core::fmt;
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
 pub use elenchus_compiler::Diagnostics;
+/// The filesystem-backed resolver (reads `IMPORT`s from disk). Only with `std`.
+#[cfg(feature = "std")]
+pub use elenchus_compiler::FileResolver;
 use elenchus_compiler::{
     AtomId, AtomKey, Clause, Compiled, Fact, KIND_UNSAT, Lit, Origin, Rule, Value, kw, levenshtein,
 };

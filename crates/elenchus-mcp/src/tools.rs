@@ -3,7 +3,8 @@
 //! Descriptions come from [`crate::messages`]; envelopes from [`crate::rpc`].
 
 use elenchus_solver::{
-    CompileError, MemoryResolver, PortBinding, read_data_bindings, verify_source_with, verify_with,
+    CompileError, FileResolver, MemoryResolver, PortBinding, read_data_bindings,
+    verify_source_with, verify_with,
 };
 use serde_json::{Value, json};
 
@@ -39,6 +40,7 @@ fn check_def() -> Value {
             "type": "object",
             "properties": {
                 "program": { "type": "string", "description": messages::CHECK_ARG_PROGRAM },
+                "path": { "type": "string", "description": messages::CHECK_ARG_PATH },
                 "format": {
                     "type": "string",
                     "enum": ["human", "json"],
@@ -70,7 +72,9 @@ fn check_def() -> Value {
                     "description": messages::CHECK_ARG_DATA
                 }
             },
-            "required": ["program"]
+            // Exactly one of `program` / `path` is required; the body enforces it
+            // (JSON Schema can't express "exactly one of" portably).
+            "oneOf": [{ "required": ["program"] }, { "required": ["path"] }]
         }
     })
 }
@@ -104,19 +108,21 @@ pub fn call(id: Value, params: Option<&Value>) -> Value {
     }
 }
 
-/// The `elenchus_check` body: pull `program` (required) and `format` (default
-/// `"json"`), run the engine, and return the human or JSON report. A missing
-/// `program` or a parse/compile error is a tool-level error (`isError`).
+/// The `elenchus_check` body: resolve the entry (inline `program` or a filesystem
+/// `path`), run the engine, and return the human or JSON report. A bad request or a
+/// parse/compile error is a tool-level error (`isError`).
 ///
-/// `program` is the entry source. Two optional surfaces mirror the CLI's reach so
-/// the three transports behave identically: `files` (an in-memory `{ path: text }`
-/// import set, the resolver-less server's stand-in for the filesystem, enabling
-/// IMPORT / multi-domain) and `data` (`{ name: PROVIDE-only text }`, the analog of
-/// `--data`). `values` + `data` both feed VAR ports.
+/// Two **entry modes**, exactly one required:
+/// - `program` — inline text. IMPORTs resolve against an in-memory `files`
+///   (`{ path: text }`) map, or it is a single source. Portable: works on a local
+///   *or* remote server.
+/// - `path` — a `.vrf` file on disk; the server reads it and resolves its IMPORTs
+///   from the filesystem via `FileResolver`, exactly like `elenchus-cli <file>`.
+///   Only meaningful on a locally-run server with filesystem access.
+///
+/// `values` (`{ port: bool }`) and `data` (`{ name: PROVIDE text }`) feed VAR ports
+/// in either mode.
 fn check(id: Value, args: Option<&Value>) -> Value {
-    let Some(program) = args.and_then(|a| a.get("program")).and_then(Value::as_str) else {
-        return rpc::tool_result(id, "missing required argument: program".into(), true);
-    };
     let format = args
         .and_then(|a| a.get("format"))
         .and_then(Value::as_str)
@@ -135,21 +141,44 @@ fn check(id: Value, args: Option<&Value>) -> Value {
         Err(e) => return rpc::tool_result(id, e.to_string(), true),
     };
 
-    // IMPORT: when `files` is present, resolve the graph through an in-memory store
-    // (program registered as the `<mcp>` root); otherwise it is a single source.
-    let result = match args.and_then(|a| a.get("files")).and_then(Value::as_object) {
-        Some(files) if !files.is_empty() => {
-            let mut resolver = MemoryResolver::new();
-            for (path, content) in files {
-                if let Some(text) = content.as_str() {
-                    resolver.add(path, text);
-                }
-            }
-            // Add the root last so a stray `files["<mcp>"]` can never shadow it.
-            resolver.add("<mcp>", program);
-            verify_with("<mcp>", &resolver, &inputs)
+    let program = args.and_then(|a| a.get("program")).and_then(Value::as_str);
+    let path = args.and_then(|a| a.get("path")).and_then(Value::as_str);
+
+    let result = match (program, path) {
+        (Some(_), Some(_)) => {
+            return rpc::tool_result(
+                id,
+                "give either `program` (inline) or `path` (a .vrf file), not both".into(),
+                true,
+            );
         }
-        _ => verify_source_with("<mcp>", program, &inputs),
+        (None, None) => {
+            return rpc::tool_result(
+                id,
+                "missing entry: pass `program` (inline .vrf text) or `path` (a .vrf file)".into(),
+                true,
+            );
+        }
+        // Filesystem entry: read + resolve IMPORTs from disk, like the CLI.
+        (None, Some(path)) => verify_with(path, &FileResolver, &inputs),
+        // Inline entry: IMPORTs resolve against the in-memory `files` map (program
+        // registered as the `<mcp>` root); otherwise it is a single source.
+        (Some(program), None) => {
+            match args.and_then(|a| a.get("files")).and_then(Value::as_object) {
+                Some(files) if !files.is_empty() => {
+                    let mut resolver = MemoryResolver::new();
+                    for (key, content) in files {
+                        if let Some(text) = content.as_str() {
+                            resolver.add(key, text);
+                        }
+                    }
+                    // Add the root last so a stray `files["<mcp>"]` can never shadow it.
+                    resolver.add("<mcp>", program);
+                    verify_with("<mcp>", &resolver, &inputs)
+                }
+                _ => verify_source_with("<mcp>", program, &inputs),
+            }
+        }
     };
 
     match result {

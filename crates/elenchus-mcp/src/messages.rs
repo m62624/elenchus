@@ -15,8 +15,17 @@ logical consistency. Returns one of CONSISTENT / WARNING / UNDERDETERMINED / CON
 details and an exit code. Treat WARNING, UNDERDETERMINED and CONFLICT as NOT done: add the \
 missing facts or rethink the premises, then call again — iterate until the result is CONSISTENT.";
 
-/// `elenchus_check` — description of the required `program` argument.
-pub const CHECK_ARG_PROGRAM: &str = "The .vrf program text: a leading DOMAIN, FACT/NOT assertions, PREMISE/RULE first principles, and a CHECK.";
+/// `elenchus_check` — description of the `program` argument (entry mode 1).
+pub const CHECK_ARG_PROGRAM: &str = "Inline .vrf program text: a leading DOMAIN, FACT/NOT assertions, \
+PREMISE/RULE first principles, and a CHECK. This is the entry source; for IMPORTs, send the imported \
+sources inline via `files`. Give either `program` or `path`, not both.";
+
+/// `elenchus_check` — description of the `path` argument (entry mode 2: read from
+/// the filesystem, like the CLI).
+pub const CHECK_ARG_PATH: &str = "Filesystem path to a .vrf file to check. The server reads it — and \
+resolves its `IMPORT`s — directly from disk (no `files` needed), exactly like `elenchus-cli <file>`. \
+Use this only when the server runs locally with filesystem access; a remote server cannot see your \
+files, so prefer inline `program` (+ `files`) for portability. Give either `program` or `path`, not both.";
 
 /// `elenchus_check` — description of the optional `format` argument.
 pub const CHECK_ARG_FORMAT: &str = "Output format. Default \"json\".";
