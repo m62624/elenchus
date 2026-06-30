@@ -2,6 +2,10 @@
 **/*.rs.bk
 *.pdb
 
+# proptest failure-seed files (regenerated locally on a failing case; we don't
+# pin them — a real regression should land as an explicit #[test], not a seed)
+**/*.proptest-regressions
+
 # cargo-tarpaulin coverage output (see tarpaulin.toml: output-dir = "coverage")
 /coverage
 *.profraw
