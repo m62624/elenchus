@@ -1,0 +1,13 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+assertion_line: 271
+expression: "err(\"CLOSE deps SIDEWAYS\\n\")"
+---
+RESULT: 1 syntax error
+
+CLOSE  (1 problem)
+  syntax  : CLOSE <relation> TRANSITIVE
+  example : CLOSE depends_on TRANSITIVE
+    line 1, col 12 - CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC
+      | CLOSE deps SIDEWAYS
+      |            ^^^^^^^^

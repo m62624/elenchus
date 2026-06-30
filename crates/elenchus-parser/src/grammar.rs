@@ -255,6 +255,50 @@ fn list_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     Ok((input, Body::List { op, atoms }))
 }
 
+/// An `EXISTS <binder> IN <set>` body: the existential dual of a `FOR EACH … IN`
+/// (which is an "all"). One condition line carrying the binder follows. Desugars
+/// to an at-least-one over the per-element instantiations.
+///
+/// Commit strategy mirrors [`list_body`]: a missing leading `EXISTS` stays a
+/// recoverable `Error` so the `PREMISE` `alt` falls through to [`impl_body`];
+/// once `EXISTS` matched, every later failure is [`promote`]d to a precise message.
+fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
+    let (input, _) = space0(input)?;
+    // EXISTS failing stays Error so the PREMISE alt can try impl_body.
+    let (input, _) = tag(kw::EXISTS).parse(input)?;
+    // Past here we are committed to an exists body.
+    let (input, _) = promote(
+        space1(input),
+        input,
+        "EXISTS expects a binder: EXISTS <binder> IN <set>",
+    )?;
+    let at = input;
+    let (input, binder) = promote(
+        identifier(input),
+        at,
+        "EXISTS expects a binder: EXISTS <binder> IN <set>",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::IN), space1).parse(input),
+        input,
+        "EXISTS expects `IN <set>`: EXISTS <binder> IN <set>",
+    )?;
+    let at = input;
+    let (input, set) = promote(identifier(input), at, "EXISTS expects a set name after IN")?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'EXISTS <binder> IN <set>'",
+    )?;
+    let at = input;
+    let (input, atom) = promote(
+        atom_line(input),
+        at,
+        "EXISTS needs a condition line using the binder",
+    )?;
+    Ok((input, Body::Exists { binder, set, atom }))
+}
+
 /// A continuation `AND <literal>` / `OR <literal>` line inside a `WHEN`/`THEN`
 /// block. Returns `(Conn, literal)`. A line that is neither `AND` nor `OR` yields
 /// a recoverable `Error` so `many0` stops cleanly (e.g. at `THEN`/EOF).
@@ -549,7 +593,19 @@ fn stmt_provide<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Provide { atom, value }))
 }
 
-/// `CLOSE <relation> TRANSITIVE` — close a relation's FACT pairs at compile time.
+/// One closure kind keyword: `TRANSITIVE`/`SYMMETRIC`/`REFLEXIVE`/`EQUIVALENCE`/`SCC`.
+fn closure_kind<'a>(input: Span<'a>) -> PResult<'a, CloseKind> {
+    alt((
+        value(CloseKind::Transitive, tag(kw::TRANSITIVE)),
+        value(CloseKind::Symmetric, tag(kw::SYMMETRIC)),
+        value(CloseKind::Reflexive, tag(kw::REFLEXIVE)),
+        value(CloseKind::Equivalence, tag(kw::EQUIVALENCE)),
+        value(CloseKind::Scc, tag(kw::SCC)),
+    ))
+    .parse(input)
+}
+
+/// `CLOSE <relation> <kind>` — close a relation's FACT pairs at compile time.
 fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::CLOSE), space1).parse(input)?;
     let at = input;
@@ -559,22 +615,22 @@ fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         "CLOSE expects a relation name, e.g. CLOSE depends_on TRANSITIVE",
     )?;
     let (input, _) = promote(
-        (space1, tag(kw::TRANSITIVE)).parse(input),
+        space1(input),
         input,
-        "CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE",
+        "CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC",
+    )?;
+    let at = input;
+    let (input, kind) = promote(
+        closure_kind(input),
+        at,
+        "CLOSE expects a closure kind: CLOSE <relation> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC",
     )?;
     let (input, _) = promote(
         eol(input),
         input,
-        "unexpected text after 'CLOSE … TRANSITIVE'",
+        "unexpected text after 'CLOSE <relation> <kind>'",
     )?;
-    Ok((
-        input,
-        Statement::Close {
-            relation,
-            kind: CloseKind::Transitive,
-        },
-    ))
+    Ok((input, Statement::Close { relation, kind }))
 }
 
 /// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
@@ -669,9 +725,9 @@ fn stmt_premise<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     )?;
     let at = input;
     let (input, body) = promote(
-        alt((list_body, impl_body)).parse(input),
+        alt((list_body, exists_body, impl_body)).parse(input),
         at,
-        "a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN",
+        "a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST), EXISTS ... IN, or WHEN ... THEN",
     )?;
     Ok((input, Statement::Premise { name, quant, body }))
 }

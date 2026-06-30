@@ -2,7 +2,7 @@
 //! `.vrf` text, parse it back, and assert the AST matches what we generated.
 //! Any rendering the grammar accepts but the parser mis-reads is a bug.
 
-use elenchus_parser::{Body, ListOp, Statement, parse};
+use elenchus_parser::{Body, CloseKind, ListOp, Statement, parse};
 use proptest::prelude::*;
 
 /// `(subject, predicate, object)`. `predicate == None` is a **bare atom** (a
@@ -38,6 +38,16 @@ enum Stmt {
     Check {
         subj: Option<String>,
         bidir: bool,
+    },
+    Close {
+        relation: String,
+        kind: &'static str,
+    },
+    ExistsPremise {
+        name: String,
+        binder: String,
+        set: String,
+        atom: Atom3,
     },
 }
 
@@ -115,6 +125,18 @@ fn render(stmts: &[Stmt]) -> String {
                 }
                 s.push('\n');
             }
+            Stmt::Close { relation, kind } => s.push_str(&format!("CLOSE {relation} {kind}\n")),
+            Stmt::ExistsPremise {
+                name,
+                binder,
+                set,
+                atom,
+            } => {
+                s.push_str(&format!(
+                    "PREMISE {name}:\n    EXISTS {binder} IN {set}\n        {}\n",
+                    render_atom(atom)
+                ));
+            }
         }
     }
     s
@@ -142,6 +164,17 @@ fn op_eq(p: ListOp, s: &str) -> bool {
             | (ListOp::Forbids, "FORBIDS")
             | (ListOp::OneOf, "ONEOF")
             | (ListOp::AtLeast, "ATLEAST")
+    )
+}
+
+fn close_kind_eq(p: CloseKind, s: &str) -> bool {
+    matches!(
+        (p, s),
+        (CloseKind::Transitive, "TRANSITIVE")
+            | (CloseKind::Symmetric, "SYMMETRIC")
+            | (CloseKind::Reflexive, "REFLEXIVE")
+            | (CloseKind::Equivalence, "EQUIVALENCE")
+            | (CloseKind::Scc, "SCC")
     )
 }
 
@@ -220,6 +253,26 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
             },
             Stmt::Check { subj, bidir },
         ) => subject.as_ref().map(|x| x.data) == subj.as_deref() && bidirectional == bidir,
+        (
+            Statement::Close { relation, kind },
+            Stmt::Close {
+                relation: r,
+                kind: k,
+            },
+        ) => relation.data == r && close_kind_eq(*kind, k),
+        (
+            Statement::Premise {
+                name,
+                body: Body::Exists { binder, set, atom },
+                ..
+            },
+            Stmt::ExistsPremise {
+                name: n,
+                binder: b,
+                set: st,
+                atom: a,
+            },
+        ) => name.data == n && binder.data == b && set.data == st && atom_eq(&atom.data, a),
         _ => false,
     }
 }
@@ -276,6 +329,25 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             }),
         (prop::option::of(ident()), any::<bool>())
             .prop_map(|(subj, bidir)| Stmt::Check { subj, bidir }),
+        (
+            ident(),
+            prop::sample::select(vec![
+                "TRANSITIVE",
+                "SYMMETRIC",
+                "REFLEXIVE",
+                "EQUIVALENCE",
+                "SCC",
+            ]),
+        )
+            .prop_map(|(relation, kind)| Stmt::Close { relation, kind }),
+        (ident(), ident(), ident(), atom()).prop_map(|(name, binder, set, atom)| {
+            Stmt::ExistsPremise {
+                name,
+                binder,
+                set,
+                atom,
+            }
+        }),
     ]
 }
 

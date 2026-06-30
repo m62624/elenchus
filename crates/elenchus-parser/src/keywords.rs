@@ -35,6 +35,11 @@ pub mod kw {
     pub const IN: &str = "IN";
     pub const CLOSE: &str = "CLOSE";
     pub const TRANSITIVE: &str = "TRANSITIVE";
+    pub const SYMMETRIC: &str = "SYMMETRIC";
+    pub const REFLEXIVE: &str = "REFLEXIVE";
+    pub const EQUIVALENCE: &str = "EQUIVALENCE";
+    pub const SCC: &str = "SCC";
+    pub const EXISTS: &str = "EXISTS";
     pub const VAR: &str = "VAR";
     pub const DEFAULT: &str = "DEFAULT";
     pub const PROVIDE: &str = "PROVIDE";
@@ -295,6 +300,15 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::EXISTS,
+        top_level: false,
+        card: card(
+            "EXISTS <binder> IN <set>  then one condition line using the binder",
+            "at least one element of the SET satisfies the condition (the existential over a set; the dual of FOR EACH)",
+            "EXISTS h IN handlers\n    h handles request",
+        ),
+    },
+    Keyword {
         text: kw::BIDIRECTIONAL,
         top_level: false,
         card: card(
@@ -308,8 +322,44 @@ pub const KEYWORDS: &[Keyword] = &[
         top_level: false,
         card: card(
             "CLOSE <relation> TRANSITIVE",
-            "the closure kind for CLOSE: a->b and b->c implies a->c",
+            "the closure kind for CLOSE: a->b and b->c implies a->c (a cycle is an error)",
             "CLOSE depends_on TRANSITIVE",
+        ),
+    },
+    Keyword {
+        text: kw::SYMMETRIC,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> SYMMETRIC",
+            "a closure kind for CLOSE: a->b implies b->a (a two-way relation)",
+            "CLOSE conflicts_with SYMMETRIC",
+        ),
+    },
+    Keyword {
+        text: kw::REFLEXIVE,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> REFLEXIVE",
+            "a closure kind for CLOSE: add x->x for every node the relation mentions",
+            "CLOSE compatible_with REFLEXIVE",
+        ),
+    },
+    Keyword {
+        text: kw::EQUIVALENCE,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> EQUIVALENCE",
+            "a closure kind for CLOSE: reflexive + symmetric + transitive — groups nodes into classes",
+            "CLOSE same_team EQUIVALENCE",
+        ),
+    },
+    Keyword {
+        text: kw::SCC,
+        top_level: false,
+        card: card(
+            "CLOSE <relation> SCC",
+            "a closure kind for CLOSE: group nodes that reach each other (mutual reachability; isolates directed cycles)",
+            "CLOSE depends_on SCC",
         ),
     },
     Keyword {

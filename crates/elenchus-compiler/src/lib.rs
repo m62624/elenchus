@@ -717,21 +717,32 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         for stmt in &program.statements {
             if let Statement::Close { relation, kind } = stmt {
-                let CloseKind::Transitive = kind;
                 let pairs = self
                     .relations
                     .get(relation.data)
                     .cloned()
                     .unwrap_or_default();
-                let closed = transitive_closure(pairs);
-                if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
-                    return Err(CompileError::CyclicRelation {
-                        file: source.to_string(),
-                        line: relation.span.location_line(),
-                        relation: relation.data.to_string(),
-                        node: node.clone(),
-                    });
-                }
+                let closed = match kind {
+                    CloseKind::Transitive => {
+                        let closed = transitive_closure(pairs);
+                        // TRANSITIVE requires a DAG: a node reaching itself is a
+                        // cycle. (The other kinds expect or add self/back pairs by
+                        // design, so only this one rejects them.)
+                        if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
+                            return Err(CompileError::CyclicRelation {
+                                file: source.to_string(),
+                                line: relation.span.location_line(),
+                                relation: relation.data.to_string(),
+                                node: node.clone(),
+                            });
+                        }
+                        closed
+                    }
+                    CloseKind::Symmetric => symmetric_closure(pairs),
+                    CloseKind::Reflexive => reflexive_closure(pairs),
+                    CloseKind::Equivalence => equivalence_closure(pairs),
+                    CloseKind::Scc => scc_closure(pairs),
+                };
                 self.relations.insert(relation.data.to_string(), closed);
             }
         }
@@ -1135,6 +1146,34 @@ impl Compiler {
                         self.push_clause(lits, origin.clone());
                     }
                 }
+            }
+            Body::Exists { binder, set, atom } => {
+                // ∃: at least one element of the SET satisfies the condition.
+                // Instantiate the condition per element (binder substituted) and
+                // emit a single at-least-one — exactly an `ATLEAST` whose atoms are
+                // generated from the set instead of hand-listed. Linear in `|set|`,
+                // one clause; the solver sees nothing new. The dual of a `FOR EACH`
+                // over a set (an "all"), so it resolves the set the same way.
+                let elements = match self.sets.get(set.data) {
+                    Some(els) => els.clone(),
+                    None => {
+                        return Err(CompileError::UnknownSet {
+                            file: source.to_string(),
+                            line: set.span.location_line(),
+                            set: set.data.to_string(),
+                            suggestion: nearest_set_suggestion(set.data, &self.sets),
+                        });
+                    }
+                };
+                let keys: Vec<AtomKey> = elements
+                    .iter()
+                    .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
+                    .collect::<Result<_, _>>()?;
+                for k in &keys {
+                    self.intern(k);
+                }
+                let origin = self.origin(source, line, Some(name), kw::EXISTS);
+                self.emit_at_least_one(&keys, &origin);
             }
         }
         Ok(())
@@ -2089,6 +2128,14 @@ fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
             consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
             cons_conn: *cons_conn,
         },
+        Body::Exists { binder, set, atom } => Body::Exists {
+            binder: binder.clone(),
+            set: set.clone(),
+            atom: Located {
+                data: subst_atom(&atom.data, subs),
+                span: atom.span,
+            },
+        },
     }
 }
 
@@ -2111,6 +2158,7 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
                 .iter()
                 .chain(consequent)
                 .for_each(|l| add(&l.data.atom)),
+            Body::Exists { atom, .. } => add(&atom.data),
         },
         Statement::Domain(_)
         | Statement::Import { .. }
@@ -2120,6 +2168,60 @@ fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<String>>) {
         | Statement::Var { .. }
         | Statement::Provide { .. } => {}
     }
+}
+
+/// Every node a relation's pairs mention (subjects and objects), deduped/sorted.
+fn relation_nodes(pairs: &[(String, String)]) -> BTreeSet<String> {
+    let mut s = BTreeSet::new();
+    for (a, b) in pairs {
+        s.insert(a.clone());
+        s.insert(b.clone());
+    }
+    s
+}
+
+/// Symmetric closure: add `(b, a)` for every `(a, b)`. O(E). Compile-time.
+fn symmetric_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
+    let backs: Vec<(String, String)> = set.iter().map(|(a, b)| (b.clone(), a.clone())).collect();
+    set.extend(backs);
+    set.into_iter().collect()
+}
+
+/// Reflexive closure: add `(x, x)` for every node the relation mentions. O(V).
+fn reflexive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let nodes = relation_nodes(&pairs);
+    let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
+    for n in nodes {
+        set.insert((n.clone(), n));
+    }
+    set.into_iter().collect()
+}
+
+/// Equivalence closure: reflexive + symmetric + transitive — groups nodes into
+/// classes (`a ~ b` iff connected ignoring direction). O(V³) via the transitive
+/// step. Cycles are expected here, so (unlike `transitive_closure`) no error.
+fn equivalence_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    reflexive_closure(transitive_closure(symmetric_closure(pairs)))
+}
+
+/// Strongly-connected grouping: keep `(a, b)` where `a` and `b` reach each other
+/// (mutual reachability), plus each node to itself. Isolates directed cycles.
+/// O(V³) for the reachability + O(V²) for the mutual filter. Compile-time.
+fn scc_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let nodes = relation_nodes(&pairs);
+    let reach: BTreeSet<(String, String)> = transitive_closure(pairs).into_iter().collect();
+    let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+    for (a, b) in &reach {
+        if reach.contains(&(b.clone(), a.clone())) {
+            out.insert((a.clone(), b.clone()));
+        }
+    }
+    // Each node is its own (possibly singleton) component.
+    for n in nodes {
+        out.insert((n.clone(), n));
+    }
+    out.into_iter().collect()
 }
 
 /// The transitive closure of a relation's `(from, to)` pairs: add `(a, c)`
@@ -2313,6 +2415,10 @@ fn canonical_body(
             s.push_str(conn(cons_conn));
             s.push('|');
             s.push_str(&lit_sigs(consequent, ctx)?);
+        }
+        Body::Exists { binder, set, atom } => {
+            let _ = write!(s, "EXISTS|{}|{}|", binder.data, set.data);
+            s.push_str(&key_sig(&ctx.key(&atom.data)?));
         }
     }
     Ok(s)
@@ -3586,6 +3692,92 @@ mod tests {
             panic!("expected CyclicRelation");
         };
         assert_eq!(relation, "r");
+    }
+
+    /// Count the directed pairs a relation `r` holds after a CLOSE, by grounding a
+    /// relation `FOR EACH x r y` over it (one clause per pair). The body is an
+    /// *implication* (asymmetric in x and y) so (a,b) and (b,a) stay distinct — a
+    /// symmetric `FORBIDS` would dedup them and undercount.
+    fn pairs_after_close(close: &str) -> usize {
+        let src = alloc::format!(
+            "FACT a r b\nFACT b r c\n{close}\nPREMISE p FOR EACH x r y:\n    WHEN x src\n    THEN y dst\n"
+        );
+        cs(&src).unwrap().clauses.len()
+    }
+
+    #[test]
+    fn close_symmetric_adds_the_back_edge() {
+        // a->b, b->c plus their reverses b->a, c->b = 4 pairs.
+        assert_eq!(pairs_after_close("CLOSE r SYMMETRIC"), 4);
+    }
+
+    #[test]
+    fn close_reflexive_adds_self_pairs() {
+        // a->b, b->c plus a->a, b->b, c->c (3 nodes) = 5 pairs.
+        assert_eq!(pairs_after_close("CLOSE r REFLEXIVE"), 5);
+    }
+
+    #[test]
+    fn close_equivalence_groups_a_whole_component() {
+        // a->b->c connects {a,b,c} into one class: every ordered pair incl. self =
+        // 3 x 3 = 9. A cycle would be fine here (no DAG requirement), unlike TRANSITIVE.
+        assert_eq!(pairs_after_close("CLOSE r EQUIVALENCE"), 9);
+    }
+
+    #[test]
+    fn close_equivalence_does_not_reject_a_cycle() {
+        // EQUIVALENCE expects cycles (they are the classes), so a back-edge that
+        // would make TRANSITIVE fail is accepted here.
+        let src = "FACT a r b\nFACT b r a\nCLOSE r EQUIVALENCE\n";
+        assert!(cs(src).is_ok());
+    }
+
+    #[test]
+    fn close_scc_isolates_a_directed_cycle() {
+        // a<->b form a strongly-connected pair; c is reachable from b but does not
+        // reach back, so it is its own singleton. SCC keeps the mutual pairs of
+        // {a,b} (a-a,a-b,b-a,b-b) + c-c = 5, and does NOT error on the cycle.
+        let src = "FACT a r b\nFACT b r a\nFACT b r c\nCLOSE r SCC\nPREMISE p FOR EACH x r y:\n    WHEN x src\n    THEN y dst\n";
+        assert_eq!(cs(src).unwrap().clauses.len(), 5);
+    }
+
+    #[test]
+    fn exists_grounds_to_one_at_least_one_over_the_set() {
+        // ∃ over a 2-element set = a single at-least-one clause over the two
+        // instantiated atoms (exactly an ATLEAST whose atoms come from the set).
+        let src = r"
+        SET handlers
+            a
+            b
+        PREMISE covered:
+            EXISTS h IN handlers
+                h handles request
+        ";
+        let c = cs(src).unwrap();
+        assert_eq!(c.clauses.len(), 1);
+        assert!(c.atoms.contains(&key("a", "handles", Some("request"))));
+        assert!(c.atoms.contains(&key("b", "handles", Some("request"))));
+    }
+
+    #[test]
+    fn exists_matches_a_hand_written_atleast() {
+        // Oracle: EXISTS over {a,b} produces the same clause set as a manual ATLEAST
+        // of the two instantiated atoms.
+        let via_exists =
+            cs("SET hs\n    a\n    b\nPREMISE p:\n    EXISTS h IN hs\n        h does x\n").unwrap();
+        let via_atleast =
+            cs("PREMISE p:\n    ATLEAST\n        a does x\n        b does x\n").unwrap();
+        assert_eq!(via_exists.clauses.len(), 1);
+        assert_eq!(via_exists.clauses.len(), via_atleast.clauses.len());
+    }
+
+    #[test]
+    fn exists_over_an_undeclared_set_is_rejected() {
+        let src = "SET handlers\n    a\nPREMISE p:\n    EXISTS h IN handlerz\n        h does x\n";
+        let CompileError::UnknownSet { set, .. } = cs(src).unwrap_err() else {
+            panic!("expected UnknownSet");
+        };
+        assert_eq!(set, "handlerz");
     }
 
     #[test]

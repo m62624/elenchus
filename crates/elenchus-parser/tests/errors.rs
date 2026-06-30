@@ -266,6 +266,18 @@ fn unknown_keyword_has_no_card() {
 }
 
 #[test]
+fn close_with_an_unknown_kind() {
+    // A bogus closure kind groups under CLOSE and shows its card once.
+    insta::assert_snapshot!(err("CLOSE deps SIDEWAYS\n"));
+}
+
+#[test]
+fn exists_missing_in() {
+    // EXISTS without `IN` groups under EXISTS and shows its card once.
+    insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h handlers\n        h does x\n"));
+}
+
+#[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
     // A trailing newline is not required: `eol` accepts EOF too. Drawn straight

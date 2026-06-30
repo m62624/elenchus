@@ -1,5 +1,6 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
+assertion_line: 243
 expression: "err(include_str!(\"fixtures/showcase.vrf\"))"
 ---
 RESULT: 17 syntax errors
@@ -49,10 +50,10 @@ EXCLUSIVE  (2 problems)
   example : EXCLUSIVE
                 light is on
                 light is off
-    line 27, col 1 - a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN
+    line 27, col 1 - a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST), EXISTS ... IN, or WHEN ... THEN
       | 
       | ^
-    line 65, col 1 - a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST) or WHEN ... THEN
+    line 65, col 1 - a premise body must be a list (EXCLUSIVE/FORBIDS/ONEOF/ATLEAST), EXISTS ... IN, or WHEN ... THEN
       |     this is not a body
       | ^^^^^^^^^^^^^^^^^^^^^^
 

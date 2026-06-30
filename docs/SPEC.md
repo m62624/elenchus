@@ -360,9 +360,10 @@ namespacing and reuse.
 | `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
+| `EXISTS … IN …` | at least one element of a `SET` satisfies the condition (a `PREMISE` body; the ∃ dual of `FOR EACH`) | quantification |
 | `SET` | declare a finite set of elements to quantify over | quantification |
 | `FOR EACH … IN …` / `FOR EACH … <rel> …` | quantifier on a `PREMISE`/`RULE` header (over a `SET` or a relation's `FACT` pairs) | quantification |
-| `CLOSE … TRANSITIVE` | make a relation transitive at compile time (cycle = error) | quantification |
+| `CLOSE … TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` | close a relation at compile time under the named kind (`TRANSITIVE` requires a DAG: cycle = error) | quantification |
 | `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
 | `AS` | local alias for an imported domain | reuse |
 | `VAR` | declare an external boolean **port** — a single-word proposition whose truth is supplied from outside (`VAR <name> [DEFAULT true\|false]`) | templating |
@@ -451,9 +452,44 @@ PREMISE <name> FOR EACH <x> linked <y>:
         <x> <predicate> <value>
         <y> <predicate> <value>
 
-// Make a relation transitive at compile time (a->b, b->c => a->c); a cycle errors
+// At least one element of a SET satisfies the condition (the ∃ dual of FOR EACH).
+// A PREMISE body; desugars to an at-least-one over the per-element instantiations.
+SET handlers
+    a
+    b
+PREMISE covered:
+    EXISTS h IN handlers
+        h handles request
+
+// Close a relation at compile time under a kind (a->b, b->c => a->c for TRANSITIVE)
 CLOSE <relation> TRANSITIVE
 ```
+
+**`EXISTS` — the existential.** `FOR EACH … IN <set>` is an "all" (a conjunction of
+the body over every element); `EXISTS <binder> IN <set>` is its dual, "at least
+one" (a disjunction). It is a `PREMISE` body, not a header quantifier — kept a
+distinct word so a model never confuses ∀ with ∃ on a near-identical line. It
+desugars to exactly one `ATLEAST` clause whose atoms are generated from the set
+instead of hand-listed: `O(|set|)` to ground, one clause, the solver sees nothing
+new. Catches "no element covers this case" (a coverage gap) as a `CONFLICT` when
+every instantiation is forced false.
+
+**The `CLOSE` family.** Each kind is a compile-time graph operation over a
+relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
+ground pairs), so a relation `FOR EACH` then ranges over the closed relation:
+
+| Kind | Adds | Cycle? | Cost |
+|---|---|---|---|
+| `TRANSITIVE` | `a→c` whenever `a→b`, `b→c` | **error** (DAG required) | `O(V³)` |
+| `SYMMETRIC` | `b→a` for every `a→b` (two-way) | allowed | `O(E)` |
+| `REFLEXIVE` | `x→x` for every node | allowed | `O(V)` |
+| `EQUIVALENCE` | reflexive + symmetric + transitive (groups into classes) | allowed | `O(V³)` |
+| `SCC` | `a↔b` when each reaches the other (mutual reachability; isolates directed cycles) | allowed | `O(V³)` |
+
+Only `TRANSITIVE` rejects a cycle (it doubles as an acyclicity/DAG check); the
+others expect or produce self/back pairs by design. `CLOSE` **replaces** the
+relation's pairs with the closed set, so an edge that drops out of the closure
+(e.g. a one-way edge under `SCC`) is no longer consumed by a `FOR EACH` — by intent.
 
 **The one-binder rule (why it stays cheap).** A header carries **exactly one**
 `FOR EACH` — the grammar has no production for a second, so quantifier nesting is
@@ -463,12 +499,99 @@ guarantee against a combinatorial blow-up: grounding a single quantifier is `|se
 the product of two domains. To relate two things, route through a declared
 relation (`FACT a linked b` + `FOR EACH x linked y`), whose pairs are pinned by
 data, never two free binders. There are still **no numbers**: "exactly/at least/at
-most one" exist (`ONEOF`/`ATLEAST`/`EXCLUSIVE`), counts beyond one do not.
+most one" exist (`ONEOF`/`ATLEAST`/`EXCLUSIVE`), counts beyond one do not. The same
+rule governs the `CLOSE` family: each kind is a single-relation graph op, never a
+join of two relations (which would be a product), so a closure is at worst `O(V³)`
+in the relation's own node count — polynomial, bounded by declared data.
 
-`CLOSE <rel> TRANSITIVE` computes the relation's transitive closure as a compile-
-time graph step (zero solver cost), so a relation `FOR EACH` then ranges over
-*reachability*; a node that reaches itself is a **compile error**, making `CLOSE`
-double as an acyclicity (DAG) check.
+## Performance — why the engine cannot blow up
+
+The design target is a small *local* model running the checker inline, so cost must
+be predictable and the proven solver core must never need defending. The whole DSL
+is **the largest surface of syntactic sugar that still grounds into a decidable,
+cheap fragment of three-valued (Kleene) SAT.** Everything above the primitive is
+sugar that desugars, at compile time, into ground `Impossible` clauses; the solver
+sees only those.
+
+**The split: the parser owns cost, the engine owns truth.** Like Rust's borrow
+checker rejecting a class of bugs structurally at compile time, the parser rejects a
+class of *cost* structurally — by refusing to parse the expensive shape, not by
+checking for it at runtime. **The engine never needs to defend itself against
+blow-up — the parser has already guaranteed the input is small and linear.** Put
+differently: **what cannot be written cannot happen.**
+
+**Forbidden by unrepresentability (and why).**
+
+- *No nested quantifiers.* A header carries exactly one `FOR EACH`; there is no
+  grammar production for a second, so a clause can never range over the product of
+  two free domains. To relate two things, route through a declared relation whose
+  pairs are pinned by data.
+- *No free joins.* You cannot write `R ⋈ S` over two relations (a product); a
+  derived relation can only come from one relation's own pairs (`CLOSE`).
+- *No numbers.* "Exactly / at least / at most one" exist (`ONEOF`/`ATLEAST`/
+  `EXCLUSIVE`, and `EXISTS` over a set); counting beyond one does not. Arithmetic
+  over unbounded integers is SMT, strictly more than this engine offers.
+
+Each "you cannot" is paired with a bounded idiom that reaches the same end (relate
+two things → a declared relation; cardinality → the one-of words; a second
+dimension → `FACT` data), so flexibility is kept while the dangerous form stays out.
+
+**Cost of every keyword.** Two independent axes: *grounding* (compile-time work to
+desugar the keyword into clauses — what the grammar bounds) and *solve* (what those
+clauses cost the SAT core). Symbols: `n` = atoms in a list body, `|set|` = elements
+of a `SET`, `|pairs|` = declared `FACT` pairs of a relation, `V`/`E` = nodes/edges of
+a relation, `b` = clauses one body instance emits.
+
+| Keyword | Grounding (compile-time) | Solve contribution |
+|---|---|---|
+| `DOMAIN` | `O(1)` — namespacing only | — |
+| `IMPORT` / `AS` | `O(1)` per edge; import-cycle check `O(imports)` | — (flat merge into the atom universe) |
+| `FACT` / `NOT` | `O(1)` | one unit literal |
+| `ASSUME` | `O(1)` | one retractable assumption |
+| `EXCLUSIVE` / `FORBIDS` | `C(n,2)` pairwise clauses | those clauses |
+| `ONEOF` | `C(n,2) + 1` clauses (+ closed-world value set) | those clauses |
+| `ATLEAST` | one clause over `n` atoms | one clause |
+| `EXISTS … IN <set>` | one clause over `|set|` atoms | one clause |
+| `WHEN … AND/OR … THEN …` (`PREMISE`) | one clause per (antecedent × consequent) group | those clauses |
+| `RULE` (`WHEN … THEN`) | one rule per antecedent literal | a forward-chaining saturate step |
+| `SET` | `O(|elements|)` recorded | — |
+| `FOR EACH … IN <set>` | `×|set|` body instances → `O(|set|·b)` | those clauses |
+| `FOR EACH … <rel> …` | `×|pairs|` body instances → `O(|pairs|·b)` | those clauses |
+| `CLOSE … SYMMETRIC` | `O(E)` graph op | **zero** |
+| `CLOSE … REFLEXIVE` | `O(V)` graph op | **zero** |
+| `CLOSE … TRANSITIVE` | `O(V³)` + cycle check | **zero** |
+| `CLOSE … EQUIVALENCE` | `O(V³)` | **zero** |
+| `CLOSE … SCC` | `O(V³) + O(V²)` | **zero** |
+| `VAR` / `DEFAULT` | `O(1)` port declaration | one literal if resolved, else stays UNKNOWN |
+| `PROVIDE` | `O(1)` binding (+ conflict check) | one literal |
+| `CHECK` | — | forward pass: saturate rules to a fixpoint, then one CDCL SAT check |
+| `CHECK … BIDIRECTIONAL` | — | + backward all-SAT: enumerate models, up to `2^k` over `k` UNKNOWN atoms, **capped by a configurable limit** |
+
+**Maximum reachable load, and which combination produces it.** Two regimes, kept
+separate on purpose:
+
+1. **Grounding is always polynomial in declared data** — the parser guarantees no
+   keyword can emit more, because the two multiplying shapes (nested quantifiers, a
+   join of two relations) are *unrepresentable*. The densest single combination is a
+   cycle-creating `CLOSE EQUIVALENCE`/`SCC`, which can fill a relation to `V²` pairs,
+   followed by a `FOR EACH … <rel> …` over it: `O(V²·b)` clauses. A `FOR EACH … IN`
+   whose body is a `ONEOF` of `n` atoms is `O(|set|·n²)`. You can never reach
+   `|set₁|·|set₂|` (two sets) — there is no production that binds two free variables.
+   So the clause count handed to the solver is, in the worst case the grammar admits,
+   **a low-degree polynomial in the sizes of declared sets/relations.**
+2. **The SAT solve on those clauses is worst-case exponential in atom count** — this
+   is inherent (SAT is NP-complete) and true of *any* SAT checker, not something this
+   grammar adds. The polynomial clause bound from (1) is what keeps real instances
+   small and the CDCL core fast in practice.
+3. **`BIDIRECTIONAL` is the one deliberately-exponential knob you control**: the
+   backward all-SAT pass enumerates up to `2^k` models over `k` UNKNOWN atoms. It is
+   **bounded by a configurable cap** — on hitting it the engine reports "≥ N models"
+   and the first divergence rather than hanging.
+
+In short: the user-facing knobs that raise load are (a) a dense `CLOSE` + a relation
+`FOR EACH` (polynomial, predictable) and (b) `BIDIRECTIONAL` over many UNKNOWN atoms
+(exponential, but capped). Every other keyword is `O(1)` or a small polynomial, and
+**no keyword can hand the solver more than a polynomial number of clauses.**
 
 ## External boolean ports: `VAR`, `PROVIDE`, `DEFAULT`
 
@@ -641,9 +764,13 @@ hash is reused rather than re-parsed.
 
 **Indentation is cosmetic, NOT significant.** Block boundaries are determined by
 keywords, not by indentation depth or tabs. This removes the classic LLM
-whitespace error. It works thanks to the CAPS convention: a statement line always
-starts with a CAPS keyword, and an atom line starts with a lowercase identifier.
-The parser does not confuse them.
+whitespace error. It works because every reserved keyword is ASCII all-CAPS: a
+statement line begins with a **reserved** CAPS keyword, and any other line is
+content (an atom / `SET` element / body literal). The parser disambiguates by the
+**reserved-word list, not by case** — a capitalized subject like `Creature.A` is
+still an atom, because `Creature` is not a reserved word. (The lowercase-name
+convention below is for readability; it is not what the parser keys on, and is not
+enforced.) So indentation is never needed to tell a statement from its body.
 
 ```ebnf
 program     = { line } ;
@@ -657,7 +784,9 @@ domain      = "DOMAIN" , name , NEWLINE ;      (* required, first statement of a
 import      = "IMPORT" , string , [ "AS" , name ] , NEWLINE ;
 set         = "SET" , name , NEWLINE , element_line , { element_line } ;  (* >= 1 *)
 element_line = identifier , NEWLINE ;
-close       = "CLOSE" , name , "TRANSITIVE" , NEWLINE ;
+close       = "CLOSE" , name , closure_kind , NEWLINE ;
+closure_kind = "TRANSITIVE" | "SYMMETRIC" | "REFLEXIVE" | "EQUIVALENCE" | "SCC" ;
+            (* only TRANSITIVE requires a DAG; the others allow cycles *)
 fact        = "FACT" , atom , NEWLINE ;
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
@@ -666,7 +795,7 @@ provide     = "PROVIDE" , atom , ":" , bool , NEWLINE ;        (* bind a port (b
 bool        = "true" | "false" ;               (* positional, not reserved as identifiers *)
 check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
-premise       = "PREMISE" , name , [ for_each ] , ":" , NEWLINE , ( list_body | impl_body ) ;
+premise       = "PREMISE" , name , [ for_each ] , ":" , NEWLINE , ( list_body | exists_body | impl_body ) ;
 rule        = "RULE"  , name , [ for_each ] , ":" , NEWLINE , impl_body ;
 for_each    = "FOR" , "EACH" , name , ( "IN" , name | name , name ) ;
             (* one binder over a SET, or `<a> <relation> <b>` over a relation's facts;
@@ -674,6 +803,8 @@ for_each    = "FOR" , "EACH" , name , ( "IN" , name | name , name ) ;
 
 list_body   = list_op , NEWLINE , atom_line , atom_line , { atom_line } ;  (* >= 2 *)
 list_op     = "EXCLUSIVE" | "FORBIDS" | "ONEOF" | "ATLEAST" ;
+exists_body = "EXISTS" , name , "IN" , name , NEWLINE , atom_line ;
+            (* ∃: at least one element of the SET satisfies the condition line *)
 atom_line   = atom , NEWLINE ;
 
 impl_body   = when_line , { cont_line } , then_line , { cont_line } ;
@@ -697,6 +828,21 @@ letter      = ? any Unicode letter (Cyrillic, CJK, Latin, …) ? ;
 digit       = ? any Unicode digit ? ;
 ```
 
+> **`NEWLINE` above is really `eol` — slightly more lenient.** Each line is
+> terminated by `eol = whitespace? , ("//" comment)? , ( NEWLINE | EOF )`, so (a) any
+> statement may carry a trailing comment (`FACT motor runs  // note`), and (b) the
+> **last** line needs no newline — EOF ends it. A blank line or a stand-alone comment
+> is `line`-level noise only **between** top-level statements; it may *not* sit
+> between a `SET`'s elements or inside a `PREMISE`/`RULE` body (it would end the block).
+>
+> **Whitespace is uniform, not per-keyword.** Leading whitespace (indentation) is
+> consumed and ignored on *every* line — top-level statements and body lines alike —
+> so indentation is cosmetic for all constructs and never block-significant. Adjacent
+> tokens on a line are separated by one-or-more spaces (one suffices; extra spaces are
+> fine); trailing spaces are ignored. The rule is **positional, not lexical**: leading
+> and trailing space is always free, exactly one space between two tokens is always
+> enough — identical for every keyword.
+
 Identifiers accept letters of **any** script, so `условие`, `名前` and `motor` are
 all valid. The first character must be a letter (never a digit, `_`, `.`, or
 punctuation); subsequent characters may also be digits or `_`. **`.` is reserved as
@@ -706,14 +852,15 @@ reserved list below) — like SQL, only the keywords are fixed to one language, 
 names are yours.
 
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
-lines start with body words (`WHEN`/`AND`/`THEN` or a `list_op`) or with an
-identifier (list atoms), and ends at the first line with a top-level word
+lines start with body words (`WHEN`/`AND`/`THEN`, a `list_op`, or `EXISTS`) or with
+an identifier (list atoms / a condition line), and ends at the first line with a top-level word
 (`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`FACT`/`NOT`/`VAR`/`PROVIDE`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
 Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME VAR
 PROVIDE DEFAULT PREMISE RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS
-ONEOF ATLEAST SET FOR EACH IN CLOSE TRANSITIVE`. An identifier may not coincide
+ONEOF ATLEAST EXISTS SET FOR EACH IN CLOSE TRANSITIVE SYMMETRIC REFLEXIVE
+EQUIVALENCE SCC`. An identifier may not coincide
 with a reserved word. (`true`/`false` are *not* reserved — they are parsed
 positionally after `VAR … DEFAULT` and `PROVIDE …:`, so they remain usable as
 ordinary names elsewhere.)

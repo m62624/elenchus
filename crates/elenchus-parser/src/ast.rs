@@ -111,11 +111,24 @@ pub enum Quant<'a> {
     },
 }
 
-/// Which closure a `CLOSE` statement applies to a relation.
+/// Which closure a `CLOSE` statement applies to a relation. Each is a compile-time
+/// graph operation over the relation's `FACT` pairs (no solver cost); only
+/// `Transitive` rejects a cycle (it requires a DAG) — the others either expect or
+/// produce self/back pairs by design.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseKind {
     /// `TRANSITIVE` — add `a→c` whenever `a→b` and `b→c` hold (requires a DAG).
     Transitive,
+    /// `SYMMETRIC` — add `b→a` whenever `a→b` holds (a two-way relation).
+    Symmetric,
+    /// `REFLEXIVE` — add `x→x` for every node the relation mentions.
+    Reflexive,
+    /// `EQUIVALENCE` — reflexive + symmetric + transitive closure: groups nodes
+    /// into classes (a→b iff they are connected ignoring direction).
+    Equivalence,
+    /// `SCC` — strongly-connected grouping: `a→b` iff `a` and `b` reach each other
+    /// (mutual reachability), plus each node to itself. Isolates directed cycles.
+    Scc,
 }
 
 /// The body of an `PREMISE` or `RULE`.
@@ -127,6 +140,18 @@ pub enum Body<'a> {
         op: ListOp,
         /// The atoms it ranges over (the parser guarantees at least two).
         atoms: Vec<Located<'a, Atom<'a>>>,
+    },
+    /// `EXISTS <binder> IN <set>` then one condition line using the binder — at
+    /// least one element of the set satisfies the condition. Desugars to an
+    /// at-least-one over the per-element instantiations (the dual of a `FOR EACH`
+    /// over a set, which is an "all"). Premise-only: `∃` checks, it derives nothing.
+    Exists {
+        /// The bound variable substituted into `atom` once per set element.
+        binder: Located<'a, &'a str>,
+        /// The declared `SET` the binder ranges over.
+        set: Located<'a, &'a str>,
+        /// The condition, carrying the binder in some position.
+        atom: Located<'a, Atom<'a>>,
     },
     /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...]` — antecedent + consequent.
     /// Within one group the continuation keyword is uniform (no mixing `AND`/`OR`).
@@ -176,9 +201,10 @@ pub enum Statement<'a> {
         /// Its elements, one per line (at least one).
         elements: Vec<Located<'a, &'a str>>,
     },
-    /// `CLOSE <relation> TRANSITIVE` — close a relation's `FACT` pairs under the
-    /// given kind at compile time (a graph operation, no solver cost). A cycle is
-    /// a compile error.
+    /// `CLOSE <relation> <kind>` — close a relation's `FACT` pairs under the given
+    /// [`CloseKind`] at compile time (a graph operation, no solver cost). With
+    /// `TRANSITIVE` a cycle is a compile error (DAG required); the other kinds
+    /// allow cycles.
     Close {
         /// The relation predicate to close (e.g. `depends_on`).
         relation: Located<'a, &'a str>,
