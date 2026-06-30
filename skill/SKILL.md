@@ -110,6 +110,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `FORBIDS` | `PREMISE` body | synonym of `EXCLUSIVE` (reads well for two: "not both") |
 | `ONEOF` | `PREMISE` body | **exactly one** of the listed atoms is TRUE |
 | `ATLEAST` | `PREMISE` body | **at least one** of the listed atoms is TRUE |
+| `EXISTS … IN …` | `PREMISE` body | **at least one** element of a `SET` satisfies the condition (the ∃ dual of `FOR EACH`) |
 | `WHEN` | `PREMISE`/`RULE` body | starts the antecedent of an implication |
 | `THEN` | `PREMISE`/`RULE` body | starts the consequent |
 | `AND` | `WHEN`/`THEN` group | conjunction of literals in that group |
@@ -117,7 +118,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `SET` | statement | declare a finite set of elements to quantify over (one element per line) |
 | `FOR EACH … IN …` | `PREMISE`/`RULE` header | instantiate the body once per element of a `SET`, binding a name |
 | `FOR EACH … <rel> …` | `PREMISE`/`RULE` header | instantiate the body once per declared `FACT` pair of a relation |
-| `CLOSE` | statement | `CLOSE <rel> TRANSITIVE` — make a relation transitive at compile time; a cycle is an error |
+| `CLOSE` | statement | `CLOSE <rel> TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` — close a relation at compile time (only `TRANSITIVE` rejects a cycle) |
 | `VAR` | statement | declare an **external port** — a one-word proposition supplied from outside (`VAR <name> [DEFAULT true\|false]`) |
 | `PROVIDE` | statement | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) |
 | `DEFAULT` | `VAR` modifier | the fallback value used when nothing is supplied for the port |
@@ -226,6 +227,21 @@ PREMISE has_reviewer:
         pr reviewed_by_bob
 ```
 
+### `EXISTS … IN …` — at least one element of a SET
+- **Syntax:** `EXISTS <binder> IN <set>` then **one** condition line using the binder.
+- **Why:** the same "at least one" as `ATLEAST`, but generated from a declared `SET`
+  instead of hand-listed — the ∃ dual of `FOR EACH … IN` (which is "for all"). Use it
+  to say "*some* element covers this"; if every instantiation is forced false, you get
+  a `CONFLICT` (a coverage gap caught mechanically). It is a `PREMISE` body only.
+```vrf
+SET handlers
+    auth
+    billing
+PREMISE someone_handles:
+    EXISTS h IN handlers
+        h handles request    // at least one handler takes the request
+```
+
 ### `WHEN … THEN …` — implication (with `AND` / `OR`)
 - **Syntax:** `WHEN <lit>` then zero or more `AND <lit>` **or** `OR <lit>` lines,
   then `THEN <lit>` then zero or more `AND`/`OR` lines. Each literal is `[NOT] atom`.
@@ -308,13 +324,24 @@ PREMISE diff FOR EACH x linked y:    // neighbours can't share a colour
         y is red
 ```
 
-### `CLOSE <relation> TRANSITIVE` — make a relation reach transitively
-- **Syntax:** `CLOSE <relation> TRANSITIVE` (its own line).
-- **Why:** computes the relation's transitive closure at **compile time** (a graph
-  step, no solver cost): if `a→b` and `b→c`, then `a→c` is added, so a relation
-  `FOR EACH` then ranges over *reachability*, not just direct edges. A **cycle**
-  (a node reaching itself) is a **compile error** — so `CLOSE` doubles as an
-  acyclicity (DAG) check on a dependency graph.
+### `CLOSE <relation> <kind>` — close a relation at compile time
+- **Syntax:** `CLOSE <relation> <kind>` (its own line), where `<kind>` is one of
+  `TRANSITIVE` / `SYMMETRIC` / `REFLEXIVE` / `EQUIVALENCE` / `SCC`.
+- **Why:** computes a closure over the relation's pairs at **compile time** (a graph
+  step, **no solver cost**), so a relation `FOR EACH` then ranges over the closed
+  relation. Each kind adds different pairs:
+
+  | Kind | Adds | Cycle |
+  |---|---|---|
+  | `TRANSITIVE` | `a→c` when `a→b`, `b→c` (reachability) | **error** (DAG check) |
+  | `SYMMETRIC` | `b→a` for every `a→b` (two-way, e.g. `conflicts_with`) | ok |
+  | `REFLEXIVE` | `x→x` for every node | ok |
+  | `EQUIVALENCE` | reflexive+symmetric+transitive — **groups into classes** (`same_team`) | ok |
+  | `SCC` | `a↔b` when each reaches the other — **isolates dependency cycles** | ok |
+
+  Only `TRANSITIVE` rejects a cycle (a node reaching itself); the others expect or
+  add self/back pairs by design. `CLOSE` *replaces* the relation's pairs with the
+  closed set.
 ```vrf
 FACT web depends_on api
 FACT api depends_on db
@@ -322,6 +349,9 @@ CLOSE depends_on TRANSITIVE           // now web depends_on db, transitively
 PREMISE safe FOR EACH x depends_on y:
     WHEN y deprecated
     THEN NOT x ships
+
+FACT a conflicts_with b
+CLOSE conflicts_with SYMMETRIC        // b conflicts_with a added automatically
 ```
 
 ### `CHECK` / `BIDIRECTIONAL` — run it
@@ -450,9 +480,11 @@ misread it. There is **no**:
 - **mixing `AND` and `OR` in one group** → split into separate premises.
 - **`OR` in a `RULE`'s `THEN`** → use a `PREMISE` (a rule can't derive a disjunction).
 - **nested or unbounded quantifiers** → you have **one** `FOR EACH` per premise
-  (over a `SET` or a relation); you **cannot** nest two, and there is no ∀/∃ over
-  anything but a declared `SET`/relation. To relate two things, route through a
-  declared relation (`FACT a linked b` + `FOR EACH x linked y`), never two binders.
+  header (∀ over a `SET` or a relation), plus `EXISTS … IN <set>` as a body (∃ over a
+  set); you **cannot** nest two quantifiers, there is no quantifier over anything but
+  a declared `SET`/relation, and **no join** of two relations. To relate two things,
+  route through one declared relation (`FACT a linked b` + `FOR EACH x linked y`),
+  never two free binders — that keeps grounding linear, by construction.
 - **probabilities**, **else/default branches**.
 - list bodies don't take `NOT` items; negate in `WHEN…THEN` bodies via `NOT <atom>`.
 
@@ -866,7 +898,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.11.0 -->
+<!-- skill-version: 0.12.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

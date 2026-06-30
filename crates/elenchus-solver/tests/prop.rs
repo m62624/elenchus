@@ -1030,3 +1030,42 @@ proptest! {
         prop_assert_eq!(verdict_shape(&ext), verdict_shape(&inline));
     }
 }
+
+// --- EXISTS oracle ---------------------------------------------------------
+
+/// 2..=4 elements, each with a "force NOT this instance" flag — so the
+/// at-least-one is sometimes unsatisfiable (CONFLICT), sometimes not.
+fn exists_case() -> impl Strategy<Value = (usize, Vec<bool>)> {
+    (2usize..=4).prop_flat_map(|k| (Just(k), prop::collection::vec(any::<bool>(), k)))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// EXISTS over a declared SET yields the same verdict as a hand-written ATLEAST
+    /// of the per-element instantiations — ∃ adds no semantics beyond at-least-one
+    /// (same atoms, same single clause), it just generates the list from the set.
+    #[test]
+    fn exists_equals_hand_written_atleast((k, forced) in exists_case()) {
+        let names: Vec<String> = (0..k).map(|i| format!("e{i}")).collect();
+        let facts: String = names
+            .iter()
+            .zip(&forced)
+            .filter(|(_, f)| **f)
+            .map(|(n, _)| format!("NOT {n} p o\n"))
+            .collect();
+        let set: String = names.iter().map(|n| format!("    {n}\n")).collect();
+        let atleast: String = names.iter().map(|n| format!("        {n} p o\n")).collect();
+        let a = verify_source(
+            "<ex>",
+            &format!("DOMAIN t\n{facts}SET hs\n{set}PREMISE x:\n    EXISTS h IN hs\n        h p o\nCHECK\n"),
+        )
+        .map_err(|e| TestCaseError::fail(format!("ex: {e}")))?;
+        let b = verify_source(
+            "<al>",
+            &format!("DOMAIN t\n{facts}PREMISE x:\n    ATLEAST\n{atleast}CHECK\n"),
+        )
+        .map_err(|e| TestCaseError::fail(format!("al: {e}")))?;
+        prop_assert_eq!(verdict_shape(&a), verdict_shape(&b));
+    }
+}

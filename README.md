@@ -93,9 +93,12 @@ The DSL: every file opens with `DOMAIN <name>` (the identity namespace of its
 atoms); `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false);
 `ASSUME` adds a soft, retractable hypothesis (on a clash the engine says which to
 drop, never blaming a fact); `PREMISE` states a checked first principle
-(`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, or `WHEN … THEN`); `RULE` derives facts;
-`IMPORT` reuses another domain (its atoms are `<domain>.<atom>`); `CHECK`
-(optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar.
+(`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, `EXISTS … IN` a set, or `WHEN … THEN`);
+`RULE` derives facts; `SET` + `FOR EACH` quantify a body over a set or relation, and
+`CLOSE <rel> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC` closes a relation at
+compile time; `IMPORT` reuses another domain (its atoms are `<domain>.<atom>`);
+`CHECK` (optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar — including
+**Performance**, which explains why the grammar makes a blow-up unrepresentable.
 
 ### Multi-step example — iterate to CONSISTENT
 

@@ -17,8 +17,14 @@ import resolver.
   canonically sorted so ids (and any later enumeration) are deterministic.
 - **Desugaring** to the single `Impossible` primitive: `EXCLUSIVE`/`FORBIDS`
   pairwise, `ONEOF` = pairwise + at-least-one, `ATLEAST` = one all-negated clause,
+  `EXISTS <b> IN <set>` = at-least-one over the per-element instantiations,
   `WHEN … THEN` → `Impossible([A.., NOT C])` per consequent. `RULE` bodies are
   kept separate as forward-chaining rules.
+- **Bounded quantification, compile-time** — `FOR EACH … IN <set>` / `… <rel> …`
+  ground the body once per element/pair (linear); `CLOSE <rel>
+  TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC` closes a relation as a graph op
+  (only `TRANSITIVE` requires a DAG). All of it desugars away — **the solver is
+  never touched**, so every cost lives at compile time.
 - **Source-agnostic `IMPORT`** via a `Resolver` (`MemoryResolver`, or the
   `std`-gated `FileResolver`): a flat merge into one shared atom universe, so an
   imported premise unifies with a local fact by identity.

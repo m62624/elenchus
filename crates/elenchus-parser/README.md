@@ -35,6 +35,12 @@ RULE needs_oxygen:
 CHECK Creature.A BIDIRECTIONAL
 ```
 
+Beyond the basics, bodies also take `ONEOF`/`ATLEAST` and `EXISTS <b> IN <set>`
+(at least one element of a set), and `SET` + `FOR EACH` quantify a premise over a
+set or relation. `CLOSE <rel> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC` closes
+a relation. A syntax error groups every mistake **by class** and prints the correct
+form + example once per class, so the output stays readable even on messy input.
+
 ## Usage
 
 ```rust
