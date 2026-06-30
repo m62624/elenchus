@@ -1,94 +1,9 @@
-//! A compact, single-threaded CDCL SAT solver in `no_std`, replicating the core
-//! algorithm of varisat (jix/varisat) in a readable, lazy style.
-//!
-//! `Solver::run` drives the CDCL loop to a terminal state: it propagates, and on a
-//! conflict analyzes/backjumps/learns, otherwise it decides (`Solver::decide`).
-//! Model enumeration is a lazy [`Models`] iterator that solves **incrementally** —
-//! each `next()` adds a blocking clause and continues from the existing state
-//! rather than re-solving from scratch.
-//!
-//! **Assumptions** ([`solve_assuming`]): literals forced true before VSIDS
-//! branching. They are decided first; a contradicted assumption yields an unsat
-//! **core** (a sufficient subset of the assumptions) via MiniSat's `analyzeFinal`.
-//! This is the primitive behind incremental cores and what-if queries.
-//!
-//! Pieces mirror varisat's modules: the trail + decision levels
-//! (`prop/assignment.rs`), two-watched-literal propagation (`prop/long.rs`),
-//! 1-UIP conflict analysis with clause learning (`analyze_conflict.rs`),
-//! non-chronological backjumping, VSIDS decisions with phase saving, and
-//! assumption-based solving. Remaining infrastructure (proof/DRAT logging,
-//! clause-DB GC, restarts, the `partial_ref` context, multithreading) is
-//! intentionally omitted.
-
-extern crate alloc;
-
+//! The CDCL search core: trail + decision levels, two-watched-literal
+//! propagation, 1-UIP conflict analysis with learning, and VSIDS decisions.
 use alloc::vec;
 use alloc::vec::Vec;
 
-// --- literals & formulas ---------------------------------------------------
-
-/// A boolean variable, identified by a dense index.
-pub type Var = u32;
-
-/// A literal: a variable plus a sign, packed as `var << 1 | negative`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SatLit(u32);
-
-impl SatLit {
-    /// A literal for `var`, positive (true) or negative (`NOT var`).
-    pub fn new(var: Var, positive: bool) -> Self {
-        SatLit((var << 1) | (!positive as u32))
-    }
-    /// The positive literal `var`.
-    pub fn positive(var: Var) -> Self {
-        Self::new(var, true)
-    }
-    /// The negative literal `NOT var`.
-    pub fn negative(var: Var) -> Self {
-        Self::new(var, false)
-    }
-    /// The underlying variable.
-    pub fn var(self) -> Var {
-        self.0 >> 1
-    }
-    /// Whether this is the negative polarity.
-    pub fn is_negative(self) -> bool {
-        self.0 & 1 == 1
-    }
-    /// The same variable with the opposite sign.
-    pub fn negate(self) -> SatLit {
-        SatLit(self.0 ^ 1)
-    }
-    /// The packed code, used directly as an index into the watch lists.
-    fn code(self) -> usize {
-        self.0 as usize
-    }
-}
-
-/// A CNF formula over `num_vars` variables.
-#[derive(Clone, Debug, Default)]
-pub struct Cnf {
-    /// Number of variables; every [`Var`] used must be `< num_vars`.
-    pub num_vars: usize,
-    /// The clauses, each a disjunction of literals (the formula is their AND).
-    pub clauses: Vec<Vec<SatLit>>,
-}
-
-impl Cnf {
-    /// An empty formula over `num_vars` variables.
-    pub fn new(num_vars: usize) -> Self {
-        Cnf {
-            num_vars,
-            clauses: Vec::new(),
-        }
-    }
-    /// Append one clause (a disjunction of literals).
-    pub fn add_clause(&mut self, lits: Vec<SatLit>) {
-        self.clauses.push(lits);
-    }
-}
-
-// --- internal state --------------------------------------------------------
+use super::{Cnf, SatLit, Var};
 
 /// Why a variable was assigned — needed for conflict analysis and backtracking.
 #[derive(Clone, Copy)]
@@ -120,7 +35,7 @@ enum Decision {
 /// The full CDCL search state: the assignment trail with decision levels, the
 /// clause database with two-watched-literal indices, VSIDS activities with phase
 /// saving, and a reusable `seen` scratch buffer for conflict analysis.
-struct Solver {
+pub(crate) struct Solver {
     num_vars: usize,
     clauses: Vec<Vec<SatLit>>, // originals + learned + blocking
     watches: Vec<Vec<Watch>>, // indexed by literal code; a clause watching `w` lives in watches[!w]
@@ -138,12 +53,12 @@ struct Solver {
     // Literals forced true before VSIDS branching. Decision levels 1..=len map
     // one-to-one to assumptions[0..]; an already-true assumption still consumes a
     // (dummy) level so that mapping holds. Empty for a plain solve.
-    assumptions: Vec<SatLit>,
+    pub(crate) assumptions: Vec<SatLit>,
 }
 
 impl Solver {
     /// Build a solver and load every clause of `cnf` under the empty assignment.
-    fn new(cnf: &Cnf) -> Self {
+    pub(crate) fn new(cnf: &Cnf) -> Self {
         let n = cnf.num_vars;
         let mut s = Solver {
             num_vars: n,
@@ -571,7 +486,7 @@ impl Solver {
     /// `Ok(())` = SAT; `Err(core)` = UNSAT with a sufficient subset of the
     /// assumptions (empty when unsat regardless of them). Re-entrant: after
     /// [`Solver::block`] resets to level 0, calling it again continues the search.
-    fn run(&mut self) -> Result<(), Vec<SatLit>> {
+    pub(crate) fn run(&mut self) -> Result<(), Vec<SatLit>> {
         if !self.ok {
             return Err(Vec::new());
         }
@@ -596,20 +511,20 @@ impl Solver {
 
     /// Plain satisfiability (no assumptions): `true` if a model exists. Re-entrant
     /// for [`Models`] enumeration.
-    fn search(&mut self) -> bool {
+    pub(crate) fn search(&mut self) -> bool {
         self.run().is_ok()
     }
 
     /// Snapshot the assignment as `var -> bool` (any still-unassigned variable,
     /// possible when it is unconstrained, defaults to false).
-    fn model(&self) -> Vec<bool> {
+    pub(crate) fn model(&self) -> Vec<bool> {
         self.assign.iter().map(|a| a.unwrap_or(false)).collect()
     }
 
     /// Forbid the current `model`'s projection, then reset to level 0 so the next
     /// [`Solver::search`] finds a different model. Returns `false` if the
     /// projection is empty (there is only one model to report).
-    fn block(&mut self, project: &[Var], model: &[bool]) -> bool {
+    pub(crate) fn block(&mut self, project: &[Var], model: &[bool]) -> bool {
         if project.is_empty() {
             return false;
         }
@@ -630,211 +545,3 @@ impl Solver {
 }
 
 // --- public API ------------------------------------------------------------
-
-/// The outcome of [`solve_assuming`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Solved {
-    /// Satisfiable: a full model (`var -> bool`).
-    Sat(Vec<bool>),
-    /// Unsatisfiable under the assumptions: a *sufficient* subset of them (a core)
-    /// such that `cnf ∧ core` is unsatisfiable. Empty means the formula is
-    /// unsatisfiable regardless of the assumptions. Not guaranteed minimal.
-    Unsat(Vec<SatLit>),
-}
-
-/// Solve `cnf` with every literal in `assumptions` forced true. Returns a model,
-/// or an unsat core — a sufficient (not necessarily minimal) subset of
-/// `assumptions`. Minimize the core separately if you need 1-minimality.
-pub fn solve_assuming(cnf: &Cnf, assumptions: &[SatLit]) -> Solved {
-    let mut s = Solver::new(cnf);
-    s.assumptions = assumptions.to_vec();
-    match s.run() {
-        Ok(()) => Solved::Sat(s.model()),
-        Err(core) => Solved::Unsat(core),
-    }
-}
-
-/// Solve a CNF. Returns a full model (`var -> bool`) or `None` if unsatisfiable.
-pub fn solve(cnf: &Cnf) -> Option<Vec<bool>> {
-    match solve_assuming(cnf, &[]) {
-        Solved::Sat(model) => Some(model),
-        Solved::Unsat(_) => None,
-    }
-}
-
-/// A lazy iterator over the models of a CNF, distinct on the `project` variables.
-/// Solving is **incremental**: each step adds a blocking clause and continues
-/// from the existing solver state instead of restarting from scratch.
-pub struct Models {
-    solver: Solver,
-    project: Vec<Var>,
-    done: bool,
-}
-
-impl Iterator for Models {
-    type Item = Vec<bool>;
-
-    fn next(&mut self) -> Option<Vec<bool>> {
-        if self.done {
-            return None;
-        }
-        if !self.solver.search() {
-            self.done = true;
-            return None;
-        }
-        let model = self.solver.model();
-        if !self.solver.block(&self.project, &model) {
-            self.done = true;
-        }
-        Some(model)
-    }
-}
-
-/// Lazily enumerate all models of `cnf`, distinct over `project`.
-pub fn all_models(cnf: &Cnf, project: Vec<Var>) -> Models {
-    Models {
-        solver: Solver::new(cnf),
-        project,
-        done: false,
-    }
-}
-
-/// Up to `limit` models, distinct over `project` (eagerly collected).
-pub fn models(cnf: &Cnf, project: &[Var], limit: usize) -> Vec<Vec<bool>> {
-    all_models(cnf, project.to_vec()).take(limit).collect()
-}
-
-/// Count distinct models projected onto `project`, up to `limit`.
-pub fn models_upto(cnf: &Cnf, project: &[Var], limit: usize) -> usize {
-    all_models(cnf, project.to_vec()).take(limit).count()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn trivial_sat() {
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
-        assert!(solve(&c).is_some());
-    }
-
-    #[test]
-    fn unit_contradiction_unsat() {
-        let mut c = Cnf::new(1);
-        c.add_clause(vec![SatLit::positive(0)]);
-        c.add_clause(vec![SatLit::negative(0)]);
-        assert!(solve(&c).is_none());
-    }
-
-    #[test]
-    fn all_four_combos_excluded_is_unsat() {
-        let mut c = Cnf::new(2);
-        let (a, b) = (0u32, 1u32);
-        c.add_clause(vec![SatLit::positive(a), SatLit::positive(b)]);
-        c.add_clause(vec![SatLit::negative(a), SatLit::positive(b)]);
-        c.add_clause(vec![SatLit::positive(a), SatLit::negative(b)]);
-        c.add_clause(vec![SatLit::negative(a), SatLit::negative(b)]);
-        assert!(solve(&c).is_none());
-    }
-
-    #[test]
-    fn forced_chain_has_unique_model() {
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::negative(0), SatLit::positive(1)]);
-        c.add_clause(vec![SatLit::positive(0)]);
-        let m = solve(&c).unwrap();
-        assert!(m[0] && m[1]);
-        assert_eq!(models_upto(&c, &[0, 1], 5), 1);
-    }
-
-    #[test]
-    fn or_clause_has_three_models() {
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
-        assert_eq!(models_upto(&c, &[0, 1], 10), 3);
-    }
-
-    #[test]
-    fn lazy_models_iterator_is_incremental() {
-        // (a∨b) has 3 models; the iterator yields them lazily one at a time.
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
-        let first_two: Vec<_> = all_models(&c, vec![0, 1]).take(2).collect();
-        assert_eq!(first_two.len(), 2);
-        assert_ne!(first_two[0], first_two[1]);
-        assert_eq!(all_models(&c, vec![0, 1]).count(), 3);
-    }
-
-    #[test]
-    fn assumption_forces_a_model() {
-        // (a ∨ b); assume ¬a ⇒ b must be true.
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
-        match solve_assuming(&c, &[SatLit::negative(0)]) {
-            Solved::Sat(m) => {
-                assert!(!m[0] && m[1]);
-            }
-            Solved::Unsat(_) => panic!("should be SAT under ¬a"),
-        }
-    }
-
-    #[test]
-    fn contradicted_assumptions_yield_a_sufficient_core() {
-        // (¬a ∨ ¬b); assume a and b ⇒ UNSAT, core ⊆ {a, b} and cnf ∧ core UNSAT.
-        let mut c = Cnf::new(2);
-        c.add_clause(vec![SatLit::negative(0), SatLit::negative(1)]);
-        let assumptions = [SatLit::positive(0), SatLit::positive(1)];
-        match solve_assuming(&c, &assumptions) {
-            Solved::Unsat(core) => {
-                assert!(!core.is_empty());
-                assert!(core.iter().all(|l| assumptions.contains(l)));
-                // cnf ∧ core is unsatisfiable.
-                let mut cc = c.clone();
-                for l in &core {
-                    cc.add_clause(vec![*l]);
-                }
-                assert!(solve(&cc).is_none());
-            }
-            Solved::Sat(_) => panic!("a ∧ b violates (¬a ∨ ¬b)"),
-        }
-    }
-
-    #[test]
-    fn satisfiable_assumptions_round_trip() {
-        // Independent vars; assuming a few is fine and the model honors them.
-        let mut c = Cnf::new(3);
-        c.add_clause(vec![
-            SatLit::positive(0),
-            SatLit::positive(1),
-            SatLit::positive(2),
-        ]);
-        let assumptions = [SatLit::positive(0), SatLit::negative(2)];
-        match solve_assuming(&c, &assumptions) {
-            Solved::Sat(m) => {
-                assert!(m[0] && !m[2]);
-            }
-            Solved::Unsat(_) => panic!("should be SAT"),
-        }
-    }
-
-    #[test]
-    fn larger_random_like_sat_is_solved() {
-        let mut c = Cnf::new(5);
-        let l = |v: u32, p: bool| SatLit::new(v, p);
-        c.add_clause(vec![l(0, true), l(1, true), l(2, false)]);
-        c.add_clause(vec![l(0, false), l(2, true), l(3, true)]);
-        c.add_clause(vec![l(1, false), l(3, false), l(4, true)]);
-        c.add_clause(vec![l(2, false), l(4, false)]);
-        c.add_clause(vec![l(0, true), l(4, true)]);
-        let m = solve(&c).expect("sat");
-        for clause in &c.clauses {
-            assert!(
-                clause
-                    .iter()
-                    .any(|&lit| m[lit.var() as usize] != lit.is_negative())
-            );
-        }
-    }
-}
