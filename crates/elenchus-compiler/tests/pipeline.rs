@@ -1,17 +1,12 @@
-//! Crate-level pipeline tests for the compiler facade. These exercise the public
-//! `compile_source` / `compile` path end-to-end (black-box), so they live together
-//! here rather than scattered across the internal modules.
-#![cfg(test)]
-use super::*;
-use crate::error::nearest;
-use alloc::string::ToString;
-use alloc::vec;
-use alloc::vec::Vec;
+//! Pipeline (black-box) tests for the compiler facade: every case here drives
+//! the public parse → compile path, so it lives as an integration test that can
+//! only see the crate's public API.
+use elenchus_compiler::*;
 
 /// Compile a single inline source under a default `DOMAIN t`, so test
 /// programs need not repeat the declaration. Atoms land in domain `t`.
 fn cs(src: &str) -> Result<Compiled, CompileError> {
-    compile_source("<t>", &alloc::format!("DOMAIN t\n{src}"))
+    compile_source("<t>", &format!("DOMAIN t\n{src}"))
 }
 
 /// An atom key in the default test domain `t`.
@@ -558,15 +553,15 @@ fn exponential_fan_out_is_memoized_not_blown_up() {
     let n = 40;
     for k in 1..=n {
         r.add(
-            &alloc::format!("f{k}.vrf"),
-            &alloc::format!(
+            &format!("f{k}.vrf"),
+            &format!(
                 "DOMAIN d{k}\nIMPORT \"f{}.vrf\"\nIMPORT \"f{}.vrf\"\n",
                 k - 1,
                 k - 1
             ),
         );
     }
-    let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+    let c = compile(&format!("f{n}.vrf"), &r).unwrap();
     assert_eq!(c.facts.len(), 1); // the single fact from f0, reached once
 }
 
@@ -579,11 +574,11 @@ fn very_deep_linear_chain_does_not_overflow() {
     let n = 10_000;
     for k in 1..=n {
         r.add(
-            &alloc::format!("f{k}.vrf"),
-            &alloc::format!("DOMAIN d{k}\nIMPORT \"f{}.vrf\"\n", k - 1),
+            &format!("f{k}.vrf"),
+            &format!("DOMAIN d{k}\nIMPORT \"f{}.vrf\"\n", k - 1),
         );
     }
-    let c = compile(&alloc::format!("f{n}.vrf"), &r).unwrap();
+    let c = compile(&format!("f{n}.vrf"), &r).unwrap();
     assert_eq!(c.facts.len(), 1);
 }
 
@@ -863,7 +858,7 @@ const ONEOF_RESOLVED: &str = r"PREMISE pick:
 
 #[test]
 fn value_outside_oneof_is_rejected() {
-    let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
+    let src = format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
     let err = cs(&src).unwrap_err();
     let CompileError::UnknownValue(e) = err else {
         panic!("expected UnknownValue, got {err:?}");
@@ -876,7 +871,7 @@ fn value_outside_oneof_is_rejected() {
 
 #[test]
 fn near_miss_value_suggests_the_intended_one() {
-    let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
+    let src = format!("{ONEOF_RESOLVED}FACT resolved is censoredmtp\n");
     let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
         panic!("expected UnknownValue");
     };
@@ -887,7 +882,7 @@ fn near_miss_value_suggests_the_intended_one() {
 fn far_off_value_offers_no_suggestion() {
     // `wildly_different` is past the edit-distance budget of every declared
     // value, so we reject it but do not guess.
-    let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is wildly_different\n");
+    let src = format!("{ONEOF_RESOLVED}FACT resolved is wildly_different\n");
     let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
         panic!("expected UnknownValue");
     };
@@ -896,14 +891,14 @@ fn far_off_value_offers_no_suggestion() {
 
 #[test]
 fn declared_value_compiles_cleanly() {
-    let src = alloc::format!("{ONEOF_RESOLVED}FACT resolved is censored_mtp\n");
+    let src = format!("{ONEOF_RESOLVED}FACT resolved is censored_mtp\n");
     assert!(cs(&src).is_ok());
 }
 
 #[test]
 fn oneof_declared_after_the_reference_still_catches_it() {
     // The check runs once every source is accumulated, so order is irrelevant.
-    let src = alloc::format!("FACT resolved is censoredmtp\n{ONEOF_RESOLVED}");
+    let src = format!("FACT resolved is censoredmtp\n{ONEOF_RESOLVED}");
     assert!(matches!(
         cs(&src).unwrap_err(),
         CompileError::UnknownValue(_)
@@ -913,7 +908,7 @@ fn oneof_declared_after_the_reference_still_catches_it() {
 #[test]
 fn out_of_set_value_inside_a_premise_is_caught() {
     // Closed-world covers references anywhere — not just FACTs.
-    let src = alloc::format!(
+    let src = format!(
         r"{ONEOF_RESOLVED}
             PREMISE p:
                 WHEN resolved is censoredmtp
@@ -928,7 +923,7 @@ fn out_of_set_value_inside_a_premise_is_caught() {
 
 #[test]
 fn out_of_set_value_inside_a_rule_is_caught() {
-    let src = alloc::format!(
+    let src = format!(
         r"{ONEOF_RESOLVED}
             RULE r:
                 WHEN x go
@@ -958,7 +953,7 @@ fn binary_atoms_in_a_oneof_do_not_close_anything() {
 #[test]
 fn a_subject_without_a_oneof_stays_open() {
     // No ONEOF over `mood is …` → open world, any value is a fresh atom.
-    let src = alloc::format!("{ONEOF_RESOLVED}FACT mood is anything_goes\n");
+    let src = format!("{ONEOF_RESOLVED}FACT mood is anything_goes\n");
     assert!(cs(&src).is_ok());
 }
 
@@ -982,8 +977,7 @@ fn two_oneofs_union_their_declared_values() {
 #[test]
 fn earliest_offender_is_reported() {
     // Two violations; the diagnostic points at the first by line.
-    let src =
-        alloc::format!("{ONEOF_RESOLVED}FACT resolved is firstbad\nFACT resolved is secondbad\n");
+    let src = format!("{ONEOF_RESOLVED}FACT resolved is firstbad\nFACT resolved is secondbad\n");
     let CompileError::UnknownValue(e) = cs(&src).unwrap_err() else {
         panic!("expected UnknownValue");
     };
@@ -1034,43 +1028,6 @@ fn same_value_in_a_different_domain_does_not_clash() {
     r.add("b.vrf", "DOMAIN b\nIMPORT \"a.vrf\"\nFACT state is shut\n");
     // `state is shut` is in domain b, which has no ONEOF → open, so it compiles.
     assert!(compile("b.vrf", &r).is_ok());
-}
-
-#[test]
-fn levenshtein_basics() {
-    // The canonical distance works on char slices; spell the string cases
-    // through a tiny adapter so the table below reads as before.
-    fn lev(a: &str, b: &str) -> usize {
-        levenshtein(
-            &a.chars().collect::<Vec<char>>(),
-            &b.chars().collect::<Vec<char>>(),
-        )
-    }
-    assert_eq!(lev("", ""), 0);
-    assert_eq!(lev("abc", "abc"), 0);
-    assert_eq!(lev("censoredmtp", "censored_mtp"), 1);
-    assert_eq!(lev("norml", "normal"), 1);
-    assert_eq!(lev("kitten", "sitting"), 3);
-}
-
-#[test]
-fn nearest_respects_the_length_budget() {
-    let cands = ["censored", "censored_mtp", "uncensored"];
-    assert_eq!(nearest("censoredmtp", &cands), Some("censored_mtp"));
-    // "zzz" is far from all; no suggestion.
-    assert_eq!(nearest("zzz", &cands), None);
-}
-
-#[test]
-fn nearest_offers_nothing_for_very_short_values() {
-    // 1–2 character values get a budget of 0: every other short token is at
-    // distance 1, so a "did you mean" carries no signal. True for single CJK
-    // characters (one symbol = a whole word) and for two-letter codes alike.
-    assert_eq!(nearest("七", &["一", "二", "三"]), None);
-    assert_eq!(nearest("us", &["uk", "eu", "jp"]), None);
-    // A multi-character CJK word still gets a sensible nearest (one wrong
-    // character = distance 1, budget = 3/3 = 1).
-    assert_eq!(nearest("中文字", &["中文学", "日本語"]), Some("中文学"));
 }
 
 #[test]
@@ -1258,7 +1215,7 @@ fn close_transitive_rejects_a_cycle() {
 /// *implication* (asymmetric in x and y) so (a,b) and (b,a) stay distinct — a
 /// symmetric `FORBIDS` would dedup them and undercount.
 fn pairs_after_close(close: &str) -> usize {
-    let src = alloc::format!(
+    let src = format!(
         "FACT a r b\nFACT b r c\n{close}\nPREMISE p FOR EACH x r y:\n    WHEN x src\n    THEN y dst\n"
     );
     cs(&src).unwrap().clauses.len()
@@ -1342,8 +1299,8 @@ fn exists_over_an_undeclared_set_is_rejected() {
 fn grounding_count_is_linear_in_the_set() {
     // No domain product: N elements → exactly N groundings (here N clauses,
     // one at-least-one per element), never N².
-    let elems: alloc::string::String = (0..20).map(|i| alloc::format!("    e{i}\n")).collect();
-    let src = alloc::format!(
+    let elems: String = (0..20).map(|i| format!("    e{i}\n")).collect();
+    let src = format!(
         "SET xs\n{elems}PREMISE p FOR EACH t IN xs:\n    ATLEAST\n        t a\n        t b\n"
     );
     let c = cs(&src).unwrap();

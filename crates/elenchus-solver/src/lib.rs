@@ -52,9 +52,6 @@ mod report;
 mod unsat;
 mod v3;
 
-#[cfg(test)]
-mod tests;
-
 use alloc::string::String;
 use alloc::vec::Vec;
 

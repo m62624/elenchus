@@ -1,7 +1,5 @@
-//! Unit tests for the in-crate CDCL SAT solver.
-use super::*;
-use alloc::vec;
-use alloc::vec::Vec;
+//! Tests for the in-crate CDCL SAT solver, through its public `sat` API.
+use elenchus_solver::sat::*;
 
 #[test]
 fn trivial_sat() {

@@ -49,9 +49,6 @@ mod resolver;
 mod sig;
 mod subst;
 
-#[cfg(test)]
-mod tests;
-
 use alloc::string::String;
 use core::fmt::Write as _;
 use sha2::{Digest, Sha256};

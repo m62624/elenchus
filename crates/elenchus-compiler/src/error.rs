@@ -269,3 +269,46 @@ pub(crate) fn did_you_mean(word: &str, candidates: &[&str]) -> String {
         None => String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn levenshtein_basics() {
+        // The canonical distance works on char slices; spell the string cases
+        // through a tiny adapter so the table below reads as before.
+        fn lev(a: &str, b: &str) -> usize {
+            levenshtein(
+                &a.chars().collect::<Vec<char>>(),
+                &b.chars().collect::<Vec<char>>(),
+            )
+        }
+        assert_eq!(lev("", ""), 0);
+        assert_eq!(lev("abc", "abc"), 0);
+        assert_eq!(lev("censoredmtp", "censored_mtp"), 1);
+        assert_eq!(lev("norml", "normal"), 1);
+        assert_eq!(lev("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn nearest_respects_the_length_budget() {
+        let cands = ["censored", "censored_mtp", "uncensored"];
+        assert_eq!(nearest("censoredmtp", &cands), Some("censored_mtp"));
+        // "zzz" is far from all; no suggestion.
+        assert_eq!(nearest("zzz", &cands), None);
+    }
+
+    #[test]
+    fn nearest_offers_nothing_for_very_short_values() {
+        // 1–2 character values get a budget of 0: every other short token is at
+        // distance 1, so a "did you mean" carries no signal. True for single CJK
+        // characters (one symbol = a whole word) and for two-letter codes alike.
+        assert_eq!(nearest("七", &["一", "二", "三"]), None);
+        assert_eq!(nearest("us", &["uk", "eu", "jp"]), None);
+        // A multi-character CJK word still gets a sensible nearest (one wrong
+        // character = distance 1, budget = 3/3 = 1).
+        assert_eq!(nearest("中文字", &["中文学", "日本語"]), Some("中文学"));
+    }
+}

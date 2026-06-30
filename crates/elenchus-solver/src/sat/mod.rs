@@ -25,9 +25,6 @@ use alloc::vec::Vec;
 mod models;
 mod solver;
 
-#[cfg(test)]
-mod tests;
-
 pub use models::{Models, all_models, models, models_upto};
 
 use solver::Solver;

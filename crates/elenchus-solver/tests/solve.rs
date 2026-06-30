@@ -1,16 +1,13 @@
-//! Crate-level tests for the solver (forward + backward passes, reporting).
-#![cfg(test)]
-use super::*;
-use alloc::collections::BTreeSet;
-use alloc::string::String;
-use alloc::vec;
-use alloc::vec::Vec;
+//! Behavioural tests for the solver, driven entirely through the public API
+//! (parse → compile → solve), so they live as integration tests.
 use elenchus_compiler::{KIND_UNSAT, Value, kw};
+use elenchus_solver::*;
+use std::collections::BTreeSet;
 
 /// Verify a single inline source under a default `DOMAIN t` (so test programs
 /// need not repeat it); atoms land in domain `t`, labelled `t.subject …`.
 fn vs(src: &str) -> Result<Report, CompileError> {
-    verify_source("t.vrf", &alloc::format!("DOMAIN t\n{src}"))
+    verify_source("t.vrf", &format!("DOMAIN t\n{src}"))
 }
 
 #[test]
@@ -138,7 +135,7 @@ fn human_report_dedupes_repeated_fix_lines() {
         .collect();
     assert_eq!(distinct_hints.len(), 2);
     // The human report prints exactly one `fix:` per distinct hint.
-    let text = alloc::format!("{r}");
+    let text = format!("{r}");
     let shown = text
         .lines()
         .filter(|l| l.trim_start().starts_with("fix:"))
@@ -502,7 +499,7 @@ fn clashing_assumptions_yield_conflict_with_a_retract_set() {
     // Every retract item is an ASSUME — a FACT/PREMISE is never blamed.
     assert!(r.retract.iter().all(|it| it.origin.kind == kw::ASSUME));
     // The human report leads with RETRACT and hides the raw conflict pool.
-    let shown = alloc::format!("{r}");
+    let shown = format!("{r}");
     assert!(shown.contains("RETRACT"), "{shown}");
     assert!(!shown.contains("CONFLICT  "), "{shown}");
 }
@@ -672,7 +669,7 @@ fn negation_and_assumption_orphans_keep_their_surface_polarity() {
     // model wrote, so the report points at the exact line it typed.
     let r = vs("NOT x a\nASSUME NOT y b\nCHECK\n").unwrap();
     assert_eq!(r.orphans.len(), 2, "{:?}", r.orphans);
-    let text = alloc::format!("{r}");
+    let text = format!("{r}");
     assert!(text.contains("ORPHAN    NOT t.x a"), "{text}");
     assert!(text.contains("ORPHAN    ASSUME NOT t.y b"), "{text}");
 }
@@ -701,7 +698,7 @@ fn unused_import_is_advisory_only_in_the_report() {
     assert_eq!(rep.exit_code(), 0);
     assert_eq!(rep.unused_imports.len(), 1);
     assert_eq!(rep.unused_imports[0].domain, "physics");
-    let text = alloc::format!("{rep}");
+    let text = format!("{rep}");
     assert!(text.contains("UNUSED IMPORT  physics"), "{text}");
     assert!(
         rep.to_json().contains("\"unused_imports\":[{"),
