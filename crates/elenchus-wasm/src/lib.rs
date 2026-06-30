@@ -59,26 +59,40 @@ fn render(
     }
 }
 
+/// Iterate a JS object's own enumerable entries as `(string key, raw value)`
+/// pairs, skipping any entry whose key is not a string. The one spelling of the
+/// `Object.entries` → `(key, value)` decode shared by every port-input path.
+fn object_entries(obj: &js_sys::Object) -> Vec<(String, JsValue)> {
+    js_sys::Object::entries(obj)
+        .iter()
+        .filter_map(|entry| {
+            let pair = js_sys::Array::from(&entry);
+            pair.get(0).as_string().map(|key| (key, pair.get(1)))
+        })
+        .collect()
+}
+
 /// Decode an optional JS `Record<string, boolean>` of port values into the
 /// engine's `(name, binding)` inputs (origin `"api"`). Non-boolean entries are
 /// skipped. Only ever called from wasm (the host test build passes `None`).
 fn decode_values(values: Option<js_sys::Object>) -> Vec<(String, PortBinding)> {
-    let mut out = Vec::new();
-    if let Some(obj) = values {
-        for entry in js_sys::Object::entries(&obj).iter() {
-            let pair = js_sys::Array::from(&entry);
-            if let (Some(name), Some(value)) = (pair.get(0).as_string(), pair.get(1).as_bool()) {
-                out.push((
+    let Some(obj) = values else {
+        return Vec::new();
+    };
+    object_entries(&obj)
+        .into_iter()
+        .filter_map(|(name, value)| {
+            value.as_bool().map(|value| {
+                (
                     name,
                     PortBinding {
                         value,
                         origin: "api".to_string(),
                     },
-                ));
-            }
-        }
-    }
-    out
+                )
+            })
+        })
+        .collect()
 }
 
 /// Merge inline `values` and `data` sources into one input list — the wasm analog
@@ -93,10 +107,8 @@ fn collect_inputs(
 ) -> Result<Vec<(String, PortBinding)>, CompileError> {
     let mut inputs = decode_values(values);
     if let Some(obj) = data {
-        for entry in js_sys::Object::entries(&obj).iter() {
-            let pair = js_sys::Array::from(&entry);
-            if let (Some(name), Some(content)) = (pair.get(0).as_string(), pair.get(1).as_string())
-            {
+        for (name, value) in object_entries(&obj) {
+            if let Some(content) = value.as_string() {
                 inputs.extend(read_data_bindings(&name, &content)?);
             }
         }
