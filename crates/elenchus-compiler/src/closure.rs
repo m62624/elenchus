@@ -1,7 +1,7 @@
 //! Compile-time relation closures (symmetric / reflexive / equivalence / SCC /
 //! transitive) over a relation`s `(from, to)` pairs.
-use alloc::collections::BTreeSet;
-use alloc::string::String;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 /// Every node a relation's pairs mention (subjects and objects), deduped/sorted.
@@ -62,23 +62,27 @@ pub(crate) fn scc_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)>
 /// whenever `(a, b)` and `(b, c)` are present, to a fixpoint. A self-pair
 /// `(x, x)` in the result marks a cycle. A small compile-time graph op.
 pub(crate) fn transitive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
-    let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
-    loop {
-        let mut added: Vec<(String, String)> = Vec::new();
-        for (a, b) in &set {
-            for (c, d) in &set {
-                if b == c {
-                    let p = (a.clone(), d.clone());
-                    if !set.contains(&p) {
-                        added.push(p);
-                    }
+    // Index the relation as an adjacency map (each node to its direct
+    // successors), then collect everything reachable from each start node along
+    // a path of length >= 1. This is the same relation the naive pairwise
+    // fixpoint produced, but found in one reachability sweep per node instead of
+    // rescanning every pair against every pair until saturation.
+    let mut succ: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (a, b) in &pairs {
+        succ.entry(a).or_default().push(b);
+    }
+    let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+    for (&start, direct) in &succ {
+        let mut stack: Vec<&str> = direct.clone();
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        while let Some(node) = stack.pop() {
+            if seen.insert(node) {
+                out.insert((start.to_string(), node.to_string()));
+                if let Some(next) = succ.get(node) {
+                    stack.extend(next.iter().copied());
                 }
             }
         }
-        if added.is_empty() {
-            break;
-        }
-        set.extend(added);
     }
-    set.into_iter().collect()
+    out.into_iter().collect()
 }
