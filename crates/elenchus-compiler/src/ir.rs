@@ -28,6 +28,21 @@ pub struct AtomKey {
     pub object: Option<String>,
 }
 
+/// The human label for a resolved atom (`domain.subject predicate object`), as
+/// shown in port diagnostics and reports.
+impl core::fmt::Display for AtomKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}.{}", self.domain, self.subject)?;
+        if let Some(p) = &self.predicate {
+            write!(f, " {p}")?;
+        }
+        if let Some(o) = &self.object {
+            write!(f, " {o}")?;
+        }
+        Ok(())
+    }
+}
+
 /// A literal as it appears *inside* an `Impossible` clause: an atom, optionally
 /// negated. `negated = true` means the literal is `NOT atom`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -27,20 +27,6 @@ use crate::sig::{
 };
 use crate::subst::{subst_atom, subst_body};
 
-/// The human label for a resolved [`AtomKey`] in port diagnostics
-/// (`domain.subject predicate object`).
-fn atomkey_label(k: &AtomKey) -> String {
-    let mut s = alloc::format!("{}.{}", k.domain, k.subject);
-    if let Some(p) = &k.predicate {
-        s.push(' ');
-        s.push_str(p);
-    }
-    if let Some(o) = &k.object {
-        s.push(' ');
-        s.push_str(o);
-    }
-    s
-}
 // --- compiler --------------------------------------------------------------
 
 /// Accumulates statements from one or more sources, then interns + emits the IR.
@@ -799,7 +785,7 @@ impl Compiler {
             match merged.get(&key) {
                 Some(prev) if prev.value != b.value => {
                     return Err(CompileError::PortConflict {
-                        name: atomkey_label(&key),
+                        name: key.to_string(),
                         a_value: prev.value,
                         a_origin: prev.origin.clone(),
                         b_value: b.value,
