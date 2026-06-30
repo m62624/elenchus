@@ -9,6 +9,9 @@ Root AGENTS.md for the elenchus project — documents project architecture, CI/C
 
 ### Child Index
 - `.github/AGENTS.md`: GitHub Automation Contracts — CI, PR labeling, release-candidate flow, and tagged binary releases via cargo-dist.
+- `crates/elenchus-compiler/AGENTS.md`: Compiler crate contracts — AST-to-IR pipeline, atom interning, desugaring, content-addressing, import resolution.
+- `crates/elenchus-solver/AGENTS.md`: Solver crate contracts — three-valued Kleene logic forward chaining, backward CNF/SAT pass, report generation, CDCL core.
+- `crates/elenchus-mcp/AGENTS.md`: MCP server contracts — JSON-RPC 2.0 over stdio, three tools (elenchus_check, elenchus_version, elenchus_about).
 
 ### Stable Contracts
 - CI must run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on Linux/Windows/macOS; plus `no_std` build of three library crates for `wasm32v1-none`, plus `dist plan`.
@@ -20,6 +23,9 @@ Root AGENTS.md for the elenchus project — documents project architecture, CI/C
 
 ### Read First
 - .github/AGENTS.md
+- crates/elenchus-compiler/AGENTS.md
+- crates/elenchus-solver/AGENTS.md
+- crates/elenchus-mcp/AGENTS.md
 - skill/SKILL.md
 - Cargo.toml
 
@@ -37,4 +43,5 @@ Root AGENTS.md for the elenchus project — documents project architecture, CI/C
 - WiX v3 required for Windows MSI builds. GitHub runners no longer ship WiX v3 — `bin-release.yml` installs v3.14.1 manually. WiX v4+ will NOT work.
 - crates.io publish needs `CARGO_REGISTRY_TOKEN` secret. Homebrew publish needs `HOMEBREW_TAP_TOKEN` secret + `m62624/homebrew-elenchus` tap repo.
 - npm publish uses OIDC trusted publishing (no NPM_TOKEN needed). First publish of a new package name must be done manually with npm token.
+- Data flow: parser → compiler → solver → report. CLI and MCP are consumer-facing binaries that wrap the solver pipeline. WASM is a JavaScript bridge to the solver.
 <!-- pi-code-planner:contracts:end -->
