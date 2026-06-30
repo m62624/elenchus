@@ -8,11 +8,9 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use elenchus_parser::{Atom, Body, CloseKind, Conn, ListOp, Located, Quant, Statement, kw};
+use elenchus_parser::{Atom, Body, Conn, ListOp, Located, Quant, Statement, kw};
 
-use crate::closure::{
-    equivalence_closure, reflexive_closure, scc_closure, symmetric_closure, transitive_closure,
-};
+use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
@@ -114,11 +112,11 @@ impl Compiler {
         Ok(())
     }
 
-    /// Apply every `CLOSE … TRANSITIVE`: replace the relation's pairs with their
-    /// transitive closure so a relation `FOR EACH` ranges over reachability, and
-    /// reject a cycle (a node reaching itself). A pure compile-time graph pass —
-    /// the solver never sees it. Runs after [`collect_decls`] (the direct edges
-    /// must be known) and before grounding.
+    /// Apply every `CLOSE <relation> <kind>`: replace the relation's pairs with
+    /// their closure (via [`close`]) so a relation `FOR EACH` ranges over the
+    /// closed relation. A pure compile-time graph pass — the solver never sees it.
+    /// `TRANSITIVE` additionally rejects a cycle. Runs after [`collect_decls`] (the
+    /// direct edges must be known) and before grounding.
     fn apply_closures(
         &mut self,
         program: &elenchus_parser::Program,
@@ -131,27 +129,12 @@ impl Compiler {
                     .get(relation.data)
                     .cloned()
                     .unwrap_or_default();
-                let closed = match kind {
-                    CloseKind::Transitive => {
-                        let closed = transitive_closure(pairs);
-                        // TRANSITIVE requires a DAG: a node reaching itself is a
-                        // cycle. (The other kinds expect or add self/back pairs by
-                        // design, so only this one rejects them.)
-                        if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
-                            return Err(CompileError::CyclicRelation {
-                                file: source.to_string(),
-                                line: relation.span.location_line(),
-                                relation: relation.data.to_string(),
-                                node: node.clone(),
-                            });
-                        }
-                        closed
-                    }
-                    CloseKind::Symmetric => symmetric_closure(pairs),
-                    CloseKind::Reflexive => reflexive_closure(pairs),
-                    CloseKind::Equivalence => equivalence_closure(pairs),
-                    CloseKind::Scc => scc_closure(pairs),
-                };
+                let closed = close(*kind, pairs).map_err(|node| CompileError::CyclicRelation {
+                    file: source.to_string(),
+                    line: relation.span.location_line(),
+                    relation: relation.data.to_string(),
+                    node,
+                })?;
                 self.relations.insert(relation.data.to_string(), closed);
             }
         }

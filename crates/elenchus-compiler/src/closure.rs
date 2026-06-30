@@ -1,11 +1,36 @@
 //! Compile-time relation closures (symmetric / reflexive / equivalence / SCC /
-//! transitive) over a relation`s `(from, to)` pairs.
+//! transitive) over a relation's `(from, to)` pairs.
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use elenchus_parser::CloseKind;
+
+/// Apply the closure of the given `kind` to a relation's pairs. Every kind is a
+/// pure compile-time graph op; only `TRANSITIVE` enforces a DAG and, on a node
+/// that reaches itself, returns `Err(node)` naming the offending node (the other
+/// kinds expect or add self/back pairs by design, so they never reject).
+pub(crate) fn close(
+    kind: CloseKind,
+    pairs: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(match kind {
+        CloseKind::Transitive => {
+            let closed = transitive_closure(pairs);
+            if let Some((node, _)) = closed.iter().find(|(a, b)| a == b) {
+                return Err(node.clone());
+            }
+            closed
+        }
+        CloseKind::Symmetric => symmetric_closure(pairs),
+        CloseKind::Reflexive => reflexive_closure(pairs),
+        CloseKind::Equivalence => equivalence_closure(pairs),
+        CloseKind::Scc => scc_closure(pairs),
+    })
+}
+
 /// Every node a relation's pairs mention (subjects and objects), deduped/sorted.
-pub(crate) fn relation_nodes(pairs: &[(String, String)]) -> BTreeSet<String> {
+fn relation_nodes(pairs: &[(String, String)]) -> BTreeSet<String> {
     let mut s = BTreeSet::new();
     for (a, b) in pairs {
         s.insert(a.clone());
@@ -15,7 +40,7 @@ pub(crate) fn relation_nodes(pairs: &[(String, String)]) -> BTreeSet<String> {
 }
 
 /// Symmetric closure: add `(b, a)` for every `(a, b)`. O(E). Compile-time.
-pub(crate) fn symmetric_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+fn symmetric_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
     let backs: Vec<(String, String)> = set.iter().map(|(a, b)| (b.clone(), a.clone())).collect();
     set.extend(backs);
@@ -23,7 +48,7 @@ pub(crate) fn symmetric_closure(pairs: Vec<(String, String)>) -> Vec<(String, St
 }
 
 /// Reflexive closure: add `(x, x)` for every node the relation mentions. O(V).
-pub(crate) fn reflexive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+fn reflexive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     let nodes = relation_nodes(&pairs);
     let mut set: BTreeSet<(String, String)> = pairs.into_iter().collect();
     for n in nodes {
@@ -35,14 +60,14 @@ pub(crate) fn reflexive_closure(pairs: Vec<(String, String)>) -> Vec<(String, St
 /// Equivalence closure: reflexive + symmetric + transitive — groups nodes into
 /// classes (`a ~ b` iff connected ignoring direction). O(V³) via the transitive
 /// step. Cycles are expected here, so (unlike `transitive_closure`) no error.
-pub(crate) fn equivalence_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+fn equivalence_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     reflexive_closure(transitive_closure(symmetric_closure(pairs)))
 }
 
 /// Strongly-connected grouping: keep `(a, b)` where `a` and `b` reach each other
 /// (mutual reachability), plus each node to itself. Isolates directed cycles.
 /// O(V³) for the reachability + O(V²) for the mutual filter. Compile-time.
-pub(crate) fn scc_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+fn scc_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     let nodes = relation_nodes(&pairs);
     let reach: BTreeSet<(String, String)> = transitive_closure(pairs).into_iter().collect();
     let mut out: BTreeSet<(String, String)> = BTreeSet::new();
@@ -61,7 +86,7 @@ pub(crate) fn scc_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)>
 /// The transitive closure of a relation's `(from, to)` pairs: add `(a, c)`
 /// whenever `(a, b)` and `(b, c)` are present, to a fixpoint. A self-pair
 /// `(x, x)` in the result marks a cycle. A small compile-time graph op.
-pub(crate) fn transitive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+fn transitive_closure(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     // Index the relation as an adjacency map (each node to its direct
     // successors), then collect everything reachable from each start node along
     // a path of length >= 1. This is the same relation the naive pairwise
