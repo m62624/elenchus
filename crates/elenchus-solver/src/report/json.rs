@@ -19,7 +19,7 @@ impl Report {
         use core::fmt::Write as _;
         let mut s = String::new();
         let _ = write!(s, "{{\"status\":");
-        json_str(status_name(self.status), &mut s);
+        status_name(self.status).write_json(&mut s);
         let _ = write!(s, ",\"exit_code\":{}", self.exit_code());
 
         s.push_str(",\"conflicts\":[");
@@ -29,13 +29,13 @@ impl Report {
             }
             json_origin(&c.origin, &mut s);
             s.push_str(",\"atoms\":");
-            json_array(&c.atoms, &mut s);
+            c.atoms.write_json(&mut s);
             s.push_str(",\"trace\":[");
             for (j, step) in c.trace.iter().enumerate() {
                 if j > 0 {
                     s.push(',');
                 }
-                json_trace_step(step, &mut s);
+                step.write_json(&mut s);
             }
             s.push_str("]}");
         }
@@ -46,10 +46,10 @@ impl Report {
             }
             json_origin(&w.origin, &mut s);
             s.push_str(",\"blocked_by\":");
-            json_array(&w.blocked_by, &mut s);
+            w.blocked_by.write_json(&mut s);
             s.push_str(",\"hint\":");
             match &w.hint {
-                Some(h) => json_str(h, &mut s),
+                Some(h) => h.write_json(&mut s),
                 None => s.push_str("null"),
             }
             s.push('}');
@@ -62,13 +62,13 @@ impl Report {
             s.push('{');
             json_origin_fields(&d.origin, &mut s);
             s.push_str(",\"atom\":");
-            json_str(&d.atom, &mut s);
+            d.atom.write_json(&mut s);
             let _ = write!(s, ",\"value\":{}", matches!(d.value, Value::True));
             s.push('}');
         }
         s.push_str("],\"underdetermined\":");
         match &self.underdetermined {
-            Some(atom) => json_str(atom, &mut s),
+            Some(atom) => atom.write_json(&mut s),
             None => s.push_str("null"),
         }
         s.push_str(",\"unsat_core\":[");
@@ -78,7 +78,7 @@ impl Report {
             }
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
-            json_str(&it.label, &mut s);
+            it.label.write_json(&mut s);
             s.push('}');
         }
         s.push_str("],\"retract\":[");
@@ -88,7 +88,7 @@ impl Report {
             }
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
-            json_str(&it.label, &mut s);
+            it.label.write_json(&mut s);
             s.push('}');
         }
         s.push_str("],\"hints\":[");
@@ -97,11 +97,11 @@ impl Report {
                 s.push(',');
             }
             s.push_str("{\"a\":");
-            json_str(&h.a, &mut s);
+            h.a.write_json(&mut s);
             s.push_str(",\"b\":");
-            json_str(&h.b, &mut s);
+            h.b.write_json(&mut s);
             s.push_str(",\"reason\":");
-            json_str(h.reason, &mut s);
+            h.reason.write_json(&mut s);
             s.push('}');
         }
         s.push_str("],\"orphans\":[");
@@ -111,7 +111,7 @@ impl Report {
             }
             json_origin(&o.origin, &mut s);
             s.push_str(",\"atom\":");
-            json_str(&o.atom, &mut s);
+            o.atom.write_json(&mut s);
             let _ = write!(s, ",\"value\":{}", matches!(o.value, Value::True));
             s.push('}');
         }
@@ -121,12 +121,12 @@ impl Report {
                 s.push(',');
             }
             s.push_str("{\"file\":");
-            json_str(&u.file, &mut s);
+            u.file.write_json(&mut s);
             s.push_str(",\"domain\":");
-            json_str(&u.domain, &mut s);
+            u.domain.write_json(&mut s);
             s.push_str(",\"alias\":");
             match &u.alias {
-                Some(a) => json_str(a, &mut s),
+                Some(a) => a.write_json(&mut s),
                 None => s.push_str("null"),
             }
             let _ = write!(s, ",\"line\":{}", u.line);
@@ -138,14 +138,14 @@ impl Report {
                 s.push(',');
             }
             s.push_str("{\"key\":");
-            json_str(&p.key, &mut s);
+            p.key.write_json(&mut s);
             let status = match p.status {
                 PlaceholderStatus::Supplied => "supplied",
                 PlaceholderStatus::DefaultUsed => "default",
                 PlaceholderStatus::Unset => "unset",
             };
             s.push_str(",\"status\":");
-            json_str(status, &mut s);
+            status.write_json(&mut s);
             match p.value {
                 Some(v) => {
                     let _ = write!(s, ",\"value\":{v}");
@@ -154,7 +154,7 @@ impl Report {
             }
             s.push_str(",\"origin\":");
             match &p.origin {
-                Some(o) => json_str(o, &mut s),
+                Some(o) => o.write_json(&mut s),
                 None => s.push_str("null"),
             }
             s.push('}');
@@ -164,26 +164,71 @@ impl Report {
     }
 }
 
-/// Push one derivation-trace step as a JSON object.
-pub(crate) fn json_trace_step(step: &TraceStep, out: &mut String) {
-    use core::fmt::Write as _;
-    out.push_str("{\"atom\":");
-    json_str(&step.atom, out);
-    let _ = write!(out, ",\"value\":{}", matches!(step.value, Value::True));
-    match &step.reason {
-        TraceReason::Asserted(o) => {
-            out.push_str(",\"how\":\"asserted\",");
-            json_origin_fields(o, out);
-            out.push_str(",\"from\":[]");
+/// Append a value's JSON encoding to `out`. Hand-rolled (no serde) so the crate
+/// stays dependency-free and `no_std` — one trait so every leaf (strings, string
+/// arrays, trace steps) shares the same `.write_json(out)` spelling.
+trait ToJson {
+    fn write_json(&self, out: &mut String);
+}
+
+/// A JSON string literal, with the mandatory escapes (`\uXXXX` for controls).
+impl ToJson for str {
+    fn write_json(&self, out: &mut String) {
+        use core::fmt::Write as _;
+        out.push('"');
+        for ch in self.chars() {
+            match ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    let _ = write!(out, "\\u{:04x}", c as u32);
+                }
+                c => out.push(c),
+            }
         }
-        TraceReason::Derived { origin, from } => {
-            out.push_str(",\"how\":\"derived\",");
-            json_origin_fields(origin, out);
-            out.push_str(",\"from\":");
-            json_array(from, out);
-        }
+        out.push('"');
     }
-    out.push('}');
+}
+
+/// A JSON array of strings.
+impl ToJson for [String] {
+    fn write_json(&self, out: &mut String) {
+        out.push('[');
+        for (i, item) in self.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            item.write_json(out);
+        }
+        out.push(']');
+    }
+}
+
+/// One derivation-trace step as a JSON object.
+impl ToJson for TraceStep {
+    fn write_json(&self, out: &mut String) {
+        use core::fmt::Write as _;
+        out.push_str("{\"atom\":");
+        self.atom.write_json(out);
+        let _ = write!(out, ",\"value\":{}", matches!(self.value, Value::True));
+        match &self.reason {
+            TraceReason::Asserted(o) => {
+                out.push_str(",\"how\":\"asserted\",");
+                json_origin_fields(o, out);
+                out.push_str(",\"from\":[]");
+            }
+            TraceReason::Derived { origin, from } => {
+                out.push_str(",\"how\":\"derived\",");
+                json_origin_fields(origin, out);
+                out.push_str(",\"from\":");
+                from.write_json(out);
+            }
+        }
+        out.push('}');
+    }
 }
 
 pub(crate) fn status_name(s: Status) -> &'static str {
@@ -195,50 +240,18 @@ pub(crate) fn status_name(s: Status) -> &'static str {
     }
 }
 
-/// Push a JSON-escaped string literal (including the surrounding quotes).
-pub(crate) fn json_str(value: &str, out: &mut String) {
-    use core::fmt::Write as _;
-    out.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-/// Push a JSON array of escaped strings.
-pub(crate) fn json_array(items: &[String], out: &mut String) {
-    out.push('[');
-    for (i, item) in items.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        json_str(item, out);
-    }
-    out.push(']');
-}
-
 /// `"premise":..,"kind":..,"source":..,"line":..` (no braces).
 pub(crate) fn json_origin_fields(o: &Origin, out: &mut String) {
     use core::fmt::Write as _;
     out.push_str("\"premise\":");
     match &o.premise {
-        Some(name) => json_str(name, out),
+        Some(name) => name.write_json(out),
         None => out.push_str("null"),
     }
     out.push_str(",\"kind\":");
-    json_str(o.kind, out);
+    o.kind.write_json(out);
     out.push_str(",\"source\":");
-    json_str(&o.source, out);
+    o.source.write_json(out);
     let _ = write!(out, ",\"line\":{}", o.line);
 }
 
