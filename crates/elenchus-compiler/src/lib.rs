@@ -70,7 +70,9 @@ pub use ir::{
     AtomId, AtomKey, Check, Clause, Compiled, Fact, KIND_UNSAT, Lit, Origin, PlaceholderInfo,
     PlaceholderStatus, PortBinding, Rule, UnusedImport, Value,
 };
-pub use resolver::{FileResolver, MemoryResolver, Resolver, normalize_import_path};
+#[cfg(feature = "std")]
+pub use resolver::FileResolver;
+pub use resolver::{MemoryResolver, Resolver, normalize_import_path};
 
 // --- content-addressing (mirrors vsm-guard::hashing) -----------------------
 
