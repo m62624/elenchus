@@ -140,9 +140,7 @@ pub(crate) fn canonical_body(
                 .iter()
                 .map(|a| Ok(key_sig(&ctx.key(&a.data)?)))
                 .collect::<Result<_, CompileError>>()?;
-            // Same reasoning as `clause_sig`: equal strings are indistinguishable,
-            // so `sort_unstable` is a free win here.
-            keys.sort_unstable();
+            sort_sig_parts(&mut keys);
             s.push_str(&keys.join(";"));
         }
         Body::Impl {
@@ -206,7 +204,6 @@ pub(crate) fn lit_sigs(
             ))
         })
         .collect::<Result<_, CompileError>>()?;
-    // Equal strings are indistinguishable, so `sort_unstable` is a free win here too.
-    parts.sort_unstable();
+    sort_sig_parts(&mut parts);
     Ok(parts.join(";"))
 }
