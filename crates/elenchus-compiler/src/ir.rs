@@ -160,6 +160,26 @@ pub struct Compiled {
     /// purely advisory. Filled by `compile_source_with` / `compile_with` after
     /// [`Compiler::resolve_ports`]; empty when no port was declared.
     pub placeholders: Vec<PlaceholderInfo>,
+    /// One record per `EXISTS` that named neither a `SET` nor a `WITNESS` (an
+    /// [`elenchus_parser::ExistsDomain::Open`]). Inert for the solver — it emits no
+    /// clause — but surfaced as a WARNING nudging the author to name a witness.
+    pub unwitnessed_exists: Vec<UnwitnessedExists>,
+}
+
+/// An advisory record: an `EXISTS` premise that named no candidate — neither a
+/// `SET` (`IN`) nor a `WITNESS`. It cannot be checked (there is nothing to point
+/// at), so it grounds to no clause and is reported as a WARNING. **Advisory to the
+/// SAT core, but it does raise the verdict to WARNING** (a premise that could not
+/// be checked), matching an implication blocked by an UNKNOWN atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnwitnessedExists {
+    /// Provenance of the `EXISTS` premise (source, line, name).
+    pub origin: Origin,
+    /// Human label of the unwitnessed condition (`domain.subject predicate object`,
+    /// with the binder still in subject position), shown as the blocked check.
+    pub condition: String,
+    /// The binder name, used to phrase the "name a witness" hint.
+    pub binder: String,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an

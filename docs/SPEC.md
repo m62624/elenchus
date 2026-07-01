@@ -361,6 +361,7 @@ namespacing and reuse.
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
 | `EXISTS … IN …` | at least one element of a `SET` satisfies the condition (a `PREMISE` body; the ∃ dual of `FOR EACH`) | quantification |
+| `EXISTS … WITNESS …` | prove the existential by naming the one element that satisfies it — no `SET`; grounds to a single atom (the open-domain ∃) | quantification |
 | `SET` | declare a finite set of elements to quantify over | quantification |
 | `FOR EACH … IN …` / `FOR EACH … <rel> …` | quantifier on a `PREMISE`/`RULE` header (over a `SET` or a relation's `FACT` pairs) | quantification |
 | `CLOSE … TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` | close a relation at compile time under the named kind (`TRANSITIVE` requires a DAG: cycle = error) | quantification |
@@ -461,6 +462,11 @@ PREMISE covered:
     EXISTS h IN handlers
         h handles request
 
+// Prove ∃ over an OPEN domain by naming the one element (the witness) — no SET.
+PREMISE request_is_covered:
+    EXISTS h WITNESS auth_service
+        h handles request
+
 // Close a relation at compile time under a kind (a->b, b->c => a->c for TRANSITIVE)
 CLOSE <relation> TRANSITIVE
 ```
@@ -473,6 +479,24 @@ desugars to exactly one `ATLEAST` clause whose atoms are generated from the set
 instead of hand-listed: `O(|set|)` to ground, one clause, the solver sees nothing
 new. Catches "no element covers this case" (a coverage gap) as a `CONFLICT` when
 every instantiation is forced false.
+
+**`EXISTS … WITNESS <term>` — the open-domain existential.** When the domain is not
+a declared `SET` — you cannot enumerate every possible element — an existential
+cannot be checked by search. So the author *names the one element that satisfies it*
+(the **witness**) and the engine checks that witness holds. It is exactly `EXISTS`
+over the singleton `{term}`: it grounds to **one** atom, one at-least-one clause
+(`O(1)`), forcing that atom TRUE — if anything else forces it FALSE, `CONFLICT`
+("your witness does not hold"). This is the only "open domain" form in the language,
+and it is safe *by construction*: a witness has nothing to enumerate. The asymmetry
+is deliberate — a universal (`FOR EACH`) must always name its domain with a `SET`;
+only the existential may point at a lone witness (see "one-binder rule").
+
+An `EXISTS` that names **neither** a `SET` nor a `WITNESS` (`EXISTS h` then the
+condition) is an existential claim with no candidate — nothing to check. It grounds
+to no clause and is reported as a **WARNING** ("name a witness"), never a `CONFLICT`
+and never a search. So the existential may leave its domain unnamed, but then it must
+name a witness or it is flagged as an unfinished premise — the "you claimed existence
+but pointed at no one" gap.
 
 **The `CLOSE` family.** Each kind is a compile-time graph operation over a
 relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
@@ -528,6 +552,12 @@ differently: **what cannot be written cannot happen.**
   pairs are pinned by data.
 - *No free joins.* You cannot write `R ⋈ S` over two relations (a product); a
   derived relation can only come from one relation's own pairs (`CLOSE`).
+- *No unnamed universal.* A `FOR EACH` must always name its domain (`IN <set>` or a
+  relation's pairs); there is no grammar production for `FOR EACH x` over an unnamed
+  domain — that would be the blow-up (closing/searching an open domain). The
+  existential is the *only* quantifier that may leave its domain unnamed, and only by
+  naming a single **witness** (`EXISTS h WITNESS <term>`), which grounds to one atom.
+  So neither quantifier can ever enumerate an unnamed domain.
 - *No numbers.* "Exactly / at least / at most one" exist (`ONEOF`/`ATLEAST`/
   `EXCLUSIVE`, and `EXISTS` over a set); counting beyond one does not. Arithmetic
   over unbounded integers is SMT, strictly more than this engine offers.
@@ -552,6 +582,7 @@ a relation, `b` = clauses one body instance emits.
 | `ONEOF` | `C(n,2) + 1` clauses (+ closed-world value set) | those clauses |
 | `ATLEAST` | one clause over `n` atoms | one clause |
 | `EXISTS … IN <set>` | one clause over `|set|` atoms | one clause |
+| `EXISTS … WITNESS <term>` | `O(1)` — one clause over the single witness atom | one clause |
 | `WHEN … AND/OR … THEN …` (`PREMISE`) | one clause per (antecedent × consequent) group | those clauses |
 | `RULE` (`WHEN … THEN`) | one rule per antecedent literal | a forward-chaining saturate step |
 | `SET` | `O(|elements|)` recorded | — |

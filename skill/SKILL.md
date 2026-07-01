@@ -111,6 +111,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `ONEOF` | `PREMISE` body | **exactly one** of the listed atoms is TRUE |
 | `ATLEAST` | `PREMISE` body | **at least one** of the listed atoms is TRUE |
 | `EXISTS … IN …` | `PREMISE` body | **at least one** element of a `SET` satisfies the condition (the ∃ dual of `FOR EACH`) |
+| `EXISTS … WITNESS …` | `PREMISE` body | prove ∃ by **naming the one element** that satisfies it — no `SET`, grounds to a single atom (the open-domain ∃) |
 | `WHEN` | `PREMISE`/`RULE` body | starts the antecedent of an implication |
 | `THEN` | `PREMISE`/`RULE` body | starts the consequent |
 | `AND` | `WHEN`/`THEN` group | conjunction of literals in that group |
@@ -241,6 +242,25 @@ PREMISE someone_handles:
     EXISTS h IN handlers
         h handles request    // at least one handler takes the request
 ```
+
+### `EXISTS … WITNESS …` — prove ∃ by naming the one element
+- **Syntax:** `EXISTS <binder> WITNESS <term>` then **one** condition line using the binder.
+- **Why:** when you can't list the whole domain as a `SET` (it's open), you can't
+  search for an element — so **name the one that works** (the witness) and the engine
+  checks it holds. It's `EXISTS` over the singleton `{term}`: grounds to a single
+  atom, and if that witness is forced false you get a `CONFLICT` ("your witness does
+  not hold"). A `PREMISE` body only. Note the asymmetry: a **universal** (`FOR EACH`)
+  must always name its domain with a `SET`; only the **existential** may point at a
+  lone witness — that is what keeps it from ever blowing up.
+```vrf
+FACT auth_service handles request
+PREMISE request_is_covered:
+    EXISTS h WITNESS auth_service    // "some handler covers it — namely this one"
+        h handles request
+```
+- **Unwitnessed?** `EXISTS h` with neither `IN` nor `WITNESS` is an existential that
+  named no one — it can't be checked, so you get a **WARNING** ("name a witness"),
+  not a conflict. Add a `WITNESS <term>` (or an `IN <set>`) to make it checkable.
 
 ### `WHEN … THEN …` — implication (with `AND` / `OR`)
 - **Syntax:** `WHEN <lit>` then zero or more `AND <lit>` **or** `OR <lit>` lines,
@@ -480,11 +500,14 @@ misread it. There is **no**:
 - **mixing `AND` and `OR` in one group** → split into separate premises.
 - **`OR` in a `RULE`'s `THEN`** → use a `PREMISE` (a rule can't derive a disjunction).
 - **nested or unbounded quantifiers** → you have **one** `FOR EACH` per premise
-  header (∀ over a `SET` or a relation), plus `EXISTS … IN <set>` as a body (∃ over a
-  set); you **cannot** nest two quantifiers, there is no quantifier over anything but
-  a declared `SET`/relation, and **no join** of two relations. To relate two things,
-  route through one declared relation (`FACT a linked b` + `FOR EACH x linked y`),
-  never two free binders — that keeps grounding linear, by construction.
+  header (∀ over a `SET` or a relation), plus `EXISTS … IN <set>` / `EXISTS … WITNESS
+  <term>` as a body (∃ over a set, or over one named witness); you **cannot** nest two
+  quantifiers, and **no join** of two relations. A **universal must always name its
+  domain** (`SET`/relation) — there is no `FOR EACH x` over an unnamed domain; only
+  the **existential** may leave the domain unnamed, and only by naming a single
+  witness. To relate two things, route through one declared relation (`FACT a linked
+  b` + `FOR EACH x linked y`), never two free binders — that keeps grounding linear,
+  by construction.
 - **probabilities**, **else/default branches**.
 - list bodies don't take `NOT` items; negate in `WHEN…THEN` bodies via `NOT <atom>`.
 
@@ -898,7 +921,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.12.0 -->
+<!-- skill-version: 0.13.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

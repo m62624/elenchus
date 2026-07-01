@@ -427,4 +427,5 @@ Compiled {
     unused_imports: [],
     consumed: [],
     placeholders: [],
+    unwitnessed_exists: [],
 }

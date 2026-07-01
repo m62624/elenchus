@@ -6,7 +6,7 @@ use crate::ir::{AtomKey, Origin, Value};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
-use elenchus_parser::{Body, Conn, ListOp, Literal, Quant, kw};
+use elenchus_parser::{Body, Conn, ExistsDomain, ListOp, Literal, Quant, kw};
 
 /// A literal keyed by atom identity (pre-interning counterpart of [`Lit`]).
 #[derive(Clone)]
@@ -141,8 +141,24 @@ pub(crate) fn canonical_body(
             s.push('|');
             s.push_str(&lit_sigs(consequent, ctx)?);
         }
-        Body::Exists { binder, set, atom } => {
-            let _ = write!(s, "EXISTS|{}|{}|", binder.data, set.data);
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        } => {
+            match domain {
+                // Frozen: the `IN <set>` signature must stay byte-identical (it is
+                // a content-address / dedup key). A witness gets its own form.
+                ExistsDomain::InSet(set) => {
+                    let _ = write!(s, "EXISTS|{}|{}|", binder.data, set.data);
+                }
+                ExistsDomain::Witness(w) => {
+                    let _ = write!(s, "EXISTS|{}|WITNESS {}|", binder.data, w.data);
+                }
+                ExistsDomain::Open => {
+                    let _ = write!(s, "EXISTS|{}|OPEN|", binder.data);
+                }
+            }
             s.push_str(&key_sig(&ctx.key(&atom.data)?));
         }
     }

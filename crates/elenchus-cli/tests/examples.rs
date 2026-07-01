@@ -48,6 +48,7 @@ fn shipped_examples_match_their_verdicts() {
         ("physics.vrf", 1),
         ("roles-puzzle.vrf", 0),
         ("socrates.vrf", 2),
+        ("witness.vrf", 0),
     ];
     for (name, want) in cases {
         assert_eq!(run_file(name), want, "{name} changed its verdict");

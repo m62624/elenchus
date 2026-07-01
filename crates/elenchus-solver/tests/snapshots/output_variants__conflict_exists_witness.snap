@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"NOT auth is ready\\nPREMISE covered:\\n    EXISTS h WITNESS auth\\n        h is ready\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  covered (EXISTS)  [v.vrf:3]
+      d.auth is ready
+      why:
+        d.auth is ready = FALSE   [NOT v.vrf:2]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

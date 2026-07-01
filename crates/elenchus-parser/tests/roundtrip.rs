@@ -2,7 +2,7 @@
 //! `.vrf` text, parse it back, and assert the AST matches what we generated.
 //! Any rendering the grammar accepts but the parser mis-reads is a bug.
 
-use elenchus_parser::{Body, CloseKind, ListOp, Statement, parse};
+use elenchus_parser::{Body, CloseKind, ExistsDomain, ListOp, Statement, parse};
 use proptest::prelude::*;
 
 /// `(subject, predicate, object)`. `predicate == None` is a **bare atom** (a
@@ -47,6 +47,8 @@ enum Stmt {
         name: String,
         binder: String,
         set: String,
+        /// `true` → render `WITNESS <set>`; `false` → render `IN <set>`.
+        witness: bool,
         atom: Atom3,
     },
 }
@@ -130,10 +132,16 @@ fn render(stmts: &[Stmt]) -> String {
                 name,
                 binder,
                 set,
+                witness,
                 atom,
             } => {
+                let dom = if *witness {
+                    format!("WITNESS {set}")
+                } else {
+                    format!("IN {set}")
+                };
                 s.push_str(&format!(
-                    "PREMISE {name}:\n    EXISTS {binder} IN {set}\n        {}\n",
+                    "PREMISE {name}:\n    EXISTS {binder} {dom}\n        {}\n",
                     render_atom(atom)
                 ));
             }
@@ -263,16 +271,29 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
         (
             Statement::Premise {
                 name,
-                body: Body::Exists { binder, set, atom },
+                body:
+                    Body::Exists {
+                        binder,
+                        domain,
+                        atom,
+                    },
                 ..
             },
             Stmt::ExistsPremise {
                 name: n,
                 binder: b,
                 set: st,
+                witness: w,
                 atom: a,
             },
-        ) => name.data == n && binder.data == b && set.data == st && atom_eq(&atom.data, a),
+        ) => {
+            let dom_eq = match domain {
+                ExistsDomain::InSet(s) => !*w && s.data == st,
+                ExistsDomain::Witness(t) => *w && t.data == st,
+                ExistsDomain::Open => false, // proptest never generates the open form
+            };
+            name.data == n && binder.data == b && dom_eq && atom_eq(&atom.data, a)
+        }
         _ => false,
     }
 }
@@ -340,14 +361,15 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             ]),
         )
             .prop_map(|(relation, kind)| Stmt::Close { relation, kind }),
-        (ident(), ident(), ident(), atom()).prop_map(|(name, binder, set, atom)| {
-            Stmt::ExistsPremise {
+        (ident(), ident(), ident(), any::<bool>(), atom()).prop_map(
+            |(name, binder, set, witness, atom)| Stmt::ExistsPremise {
                 name,
                 binder,
                 set,
+                witness,
                 atom,
-            }
-        }),
+            },
+        ),
     ]
 }
 

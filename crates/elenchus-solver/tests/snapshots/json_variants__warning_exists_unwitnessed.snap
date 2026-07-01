@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":"someone_ready","kind":"EXISTS","source":"v.vrf","line":2,"blocked_by":["d.h is ready"],"hint":"name a witness: EXISTS h WITNESS <term>  (or a set: EXISTS h IN <set>)"}],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}

@@ -42,7 +42,8 @@ mod grammar;
 pub mod keywords;
 
 pub use ast::{
-    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+    Atom, Body, CloseKind, Conn, ExistsDomain, ListOp, Literal, Located, Program, Quant, Span,
+    Statement,
 };
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;

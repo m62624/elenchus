@@ -1,0 +1,18 @@
+DOMAIN handlers
+
+// "Some handler covers the incoming request." Over an *open* set (we never listed
+// every possible handler) an existential cannot be checked by enumeration — so the
+// author names the one element that satisfies it, the WITNESS, and the engine
+// checks that witness actually holds. No SET needed; it grounds to a single atom.
+//
+// A universal is different: "for ALL handlers ..." must name its domain with a SET.
+// Only the existential may point at a lone witness — and a witness can never blow
+// up, because there is nothing to enumerate.
+
+FACT auth_service handles request        // the evidence backing the claim
+
+PREMISE request_is_covered:
+    EXISTS h WITNESS auth_service
+        h handles request
+
+CHECK auth_service

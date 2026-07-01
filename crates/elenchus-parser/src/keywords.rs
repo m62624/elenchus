@@ -40,6 +40,7 @@ pub mod kw {
     pub const EQUIVALENCE: &str = "EQUIVALENCE";
     pub const SCC: &str = "SCC";
     pub const EXISTS: &str = "EXISTS";
+    pub const WITNESS: &str = "WITNESS";
     pub const VAR: &str = "VAR";
     pub const DEFAULT: &str = "DEFAULT";
     pub const PROVIDE: &str = "PROVIDE";
@@ -303,9 +304,18 @@ pub const KEYWORDS: &[Keyword] = &[
         text: kw::EXISTS,
         top_level: false,
         card: card(
-            "EXISTS <binder> IN <set>  then one condition line using the binder",
-            "at least one element of the SET satisfies the condition (the existential over a set; the dual of FOR EACH)",
+            "EXISTS <binder> IN <set> (or WITNESS <term>)  then one condition line using the binder",
+            "at least one element satisfies the condition (the existential; the dual of FOR EACH)",
             "EXISTS h IN handlers\n    h handles request",
+        ),
+    },
+    Keyword {
+        text: kw::WITNESS,
+        top_level: false,
+        card: card(
+            "EXISTS <binder> WITNESS <term>  then one condition line using the binder",
+            "prove EXISTS by naming the one element that satisfies it — needs no SET; grounds to a single atom",
+            "EXISTS h WITNESS auth_service\n    h is ready",
         ),
     },
     Keyword {

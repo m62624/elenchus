@@ -8,14 +8,14 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use elenchus_parser::{Atom, Body, Conn, ListOp, Located, Quant, Statement, kw};
+use elenchus_parser::{Atom, Body, Conn, ExistsDomain, ListOp, Located, Quant, Statement, kw};
 
 use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
     AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, PlaceholderInfo,
-    PlaceholderStatus, PortBinding, Rule, Value,
+    PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
@@ -76,6 +76,9 @@ pub struct Compiler {
     /// They join the same conflict pool as external `--set`/API values in
     /// [`Compiler::resolve_ports`].
     provides: Vec<(PortRef, PortBinding)>,
+    /// `EXISTS` premises that named no candidate (neither `SET` nor `WITNESS`).
+    /// Inert for the SAT core (no clause), carried to the report as WARNINGs.
+    unwitnessed_exists: Vec<UnwitnessedExists>,
 }
 
 impl Compiler {
@@ -539,28 +542,55 @@ impl Compiler {
                     }
                 }
             }
-            Body::Exists { binder, set, atom } => {
-                // ∃: at least one element of the SET satisfies the condition.
-                // Instantiate the condition per element (binder substituted) and
-                // emit a single at-least-one — exactly an `ATLEAST` whose atoms are
-                // generated from the set instead of hand-listed. Linear in `|set|`,
-                // one clause; the solver sees nothing new. The dual of a `FOR EACH`
-                // over a set (an "all"), so it resolves the set the same way.
-                let elements = match self.sets.get(set.data) {
-                    Some(els) => els.clone(),
-                    None => {
-                        return Err(CompileError::UnknownSet {
-                            file: source.to_string(),
-                            line: set.span.location_line(),
-                            set: set.data.to_string(),
-                            suggestion: nearest_set_suggestion(set.data, &self.sets),
-                        });
+            Body::Exists {
+                binder,
+                domain,
+                atom,
+            } => {
+                // Open (neither SET nor WITNESS): the existential named no candidate,
+                // so there is nothing to check. Emit no clause; record a WARNING
+                // advisory that nudges the author to name a witness. Never a blow-up
+                // — there is nothing to enumerate.
+                if let ExistsDomain::Open = domain {
+                    let key = ctx.key(&atom.data)?;
+                    let origin = self.origin(source, line, Some(name), kw::EXISTS);
+                    self.unwitnessed_exists.push(UnwitnessedExists {
+                        origin,
+                        condition: alloc::format!("{key}"),
+                        binder: binder.data.to_string(),
+                    });
+                    return Ok(());
+                }
+                // ∃: at least one candidate satisfies the condition. `IN <set>`
+                // instantiates the condition per set element; `WITNESS <term>` is
+                // the singleton {term} the author names — no SET, exactly one atom.
+                // Either way we emit a single at-least-one (an `ATLEAST` whose atoms
+                // are generated, not hand-listed); the solver sees nothing new. A
+                // witness is `∃` over `{term}`, so there is nothing to enumerate.
+                let keys: Vec<AtomKey> = match domain {
+                    ExistsDomain::InSet(set) => {
+                        let elements = match self.sets.get(set.data) {
+                            Some(els) => els.clone(),
+                            None => {
+                                return Err(CompileError::UnknownSet {
+                                    file: source.to_string(),
+                                    line: set.span.location_line(),
+                                    set: set.data.to_string(),
+                                    suggestion: nearest_set_suggestion(set.data, &self.sets),
+                                });
+                            }
+                        };
+                        elements
+                            .iter()
+                            .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
+                            .collect::<Result<_, _>>()?
                     }
+                    ExistsDomain::Witness(w) => {
+                        vec![ctx.key(&subst_atom(&atom.data, &[(binder.data, w.data)]))?]
+                    }
+                    // Handled above with an early return (no clause).
+                    ExistsDomain::Open => unreachable!("Open EXISTS emits no clause"),
                 };
-                let keys: Vec<AtomKey> = elements
-                    .iter()
-                    .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
-                    .collect::<Result<_, _>>()?;
                 for k in &keys {
                     self.intern(k);
                 }
@@ -982,6 +1012,7 @@ impl Compiler {
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
             consumed,
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
+            unwitnessed_exists: self.unwitnessed_exists,
         }
     }
 }

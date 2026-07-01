@@ -131,6 +131,27 @@ pub enum CloseKind {
     Scc,
 }
 
+/// Where an `EXISTS` draws its single-or-many candidates from. A universal
+/// (`FOR EACH`) must always name a declared domain, but an existential may instead
+/// name one **witness** — the element the author is pointing at — so it needs no
+/// `SET`. This is the only "open domain" form in the language, and it is safe by
+/// construction: a witness grounds to exactly one atom (`∃` over the singleton
+/// `{witness}`), so there is nothing to enumerate and no blow-up to represent.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExistsDomain<'a> {
+    /// `IN <set>` — range over the elements of a declared [`Statement::Set`].
+    InSet(Located<'a, &'a str>),
+    /// `WITNESS <term>` — the single named element that must satisfy the
+    /// condition. Grounds to one atom; requires no `SET`.
+    Witness(Located<'a, &'a str>),
+    /// Neither `IN <set>` nor `WITNESS <term>` — an existential claim with no
+    /// candidate named. It grounds to nothing (no clause); the solver surfaces it
+    /// as a WARNING nudging the author to name a witness. This is the "you claimed
+    /// existence but pointed at no one" gap — never a blow-up, there is nothing to
+    /// enumerate.
+    Open,
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -141,15 +162,17 @@ pub enum Body<'a> {
         /// The atoms it ranges over (the parser guarantees at least two).
         atoms: Vec<Located<'a, Atom<'a>>>,
     },
-    /// `EXISTS <binder> IN <set>` then one condition line using the binder — at
-    /// least one element of the set satisfies the condition. Desugars to an
-    /// at-least-one over the per-element instantiations (the dual of a `FOR EACH`
-    /// over a set, which is an "all"). Premise-only: `∃` checks, it derives nothing.
+    /// `EXISTS <binder> IN <set>` (or `WITNESS <term>`) then one condition line
+    /// using the binder — at least one element of the domain satisfies the
+    /// condition. Desugars to an at-least-one over the per-element instantiations
+    /// (the dual of a `FOR EACH` over a set, which is an "all"); a `WITNESS`
+    /// grounds to the single named element. Premise-only: `∃` checks, it derives
+    /// nothing.
     Exists {
-        /// The bound variable substituted into `atom` once per set element.
+        /// The bound variable substituted into `atom` once per domain element.
         binder: Located<'a, &'a str>,
-        /// The declared `SET` the binder ranges over.
-        set: Located<'a, &'a str>,
+        /// Where the candidates come from: a declared `SET`, or one named witness.
+        domain: ExistsDomain<'a>,
         /// The condition, carrying the binder in some position.
         atom: Located<'a, Atom<'a>>,
     },

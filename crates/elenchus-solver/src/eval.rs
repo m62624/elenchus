@@ -361,6 +361,24 @@ impl<'a> Eval<'a> {
         }
     }
 
+    /// Turn each unwitnessed `EXISTS` (an `ExistsDomain::Open` the compiler flagged)
+    /// into a WARNING: the existential named no candidate, so it could not be
+    /// checked. Must run *before* [`Eval::finish`] computes the verdict, so it can
+    /// raise CONSISTENT → WARNING — a premise that could not be checked, exactly
+    /// like an implication blocked by an UNKNOWN atom.
+    pub(crate) fn flag_unwitnessed_exists(&mut self) {
+        for u in &self.c.unwitnessed_exists {
+            self.warnings.push(Warning {
+                origin: u.origin.clone(),
+                blocked_by: alloc::vec![u.condition.clone()],
+                hint: Some(alloc::format!(
+                    "name a witness: EXISTS {b} WITNESS <term>  (or a set: EXISTS {b} IN <set>)",
+                    b = u.binder
+                )),
+            });
+        }
+    }
+
     /// Run the backward pass, sort deterministically, and assemble the report.
     pub(crate) fn finish(mut self) -> Report {
         let underdetermined = self.backward_pass();

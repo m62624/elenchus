@@ -52,6 +52,50 @@ fn exclusive_with_unknown_is_consistent_not_warning() {
 }
 
 #[test]
+fn exists_witness_that_holds_is_consistent() {
+    // The author names the witness; the engine checks it holds. `auth is ready` is
+    // asserted, so the existential is satisfied — no SET needed.
+    let r = vs("FACT auth is ready\nPREMISE p:\n    EXISTS h WITNESS auth\n        h is ready\nCHECK auth\n")
+        .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty());
+}
+
+#[test]
+fn exists_witness_that_fails_is_conflict() {
+    // The named witness is forced FALSE elsewhere → the existential cannot be met by
+    // it: CONFLICT, blamed on the EXISTS premise.
+    let r = vs("NOT auth is ready\nPREMISE p:\n    EXISTS h WITNESS auth\n        h is ready\n")
+        .unwrap();
+    assert_eq!(r.status, Status::Conflict);
+    assert_eq!(r.conflicts.len(), 1);
+    assert_eq!(r.conflicts[0].origin.premise.as_deref(), Some("p"));
+    assert_eq!(r.conflicts[0].origin.kind, kw::EXISTS);
+}
+
+#[test]
+fn exists_unwitnessed_is_warning() {
+    // ∃ that names neither a SET nor a WITNESS cannot be checked — the forge voice:
+    // WARNING with a hint to name a witness, not a clause and not a blow-up.
+    let r = vs("PREMISE someone_ready:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(
+        r.warnings[0].origin.premise.as_deref(),
+        Some("someone_ready")
+    );
+    assert_eq!(r.warnings[0].blocked_by, vec![String::from("t.h is ready")]);
+    assert!(r.warnings[0].hint.as_deref().unwrap().contains("WITNESS"));
+}
+
+#[test]
+fn exists_unwitnessed_warning_does_not_hide_a_conflict() {
+    // A real CONFLICT still wins over the unwitnessed-∃ WARNING (verdict precedence).
+    let r = vs("FACT x a\nNOT x a\nPREMISE p:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(r.status, Status::Conflict);
+}
+
+#[test]
 fn implication_missing_consequent_is_warning() {
     // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
     let r = vs(r#"
