@@ -14,14 +14,14 @@ use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, PlaceholderInfo,
+    AtomId, AtomKey, Check, Clause, Compiled, Fact, Justification, Lit, Origin, PlaceholderInfo,
     PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawClause, RawFact, RawLit, RawRule, canonical_body, clause_sig, key_sig, list_kind, quant_sig,
-    raw_lits,
+    RawClause, RawFact, RawJustification, RawLit, RawRule, canonical_body, clause_sig, key_sig,
+    list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -79,6 +79,9 @@ pub struct Compiler {
     /// `EXISTS` premises that named no candidate (neither `SET` nor `WITNESS`).
     /// Inert for the SAT core (no clause), carried to the report as WARNINGs.
     unwitnessed_exists: Vec<UnwitnessedExists>,
+    /// `FACT … BECAUSE <ground>` justifications. Inert for the SAT core (no clause);
+    /// the solver checks the ground's value (FALSE → CONFLICT, UNKNOWN → WARNING).
+    justifications: Vec<RawJustification>,
 }
 
 impl Compiler {
@@ -156,7 +159,7 @@ impl Compiler {
                         elements.iter().map(|e| e.data.to_string()).collect(),
                     );
                 }
-                Statement::Fact(a) => {
+                Statement::Fact { atom: a, .. } => {
                     // Only a 3-part fact (`a rel b`) declares a relation pair; a bare
                     // proposition or a 2-word fact has no object (hence no predicate
                     // pair to record).
@@ -197,7 +200,12 @@ impl Compiler {
         match stmt {
             // Handled by `add_source` / `load_recursive`, never reach here.
             Statement::Import { .. } | Statement::Domain(_) => {}
-            Statement::Fact(a) => self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?,
+            Statement::Fact { atom: a, because } => {
+                self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?;
+                if let Some(ground) = because {
+                    self.add_justification(source, a, ground, ctx)?;
+                }
+            }
             Statement::Negation(a) => {
                 self.add_fact(source, a, Value::False, kw::NOT, false, ctx)?
             }
@@ -312,6 +320,34 @@ impl Compiler {
                 kind,
             },
             soft,
+        });
+        Ok(())
+    }
+
+    /// Record a `FACT … BECAUSE <ground>` justification. The belief atom is already
+    /// interned by the preceding [`Compiler::add_fact`]; the ground is interned here
+    /// so it participates in the model (an otherwise-unconstrained ground stays
+    /// UNKNOWN → the solver reports it rather than silently forcing it true). No
+    /// clause is emitted — the check is evaluative, done by the solver.
+    fn add_justification(
+        &mut self,
+        source: &str,
+        belief: &Located<Atom>,
+        ground: &Located<Atom>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let belief_key = ctx.key(&belief.data)?;
+        let ground_key = ctx.key(&ground.data)?;
+        self.intern(&ground_key);
+        self.justifications.push(RawJustification {
+            belief: belief_key,
+            ground: ground_key,
+            origin: Origin {
+                source: source.to_string(),
+                line: belief.span.location_line(),
+                premise: None,
+                kind: kw::BECAUSE,
+            },
         });
         Ok(())
     }
@@ -1002,6 +1038,16 @@ impl Compiler {
             .filter_map(|k| id_of.get(k).copied())
             .collect();
 
+        let justifications = self
+            .justifications
+            .into_iter()
+            .map(|j| Justification {
+                belief: id_of[&j.belief],
+                ground: id_of[&j.ground],
+                origin: j.origin,
+            })
+            .collect();
+
         Compiled {
             atoms,
             facts,
@@ -1013,6 +1059,7 @@ impl Compiler {
             consumed,
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
             unwitnessed_exists: self.unwitnessed_exists,
+            justifications,
         }
     }
 }

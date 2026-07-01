@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":null,"kind":"BECAUSE","source":"v.vrf","line":2,"blocked_by":["d.db reachable"],"hint":"establish the ground: FACT d.db reachable  (or derive it with a RULE)"}],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}

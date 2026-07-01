@@ -93,6 +93,9 @@ pub fn solve(c: &Compiled) -> Report {
     e.check_premises();
     // Unwitnessed EXISTS → WARNING; must precede `finish` so it can raise the verdict.
     e.flag_unwitnessed_exists();
+    // FACT … BECAUSE justifications (L2): ground FALSE → CONFLICT, UNKNOWN → WARNING.
+    // Also before `finish`, and after the forward pass has settled the model.
+    e.check_justifications();
     let mut report = e.finish();
     // If the program is a CONFLICT but the facts/premises are consistent on their
     // own, the `ASSUME` hypotheses are what break it: name which to retract. The

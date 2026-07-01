@@ -354,6 +354,7 @@ namespacing and reuse.
 |---|---|---|
 | `DOMAIN` | declares the file's domain — the identity namespace of its atoms (required, first) | namespace |
 | `FACT` | a TRUE assertion | premise (unchecked) |
+| `FACT … BECAUSE …` | a TRUE assertion that names its ground; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) | premise + justification |
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `PREMISE` | a first principle — **checked** | constraint |
@@ -498,6 +499,22 @@ and never a search. So the existential may leave its domain unnamed, but then it
 name a witness or it is flagged as an unfinished premise — the "you claimed existence
 but pointed at no one" gap.
 
+**`FACT … BECAUSE <ground>` — the justification ("how do you know?").** A `FACT` may
+name the ground it rests on, and the engine checks that ground actually holds. It is
+an *evaluative* check, not a constraint: `BECAUSE` emits **no clause** and interns the
+ground so the solver can read its settled value. The ground's value decides the outcome:
+
+- ground **TRUE** → the justification stands (silent);
+- ground **FALSE** → the stated reason does not hold → **CONFLICT** (with a trace of
+  why the ground is false), the epistemic analogue of a broken proof;
+- ground **UNKNOWN** → the reason is unestablished → **WARNING** ("establish the ground").
+
+Because it is evaluative it can never blow up — one value lookup per justified fact —
+and an UNKNOWN ground is *reported* rather than silently forced true (which is why it
+is not a clause). A plain `FACT` with no `BECAUSE` is unchanged; supplying a ground is
+opt-in. (This is the first layer of a justification calculus: today the ground is
+checked one hop deep — it must hold — not yet recursively traced to first principles.)
+
 **The `CLOSE` family.** Each kind is a compile-time graph operation over a
 relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
 ground pairs), so a relation `FOR EACH` then ranges over the closed relation:
@@ -577,6 +594,7 @@ a relation, `b` = clauses one body instance emits.
 | `DOMAIN` | `O(1)` — namespacing only | — |
 | `IMPORT` / `AS` | `O(1)` per edge; import-cycle check `O(imports)` | — (flat merge into the atom universe) |
 | `FACT` / `NOT` | `O(1)` | one unit literal |
+| `FACT … BECAUSE <ground>` | `O(1)` — interns the ground; **no clause** | one model-value lookup (evaluative, not a constraint) |
 | `ASSUME` | `O(1)` | one retractable assumption |
 | `EXCLUSIVE` / `FORBIDS` | `C(n,2)` pairwise clauses | those clauses |
 | `ONEOF` | `C(n,2) + 1` clauses (+ closed-world value set) | those clauses |
@@ -818,7 +836,7 @@ element_line = identifier , NEWLINE ;
 close       = "CLOSE" , name , closure_kind , NEWLINE ;
 closure_kind = "TRANSITIVE" | "SYMMETRIC" | "REFLEXIVE" | "EQUIVALENCE" | "SCC" ;
             (* only TRANSITIVE requires a DAG; the others allow cycles *)
-fact        = "FACT" , atom , NEWLINE ;
+fact        = "FACT" , atom , [ "BECAUSE" , atom ] , NEWLINE ;  (* optional ground: the justification the engine checks *)
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
 var         = "VAR" , name , [ "DEFAULT" , bool ] , NEWLINE ;  (* external boolean port *)

@@ -652,6 +652,20 @@ fn import_referenced_only_inside_a_premise_is_used() {
 }
 
 #[test]
+fn import_referenced_only_by_a_because_ground_is_used() {
+    // The only reference to the imported domain is a `BECAUSE physics.…` ground, so
+    // the justification's ground must count toward the unused-import lint.
+    let mut r = MemoryResolver::new();
+    r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+    r.add(
+        "main.vrf",
+        "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT x ok BECAUSE physics.Motor over_100\n",
+    );
+    let c = compile("main.vrf", &r).unwrap();
+    assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
+}
+
+#[test]
 fn same_premise_name_across_files_coexists() {
     // Two files may legitimately reuse a premise NAME with different bodies.
     // Names are per-source labels — both premises apply, qualified by source.
@@ -1355,6 +1369,37 @@ fn exists_unwitnessed_emits_no_clause_but_records_an_advisory() {
     assert!(c.atoms.is_empty());
     assert_eq!(c.unwitnessed_exists.len(), 1);
     assert_eq!(c.unwitnessed_exists[0].binder, "h");
+}
+
+#[test]
+fn fact_because_records_a_justification_and_emits_no_clause() {
+    // `FACT x a BECAUSE y b` asserts x a and records a justification citing y b. It
+    // emits no clause (the check is evaluative), and interns both the belief and the
+    // ground so the ground participates in the model.
+    let c = cs("FACT api healthy BECAUSE db reachable\n").unwrap();
+    assert_eq!(c.clauses.len(), 0);
+    assert_eq!(c.justifications.len(), 1);
+    let j = &c.justifications[0];
+    assert_eq!(j.belief, id(&c, &key("api", "healthy", None)));
+    assert_eq!(j.ground, id(&c, &key("db", "reachable", None)));
+    assert_eq!(j.origin.kind, kw::BECAUSE);
+}
+
+#[test]
+fn fact_because_interns_an_otherwise_unused_ground() {
+    // The ground need not appear anywhere else: `BECAUSE db reachable` alone must
+    // still intern `db reachable` (as an UNKNOWN atom) so the solver can read it.
+    let c = cs("FACT api healthy BECAUSE db reachable\n").unwrap();
+    assert!(c.atoms.contains(&key("db", "reachable", None)));
+    // Only the belief is a FACT; the ground is interned but not asserted.
+    assert_eq!(c.facts.len(), 1);
+}
+
+#[test]
+fn fact_without_because_records_no_justification() {
+    // A plain FACT is unchanged — the justification channel stays empty.
+    let c = cs("FACT api healthy\n").unwrap();
+    assert!(c.justifications.is_empty());
 }
 
 #[test]

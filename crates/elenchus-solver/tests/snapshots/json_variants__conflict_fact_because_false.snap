@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":null,"kind":"BECAUSE","source":"v.vrf","line":3,"atoms":["d.api healthy — its stated ground d.db reachable is FALSE"],"trace":[{"atom":"d.db reachable","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":2,"from":[]}]}],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}

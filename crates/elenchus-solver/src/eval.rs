@@ -379,6 +379,40 @@ impl<'a> Eval<'a> {
         }
     }
 
+    /// Check each `FACT … BECAUSE <ground>` justification against the settled forward
+    /// model — the L2 "how do you know?" layer. The ground's value decides the
+    /// verdict: FALSE means the stated reason does not hold (**CONFLICT**), UNKNOWN
+    /// means it is unestablished (**WARNING**), TRUE means the justification holds
+    /// (silent). `BECAUSE` emits no clause (the check is evaluative, so an UNKNOWN
+    /// ground is *reported* rather than forced true), hence this must run *before*
+    /// [`Eval::finish`] so it can raise the verdict — like [`Eval::flag_unwitnessed_exists`].
+    pub(crate) fn check_justifications(&mut self) {
+        let c = self.c;
+        for j in &c.justifications {
+            match self.model[j.ground as usize] {
+                V3::True => {}
+                V3::False => self.conflicts.push(RawConflict {
+                    origin: j.origin.clone(),
+                    atoms: vec![alloc::format!(
+                        "{} — its stated ground {} is FALSE",
+                        self.label(j.belief),
+                        self.label(j.ground)
+                    )],
+                    // Explain *why* the ground is false (its asserting FACT/NOT/rule).
+                    cause: vec![j.ground],
+                }),
+                V3::Unknown => self.warnings.push(Warning {
+                    origin: j.origin.clone(),
+                    blocked_by: vec![self.label(j.ground)],
+                    hint: Some(alloc::format!(
+                        "establish the ground: FACT {g}  (or derive it with a RULE)",
+                        g = self.label(j.ground)
+                    )),
+                }),
+            }
+        }
+    }
+
     /// Run the backward pass, sort deterministically, and assemble the report.
     pub(crate) fn finish(mut self) -> Report {
         let underdetermined = self.backward_pass();

@@ -149,6 +149,14 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "warning_exists_unwitnessed",
             "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n",
         ),
+        (
+            "conflict_fact_because_false",
+            "NOT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n",
+        ),
+        (
+            "warning_fact_because_unknown",
+            "FACT api healthy BECAUSE db reachable\nCHECK api\n",
+        ),
         // Advisory report elements (never change the verdict) — one case each so the
         // populated JSON shape of every array is snapshotted, not just its empty form.
         ("orphans_lint", "FACT lonely atom\nCHECK lonely\n"),

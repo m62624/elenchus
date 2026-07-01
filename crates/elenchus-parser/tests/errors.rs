@@ -291,6 +291,13 @@ fn exists_missing_condition_line() {
 }
 
 #[test]
+fn fact_because_missing_ground() {
+    // `FACT <atom> BECAUSE` with no ground atom is committed under BECAUSE (its
+    // message leads with the keyword), so it groups there and shows the BECAUSE card.
+    insta::assert_snapshot!(err("FACT api healthy BECAUSE\n"));
+}
+
+#[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
     // A trailing newline is not required: `eol` accepts EOF too. Drawn straight

@@ -164,6 +164,11 @@ pub struct Compiled {
     /// [`elenchus_parser::ExistsDomain::Open`]). Inert for the solver — it emits no
     /// clause — but surfaced as a WARNING nudging the author to name a witness.
     pub unwitnessed_exists: Vec<UnwitnessedExists>,
+    /// One record per `FACT … BECAUSE <ground>` — the justification (L2) layer. The
+    /// solver reads the ground atom's value: FALSE → CONFLICT ("your reason does not
+    /// hold"), UNKNOWN → WARNING ("your reason is unestablished"), TRUE → silent. It
+    /// emits **no clause** — the check is evaluative, not a constraint.
+    pub justifications: Vec<Justification>,
 }
 
 /// An advisory record: an `EXISTS` premise that named no candidate — neither a
@@ -180,6 +185,21 @@ pub struct UnwitnessedExists {
     pub condition: String,
     /// The binder name, used to phrase the "name a witness" hint.
     pub binder: String,
+}
+
+/// One `FACT … BECAUSE <ground>` justification: the belief atom, the ground it is
+/// claimed to rest on, and the provenance of the `BECAUSE`. The solver checks the
+/// ground's model value (FALSE → CONFLICT, UNKNOWN → WARNING, TRUE → silent). It is
+/// **evaluative, not a constraint** — it emits no clause, so an UNKNOWN ground is
+/// reported rather than silently forced true.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Justification {
+    /// The asserted atom (the belief), for the report message.
+    pub belief: AtomId,
+    /// The cited ground atom whose value the engine checks.
+    pub ground: AtomId,
+    /// Provenance of the `BECAUSE` (source, line, kind = `BECAUSE`).
+    pub origin: Origin,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an

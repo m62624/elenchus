@@ -219,3 +219,19 @@ fn warning_exists_unwitnessed() {
         "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n"
     ));
 }
+
+// --- FACT … BECAUSE (justification) ----------------------------------------
+
+#[test]
+fn conflict_fact_because_false() {
+    // The cited ground is FALSE → CONFLICT, with a trace explaining why.
+    insta::assert_snapshot!(report(
+        "NOT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n"
+    ));
+}
+
+#[test]
+fn warning_fact_because_unknown() {
+    // The cited ground is UNKNOWN → WARNING nudging to establish it.
+    insta::assert_snapshot!(report("FACT api healthy BECAUSE db reachable\nCHECK api\n"));
+}

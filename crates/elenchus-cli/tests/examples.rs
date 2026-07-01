@@ -45,6 +45,7 @@ fn shipped_examples_match_their_verdicts() {
         ("conflict.vrf", 2),
         ("creature.vrf", 1),
         ("import-demo.vrf", 2),
+        ("justification.vrf", 0),
         ("physics.vrf", 1),
         ("roles-puzzle.vrf", 0),
         ("socrates.vrf", 2),

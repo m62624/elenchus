@@ -492,7 +492,9 @@ fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Domain(name)))
 }
 
-/// `FACT <atom>` — a TRUE assertion.
+/// `FACT <atom> [BECAUSE <atom>]` — a TRUE assertion, optionally naming the ground
+/// it rests on. `BECAUSE` is committed: once it is seen, a missing ground atom is a
+/// specific error (grouped under BECAUSE), not a generic "unexpected text".
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::FACT), space1).parse(input)?;
     let at = input;
@@ -501,8 +503,23 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         at,
         "FACT expects an atom: <Subject> <predicate> [<object>]",
     )?;
+    // Optional justification tail. `atom` already stops before `BECAUSE` (a reserved
+    // word, so it is never eaten as an object), leaving it here to be recognized.
+    let (input, saw_because) = opt(preceded(space1, tag(kw::BECAUSE))).parse(input)?;
+    let (input, because) = match saw_because {
+        Some(_) => {
+            let bat = input;
+            let (input, ground) = promote(
+                preceded(space1, atom).parse(input),
+                bat,
+                "BECAUSE expects a ground atom: <Subject> <predicate> [<object>]",
+            )?;
+            (input, Some(ground))
+        }
+        None => (input, None),
+    };
     let (input, _) = promote(eol(input), input, "unexpected text after the FACT atom")?;
-    Ok((input, Statement::Fact(a)))
+    Ok((input, Statement::Fact { atom: a, because }))
 }
 
 /// `ASSUME [NOT] <atom>` — a soft (retractable) assertion. Accepts a leading

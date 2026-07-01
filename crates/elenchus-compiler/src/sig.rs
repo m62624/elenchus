@@ -23,6 +23,14 @@ pub(crate) struct RawFact {
     pub(crate) soft: bool,
 }
 
+/// A `FACT … BECAUSE` justification keyed by atom identity (pre-interning
+/// counterpart of [`crate::ir::Justification`]).
+pub(crate) struct RawJustification {
+    pub(crate) belief: AtomKey,
+    pub(crate) ground: AtomKey,
+    pub(crate) origin: Origin,
+}
+
 /// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
 pub(crate) struct RawClause {
     pub(crate) lits: Vec<RawLit>,

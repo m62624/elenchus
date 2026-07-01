@@ -13,7 +13,11 @@ type Lit3 = (bool, Atom3);
 
 #[derive(Clone, Debug)]
 enum Stmt {
-    Fact(Atom3),
+    Fact {
+        atom: Atom3,
+        /// `Some` → render a `BECAUSE <ground>` justification tail.
+        because: Option<Atom3>,
+    },
     Not(Atom3),
     Import(String),
     Var {
@@ -77,7 +81,13 @@ fn render(stmts: &[Stmt]) -> String {
     let mut s = String::new();
     for st in stmts {
         match st {
-            Stmt::Fact(a) => s.push_str(&format!("FACT {}\n", render_atom(a))),
+            Stmt::Fact { atom, because } => {
+                s.push_str(&format!("FACT {}", render_atom(atom)));
+                if let Some(g) = because {
+                    s.push_str(&format!(" BECAUSE {}", render_atom(g)));
+                }
+                s.push('\n');
+            }
             Stmt::Not(a) => s.push_str(&format!("NOT {}\n", render_atom(a))),
             Stmt::Import(p) => s.push_str(&format!("IMPORT \"{p}\"\n")),
             Stmt::Var { name, default } => {
@@ -188,7 +198,23 @@ fn close_kind_eq(p: CloseKind, s: &str) -> bool {
 
 fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
     match (p, s) {
-        (Statement::Fact(a), Stmt::Fact(b)) => atom_eq(&a.data, b),
+        (
+            Statement::Fact {
+                atom: a,
+                because: pb,
+            },
+            Stmt::Fact {
+                atom: b,
+                because: sb,
+            },
+        ) => {
+            atom_eq(&a.data, b)
+                && match (pb, sb) {
+                    (Some(pg), Some(sg)) => atom_eq(&pg.data, sg),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
         (Statement::Negation(a), Stmt::Not(b)) => atom_eq(&a.data, b),
         (Statement::Import { path: a, .. }, Stmt::Import(b)) => a.data == b,
         (
@@ -324,7 +350,7 @@ fn lit() -> impl Strategy<Value = Lit3> {
 
 fn stmt() -> impl Strategy<Value = Stmt> {
     prop_oneof![
-        atom().prop_map(Stmt::Fact),
+        (atom(), prop::option::of(atom())).prop_map(|(atom, because)| Stmt::Fact { atom, because }),
         atom().prop_map(Stmt::Not),
         "[a-z][a-z0-9_.]{0,8}".prop_map(Stmt::Import),
         (ident(), prop::option::of(any::<bool>()))

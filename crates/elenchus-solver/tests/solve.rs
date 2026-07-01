@@ -95,6 +95,85 @@ fn exists_unwitnessed_warning_does_not_hide_a_conflict() {
     assert_eq!(r.status, Status::Conflict);
 }
 
+// --- FACT … BECAUSE (justification / L2) -----------------------------------
+
+#[test]
+fn fact_because_ground_holds_is_consistent() {
+    // The author cites a ground; the engine checks it holds. `db reachable` is
+    // asserted TRUE, so the justification stands — no clause, no noise.
+    let r = vs("FACT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n").unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty() && r.warnings.is_empty());
+    // Neither the belief nor the ground is an inert leftover: the justification uses
+    // both, so the orphan lint must stay silent.
+    assert!(r.orphans.is_empty());
+}
+
+#[test]
+fn fact_because_ground_derived_by_rule_holds_is_consistent() {
+    // The ground need not be asserted directly — a RULE that derives it also
+    // satisfies the justification (the check reads the settled model value).
+    let r = vs(
+        "FACT db up\nRULE r:\n    WHEN db up\n    THEN db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+}
+
+#[test]
+fn fact_because_ground_false_is_conflict() {
+    // The cited ground is forced FALSE → the stated reason does not hold: CONFLICT,
+    // blamed on the BECAUSE, and its trace explains why the ground is false.
+    let r = vs("NOT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n").unwrap();
+    assert_eq!(r.status, Status::Conflict);
+    assert_eq!(r.conflicts.len(), 1);
+    assert_eq!(r.conflicts[0].origin.kind, kw::BECAUSE);
+    assert!(r.conflicts[0].atoms[0].contains("t.db reachable is FALSE"));
+    // The trace names the NOT that forced the ground false.
+    assert!(!r.conflicts[0].trace.is_empty());
+}
+
+#[test]
+fn fact_because_ground_unknown_is_warning() {
+    // The cited ground is never established (stays UNKNOWN) → the reason is
+    // unestablished: WARNING with a hint to establish it, not a clause.
+    let r = vs("FACT api healthy BECAUSE db reachable\nCHECK api\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].origin.kind, kw::BECAUSE);
+    assert_eq!(
+        r.warnings[0].blocked_by,
+        vec![String::from("t.db reachable")]
+    );
+    assert!(r.warnings[0].hint.as_deref().unwrap().contains("FACT"));
+}
+
+#[test]
+fn fact_because_unknown_ground_does_not_hide_a_conflict() {
+    // A real CONFLICT wins over the unestablished-ground WARNING (verdict precedence).
+    let r = vs("FACT x a\nNOT x a\nFACT api healthy BECAUSE db reachable\n").unwrap();
+    assert_eq!(r.status, Status::Conflict);
+}
+
+#[test]
+fn plain_fact_is_unaffected_by_the_justification_layer() {
+    // A FACT with no BECAUSE never produces a justification conflict/warning.
+    let r = vs("FACT api healthy\nCHECK api\n").unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty() && r.warnings.is_empty());
+}
+
+#[test]
+fn fact_because_unknown_ground_under_bidirectional_stays_warning() {
+    // The interned-but-free ground does not manufacture a spurious UNDERDETERMINED
+    // under BIDIRECTIONAL (the backward pass does not project an unconstrained
+    // ground); the justification WARNING is the verdict.
+    let r = vs("FACT api healthy BECAUSE db reachable\nCHECK BIDIRECTIONAL\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].origin.kind, kw::BECAUSE);
+}
+
 #[test]
 fn implication_missing_consequent_is_warning() {
     // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.

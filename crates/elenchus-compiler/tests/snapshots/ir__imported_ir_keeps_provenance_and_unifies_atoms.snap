@@ -119,4 +119,5 @@ Compiled {
     consumed: [],
     placeholders: [],
     unwitnessed_exists: [],
+    justifications: [],
 }
