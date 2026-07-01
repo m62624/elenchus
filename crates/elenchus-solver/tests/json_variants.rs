@@ -157,6 +157,10 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "warning_fact_because_unknown",
             "FACT api healthy BECAUSE db reachable\nCHECK api\n",
         ),
+        (
+            "consistent_defeated_default",
+            "RULE fly:\n    WHEN pengu is bird\n    THEN pengu can_fly\n    UNLESS pengu is penguin\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+        ),
         // Advisory report elements (never change the verdict) — one case each so the
         // populated JSON shape of every array is snapshotted, not just its empty form.
         ("orphans_lint", "FACT lonely atom\nCHECK lonely\n"),

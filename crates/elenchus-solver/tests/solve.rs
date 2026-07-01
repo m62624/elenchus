@@ -905,6 +905,48 @@ fn defeasible_established_exception_suppresses_the_default() {
     assert!(r.conflicts.is_empty());
     // The default was defeated: nothing derived can_fly.
     assert!(!r.derived.iter().any(|d| d.atom.contains("can_fly")));
+    // The defeat is surfaced as an informational note naming the exception.
+    assert_eq!(r.defeated.len(), 1);
+    assert!(r.defeated[0].consequent.contains("can_fly"));
+    assert_eq!(
+        r.defeated[0].blocked_by,
+        vec![String::from("t.pengu is penguin")]
+    );
+}
+
+#[test]
+fn defeasible_backward_pass_agrees_when_fully_pinned() {
+    // Under BIDIRECTIONAL the exception enters the rule's clause (¬bird ∨ penguin ∨
+    // can_fly). With every atom pinned by a fact the clause is satisfied and there is
+    // exactly one model → CONSISTENT, matching the forward pass (no false conflict).
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        NOT pengu can_fly
+        CHECK BIDIRECTIONAL
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty());
+}
+
+#[test]
+fn a_default_that_fires_normally_records_no_defeat() {
+    // When no exception is established, the rule fires and there is no DEFEATED note.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        CHECK
+        ")
+    .unwrap();
+    assert!(r.defeated.is_empty());
 }
 
 #[test]

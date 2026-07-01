@@ -32,6 +32,23 @@ fn consistent_with_derived() {
     ));
 }
 
+#[test]
+fn consistent_with_defeated_default() {
+    // A defeasible RULE whose default is suppressed by an established UNLESS: the
+    // report carries an informational DEFEATED line, verdict stays CONSISTENT.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        CHECK
+        "#
+    ));
+}
+
 // --- WARNING ---------------------------------------------------------------
 
 #[test]

@@ -321,8 +321,11 @@ Semantics without blow-up (Law 5): in the forward pass this is one `O(1)` model-
 lookup per exception that *gates* firing — the model supplies the exception, the engine
 only checks it, never searching for one. In the backward (`BIDIRECTIONAL`) pass the
 exception enters the rule's clause as an escape disjunct — `WHEN a THEN b UNLESS e`
-== `¬a ∨ e ∨ b` — which coincides with the forward reading on any complete model. A
-defeated default is simply not derived; it is never a conflict.
+== `¬a ∨ e ∨ b` — which coincides with the forward reading on any complete model. When
+an established exception actually suppresses a firing default, the report notes it as an
+informational **`DEFEATED`** line (naming the rule, the withheld consequent, and the
+exception that defeated it); the verdict is unaffected — a defeated default is never a
+conflict.
 
 ## `ASSUME` — soft, retractable hypotheses
 

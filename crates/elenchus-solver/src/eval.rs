@@ -2,7 +2,9 @@
 //! every `Impossible` clause, and collect the conflicts / warnings / derived facts.
 use crate::cnf::build_cnf;
 use crate::report::CoreItem;
-use crate::report::{Conflict, Derived, Report, Status, TraceReason, TraceStep, Warning, label};
+use crate::report::{
+    Conflict, Defeated, Derived, Report, Status, TraceReason, TraceStep, Warning, label,
+};
 use crate::sat;
 use crate::unsat::{key, minimal_unsat_core};
 use crate::v3::{V3, v3_to_value};
@@ -98,6 +100,9 @@ pub(crate) struct Eval<'a> {
     conflicts: Vec<RawConflict>,
     warnings: Vec<Warning>,
     derived: Vec<Derived>,
+    /// Informational notes: a defeasible `RULE` whose default was suppressed by an
+    /// established `UNLESS` exception. Never affects the verdict.
+    defeated: Vec<Defeated>,
     /// Minimal set of constructs to blame when the backward pass finds UNSAT.
     unsat_core: Vec<CoreItem>,
 }
@@ -111,6 +116,7 @@ impl<'a> Eval<'a> {
             conflicts: Vec::new(),
             warnings: Vec::new(),
             derived: Vec::new(),
+            defeated: Vec::new(),
             unsat_core: Vec::new(),
         }
     }
@@ -222,6 +228,40 @@ impl<'a> Eval<'a> {
             if !changed {
                 break;
             }
+        }
+    }
+
+    /// Record each defeasible `RULE` whose default was suppressed by an established
+    /// exception: its antecedent holds, yet an `UNLESS` literal is TRUE, so it derived
+    /// nothing. Read from the *settled* model (run after [`Eval::saturate_rules`]), so
+    /// each defeat is noted once. Purely informational — it never changes the verdict
+    /// (a defeated default is not a conflict), mirroring `derived`.
+    pub(crate) fn flag_defeated_defaults(&mut self) {
+        let c = self.c;
+        for r in &c.rules {
+            if r.exceptions.is_empty() || conjunction(&self.model, &r.antecedent) != V3::True {
+                continue;
+            }
+            let blocked_by: Vec<String> = r
+                .exceptions
+                .iter()
+                .filter(|ex| lit_value(&self.model, ex) == V3::True)
+                .map(|ex| self.label(ex.atom))
+                .collect();
+            if blocked_by.is_empty() {
+                continue; // fired normally, nothing suppressed
+            }
+            let consequent = r
+                .consequent
+                .iter()
+                .map(|cl| self.label(cl.atom))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.defeated.push(Defeated {
+                origin: r.origin.clone(),
+                consequent,
+                blocked_by,
+            });
         }
     }
 
@@ -427,6 +467,7 @@ impl<'a> Eval<'a> {
         let underdetermined = self.backward_pass();
         self.conflicts.sort_by_key(|c| key(&c.origin));
         self.warnings.sort_by_key(|w| key(&w.origin));
+        self.defeated.sort_by_key(|d| key(&d.origin));
         let status = if !self.conflicts.is_empty() {
             Status::Conflict
         } else if underdetermined.is_some() {
@@ -452,6 +493,7 @@ impl<'a> Eval<'a> {
             conflicts,
             warnings: self.warnings,
             derived: self.derived,
+            defeated: self.defeated,
             underdetermined,
             unsat_core: self.unsat_core,
             retract: Vec::new(), // filled by `solve` when assumptions are to blame

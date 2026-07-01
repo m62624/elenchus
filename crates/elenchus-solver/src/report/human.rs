@@ -196,6 +196,16 @@ impl Report {
                 premise_tag(&d.origin)
             )?;
         }
+        for d in &self.defeated {
+            emit!(
+                out,
+                SECTION,
+                "DEFEATED  {}   default {} suppressed by {}",
+                premise_tag(&d.origin),
+                d.consequent,
+                d.blocked_by.join(", ")
+            )?;
+        }
         for h in &self.hints {
             emit!(
                 out,
@@ -269,14 +279,22 @@ impl Report {
         }
 
         let underdetermined = usize::from(self.status == Status::Underdetermined);
+        // Append the defeated count only when non-zero, so programs without any
+        // defeasible defeat keep their exact summary line.
+        let defeated = if self.defeated.is_empty() {
+            String::new()
+        } else {
+            alloc::format!(", {} defeated", self.defeated.len())
+        };
         emit!(
             out,
             ROOT,
-            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived",
+            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived{}",
             self.conflicts.len(),
             underdetermined,
             self.warnings.len(),
-            self.derived.len()
+            self.derived.len(),
+            defeated
         )?;
         out.tail(ROOT, format_args!("EXIT_CODE: {}", self.exit_code()))
     }

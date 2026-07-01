@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[{"premise":"fly","kind":"RULE","source":"v.vrf","line":2,"consequent":"d.pengu can_fly","blocked_by":["d.pengu is penguin"]}],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}
