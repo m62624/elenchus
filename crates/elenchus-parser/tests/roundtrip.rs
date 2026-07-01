@@ -38,6 +38,8 @@ enum Stmt {
         name: String,
         ante: Vec<Lit3>,
         cons: Vec<Lit3>,
+        /// `UNLESS` exceptions (only ever generated for a RULE).
+        exc: Vec<Lit3>,
     },
     Check {
         subj: Option<String>,
@@ -115,6 +117,7 @@ fn render(stmts: &[Stmt]) -> String {
                 name,
                 ante,
                 cons,
+                exc,
             } => {
                 let kw = if *rule { "RULE" } else { "PREMISE" };
                 s.push_str(&format!("{kw} {name}:\n"));
@@ -125,6 +128,9 @@ fn render(stmts: &[Stmt]) -> String {
                 s.push_str(&format!("    THEN {}\n", render_lit(&cons[0])));
                 for l in &cons[1..] {
                     s.push_str(&format!("    AND {}\n", render_lit(l)));
+                }
+                for l in exc {
+                    s.push_str(&format!("    UNLESS {}\n", render_lit(l)));
                 }
             }
             Stmt::Check { subj, bidir } => {
@@ -251,6 +257,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        exceptions,
                         ..
                     },
                 ..
@@ -260,6 +267,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 name: n,
                 ante,
                 cons,
+                exc,
             },
         )
         | (
@@ -269,6 +277,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        exceptions,
                         ..
                     },
                 ..
@@ -278,8 +287,14 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 name: n,
                 ante,
                 cons,
+                exc,
             },
-        ) => name.data == n && lits_eq(antecedent, ante) && lits_eq(consequent, cons),
+        ) => {
+            name.data == n
+                && lits_eq(antecedent, ante)
+                && lits_eq(consequent, cons)
+                && lits_eq(exceptions, exc)
+        }
         (
             Statement::Check {
                 subject,
@@ -367,12 +382,15 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             ident(),
             prop::collection::vec(lit(), 1..4),
             prop::collection::vec(lit(), 1..4),
+            prop::collection::vec(lit(), 0..3),
         )
-            .prop_map(|(rule, name, ante, cons)| Stmt::Impl {
+            .prop_map(|(rule, name, ante, cons, exc)| Stmt::Impl {
                 rule,
                 name,
                 ante,
                 cons,
+                // UNLESS is RULE-only; never attach exceptions to a PREMISE.
+                exc: if rule { exc } else { Vec::new() },
             }),
         (prop::option::of(ident()), any::<bool>())
             .prop_map(|(subj, bidir)| Stmt::Check { subj, bidir }),

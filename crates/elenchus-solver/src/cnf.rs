@@ -20,12 +20,19 @@ pub(crate) fn fact_lit(f: &Fact) -> sat::SatLit {
     }
 }
 
-/// The CNF clause one rule consequent contributes: `WHEN A.. THEN C` == `(¬A1 ∨ … ∨ C)`.
-/// The antecedent literals enter negated (via [`clause_lit`]); the consequent enters
-/// with its surface polarity. The single encoding of "rule ⇒ clause", shared by the
-/// backward-pass CNF and the unsat-core constructs.
+/// The CNF clause one rule consequent contributes:
+/// `WHEN A.. THEN C UNLESS E..` == `(¬A1 ∨ … ∨ E1 ∨ … ∨ C)`. The antecedent literals
+/// enter negated (via [`clause_lit`]); each `UNLESS` exception and the consequent
+/// enter with their surface polarity as **escape** disjuncts — a model may satisfy
+/// the clause by establishing an exception instead of the consequent, which is the
+/// classical reading of a defeasible default (`a ∧ ¬e → c`). This coincides with the
+/// forward pass on any complete model. The single encoding of "rule ⇒ clause",
+/// shared by the backward-pass CNF and the unsat-core constructs.
 pub(crate) fn rule_consequent_clause(r: &Rule, cons: &Lit) -> Vec<sat::SatLit> {
     let mut lits: Vec<sat::SatLit> = r.antecedent.iter().map(clause_lit).collect();
+    for ex in &r.exceptions {
+        lits.push(sat::SatLit::new(ex.atom, !ex.negated));
+    }
     lits.push(sat::SatLit::new(cons.atom, !cons.negated));
     lits
 }

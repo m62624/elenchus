@@ -405,6 +405,7 @@ Compiled {
                     negated: false,
                 },
             ],
+            exceptions: [],
             origin: Origin {
                 source: "complex.vrf",
                 line: 29,

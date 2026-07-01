@@ -44,6 +44,7 @@ fn shipped_examples_match_their_verdicts() {
     let cases = [
         ("conflict.vrf", 2),
         ("creature.vrf", 1),
+        ("defeasible.vrf", 0),
         ("import-demo.vrf", 2),
         ("justification.vrf", 0),
         ("physics.vrf", 1),

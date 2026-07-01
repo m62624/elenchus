@@ -357,6 +357,28 @@ fn cont_line<'a>(input: Span<'a>) -> PResult<'a, (Conn, Located<'a, Literal<'a>>
     Ok((input, (conn, lit)))
 }
 
+/// An `UNLESS <literal>` exception line closing a defeasible `RULE` body. Returns
+/// the exception literal. A line that is not `UNLESS` yields a recoverable `Error`
+/// so `many0` stops cleanly (e.g. at EOF or the next statement).
+fn unless_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
+    let (input, _) = space0(input)?;
+    // Not an UNLESS line → Error so many0 stops cleanly. Once UNLESS matches we are
+    // committed and use promote, so a missing literal surfaces under the UNLESS card.
+    let (input, _) = tag(kw::UNLESS).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        preceded(space1, literal).parse(input),
+        at,
+        "UNLESS expects a literal: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the UNLESS literal",
+    )?;
+    Ok((input, lit))
+}
+
 /// Reduce a group's continuation lines to a single [`Conn`], rejecting a mix of
 /// `AND` and `OR` in one group (point the error at the first line that switches).
 fn group_conn<'a>(conts: &[(Conn, Located<'a, Literal<'a>>)]) -> Result<Conn, Span<'a>> {
@@ -433,6 +455,11 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         }
     };
 
+    // Zero or more `UNLESS <literal>` exception lines close a defeasible RULE body.
+    // A non-UNLESS line ends the many0 cleanly (recoverable Error). Exceptions are
+    // only meaningful on a RULE; the compiler rejects them on a PREMISE.
+    let (input, exceptions) = many0(unless_line).parse(input)?;
+
     let mut antecedent = vec![when];
     antecedent.extend(ante_rest.into_iter().map(|(_, l)| l));
     let mut consequent = vec![then];
@@ -444,6 +471,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         },
     ))
 }

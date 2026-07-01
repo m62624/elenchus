@@ -376,6 +376,7 @@ mod tests {
                         ante_conn,
                         consequent,
                         cons_conn,
+                        ..
                     },
                 ..
             } => {

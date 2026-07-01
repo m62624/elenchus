@@ -170,6 +170,15 @@ impl<'a> Eval<'a> {
                 if conjunction(&self.model, &r.antecedent) != V3::True {
                     continue; // rule does not fire (FALSE, or blocked by UNKNOWN)
                 }
+                // A defeasible RULE is suppressed when any UNLESS exception is
+                // *established* TRUE. FALSE or UNKNOWN exceptions do not defeat it
+                // (assume-normal) — only a settled exception retracts the default.
+                if r.exceptions
+                    .iter()
+                    .any(|ex| lit_value(&self.model, ex) == V3::True)
+                {
+                    continue;
+                }
                 for cl in &r.consequent {
                     let target = if cl.negated { V3::False } else { V3::True };
                     match self.model[cl.atom as usize] {

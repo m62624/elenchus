@@ -261,6 +261,7 @@ Compiled {
                     negated: false,
                 },
             ],
+            exceptions: [],
             origin: Origin {
                 source: "tests/fixtures/std/engine.vrf",
                 line: 9,

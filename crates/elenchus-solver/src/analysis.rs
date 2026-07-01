@@ -24,7 +24,12 @@ pub(crate) fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
         }
     }
     for r in &c.rules {
-        for l in r.antecedent.iter().chain(r.consequent.iter()) {
+        for l in r
+            .antecedent
+            .iter()
+            .chain(r.consequent.iter())
+            .chain(r.exceptions.iter())
+        {
             referenced[l.atom as usize] = true;
         }
     }
