@@ -2,7 +2,7 @@
 //! Same inputs as `output_variants.rs`, but asserting `Report::to_json()`:
 //! each is parsed back with `serde_json` (validity oracle) and snapshotted.
 
-use elenchus_solver::verify_source;
+use elenchus_solver::{MemoryResolver, verify_source, verify_with};
 
 /// (snapshot name, program) for each output variant.
 fn cases() -> Vec<(&'static str, &'static str)> {
@@ -149,6 +149,21 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "warning_exists_unwitnessed",
             "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n",
         ),
+        // Advisory report elements (never change the verdict) — one case each so the
+        // populated JSON shape of every array is snapshotted, not just its empty form.
+        ("orphans_lint", "FACT lonely atom\nCHECK lonely\n"),
+        (
+            "hints_similar_atoms",
+            "FACT server running\nFACT server runnng\nCHECK server\n",
+        ),
+        (
+            "placeholders_var_default",
+            "VAR flag DEFAULT true\nFACT x a\nCHECK x\n",
+        ),
+        (
+            "unsat_core_joint",
+            "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nCHECK x BIDIRECTIONAL\n",
+        ),
     ]
 }
 
@@ -196,4 +211,26 @@ fn json_is_valid_and_stable_for_every_variant() {
         // (b) it is stable.
         insta::assert_snapshot!(name, json);
     }
+}
+
+/// `unused_imports` needs a multi-file graph, so it uses the resolver API rather
+/// than the single-source `cases()` above. Same oracle: valid JSON + stable snapshot.
+#[test]
+fn json_unused_import_variant_is_valid_and_stable() {
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN root\nIMPORT \"other.vrf\"\nFACT x a\nCHECK x\n",
+    )
+    .add("other.vrf", "DOMAIN other\nFACT y b\n");
+    let report = verify_with("root.vrf", &r, &[]).unwrap();
+    let json = report.to_json();
+    let value: serde_json::Value =
+        serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"));
+    // The import is never referenced (no `other.<atom>` used), so it is flagged.
+    assert!(
+        !value["unused_imports"].as_array().unwrap().is_empty(),
+        "expected a non-empty unused_imports: {json}"
+    );
+    insta::assert_snapshot!("unused_import", json);
 }

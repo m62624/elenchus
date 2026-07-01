@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[{"premise":null,"kind":"FACT","source":"other.vrf","line":2,"atom":"other.y b","value":true},{"premise":null,"kind":"FACT","source":"root.vrf","line":3,"atom":"root.x a","value":true}],"unused_imports":[{"file":"root.vrf","domain":"other","alias":null,"line":2}],"placeholders":[]}
