@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"FACT api healthy BECAUSE db reachable\\nCHECK api\\n\")"
+---
+RESULT: WARNING
+  WARNING   - (BECAUSE)  [v.vrf:2]
+      blocked by: d.db reachable
+      fix: establish the ground: FACT d.db reachable  (or derive it with a RULE)
+SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
+EXIT_CODE: 1

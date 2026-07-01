@@ -41,6 +41,7 @@ pub mod kw {
     pub const SCC: &str = "SCC";
     pub const EXISTS: &str = "EXISTS";
     pub const WITNESS: &str = "WITNESS";
+    pub const BECAUSE: &str = "BECAUSE";
     pub const VAR: &str = "VAR";
     pub const DEFAULT: &str = "DEFAULT";
     pub const PROVIDE: &str = "PROVIDE";
@@ -316,6 +317,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "EXISTS <binder> WITNESS <term>  then one condition line using the binder",
             "prove EXISTS by naming the one element that satisfies it — needs no SET; grounds to a single atom",
             "EXISTS h WITNESS auth_service\n    h is ready",
+        ),
+    },
+    Keyword {
+        text: kw::BECAUSE,
+        top_level: false,
+        card: card(
+            "FACT <atom> BECAUSE <atom>",
+            "name the ground a FACT rests on; the engine checks it holds (ground FALSE -> CONFLICT, UNKNOWN -> WARNING)",
+            "FACT api healthy BECAUSE db reachable",
         ),
     },
     Keyword {

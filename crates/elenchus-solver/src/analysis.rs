@@ -32,6 +32,12 @@ pub(crate) fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
     for &a in &c.consumed {
         referenced[a as usize] = true;
     }
+    // A `FACT … BECAUSE <ground>` reads its ground (the justification check) and its
+    // belief carries an explicit justification — neither is an inert leftover.
+    for j in &c.justifications {
+        referenced[j.belief as usize] = true;
+        referenced[j.ground as usize] = true;
+    }
     let mut out: Vec<OrphanFact> = c
         .facts
         .iter()

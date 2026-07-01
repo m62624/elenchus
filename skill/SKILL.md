@@ -98,6 +98,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 |---------|-------|------------------|
 | `DOMAIN` | statement (first, once) | declare this file's domain — the namespace its atoms live in (**required**) |
 | `FACT` | statement | assert an atom TRUE |
+| `FACT … BECAUSE …` | statement | assert an atom TRUE **and name its ground**; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) |
 | `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
 | `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
@@ -153,6 +154,25 @@ FACT engine has_fuel          // identity: plan.engine has_fuel
 ```vrf
 FACT socrates is human
 NOT  socrates is robot
+```
+
+### `FACT … BECAUSE …` — assert a fact **and name why you believe it**
+- **Syntax:** `FACT <atom> BECAUSE <ground-atom>` (the ground is one atom, like a `WITNESS`).
+- **Why:** "how do you know?" You name the ground a claim rests on, and the engine
+  **checks that ground actually holds** — it does not take your word for it. Outcomes:
+  - ground **TRUE** → your reason stands (silent);
+  - ground **FALSE** → your reason does not hold → **CONFLICT** (with a trace of why);
+  - ground **UNKNOWN** → your reason is unestablished → **WARNING** ("establish the ground").
+- It adds **no constraint** (one value lookup, never a blow-up) and never forces the
+  ground true — an unestablished ground is *reported*, not assumed. Plain `FACT` is
+  unchanged; `BECAUSE` is opt-in.
+- **Chains compose for free:** a ground can itself be a `FACT … BECAUSE …`, so a chain
+  of grounds is checked link by link and the **weakest link** surfaces (UNKNOWN → the
+  WARNING points at that ground; FALSE → CONFLICT there). Justify as shallow or as deep
+  as you like — a bare asserted ground is accepted as a first principle.
+```vrf
+FACT db reachable                        // the ground: established evidence
+FACT api healthy BECAUSE db reachable    // the claim, and the reason for it
 ```
 
 ### `ASSUME` — a soft, retractable hypothesis

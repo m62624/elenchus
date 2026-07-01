@@ -207,8 +207,15 @@ pub enum Statement<'a> {
         /// The local alias for the imported domain, if `AS <alias>` was given.
         alias: Option<Located<'a, &'a str>>,
     },
-    /// `FACT <atom>` — a TRUE assertion.
-    Fact(Located<'a, Atom<'a>>),
+    /// `FACT <atom> [BECAUSE <atom>]` — a TRUE assertion, optionally carrying the
+    /// ground it rests on. When `because` is present the engine checks that ground
+    /// holds (FALSE → CONFLICT, UNKNOWN → WARNING) — the justification (L2) layer.
+    Fact {
+        /// The asserted atom.
+        atom: Located<'a, Atom<'a>>,
+        /// The cited ground atom (`BECAUSE <atom>`), if any.
+        because: Option<Located<'a, Atom<'a>>>,
+    },
     /// `NOT <atom>` — a FALSE assertion.
     Negation(Located<'a, Atom<'a>>),
     /// `ASSUME [NOT] <atom>` — a *soft* (retractable) assertion. Same shape as a
