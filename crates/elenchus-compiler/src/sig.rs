@@ -99,13 +99,21 @@ pub(crate) fn key_sig(k: &AtomKey) -> String {
     )
 }
 
+/// Sort signature-string parts in place. Every caller's list is a `key|negated`
+/// (or key-only) string where equal `Ord` values are byte-identical, so an
+/// unstable sort (no stable sort's temp buffer) can never reorder anything
+/// observably differently from a stable one.
+fn sort_sig_parts(parts: &mut [String]) {
+    parts.sort_unstable();
+}
+
 /// Canonical, order-independent signature of a clause's literals (for dedup).
 pub(crate) fn clause_sig(lits: &[RawLit]) -> String {
     let mut parts: Vec<String> = lits
         .iter()
         .map(|l| alloc::format!("{}|{}", key_sig(&l.key), l.negated as u8))
         .collect();
-    parts.sort();
+    sort_sig_parts(&mut parts);
     parts.dedup();
     parts.join(";")
 }
@@ -132,7 +140,7 @@ pub(crate) fn canonical_body(
                 .iter()
                 .map(|a| Ok(key_sig(&ctx.key(&a.data)?)))
                 .collect::<Result<_, CompileError>>()?;
-            keys.sort();
+            sort_sig_parts(&mut keys);
             s.push_str(&keys.join(";"));
         }
         Body::Impl {
@@ -196,6 +204,6 @@ pub(crate) fn lit_sigs(
             ))
         })
         .collect::<Result<_, CompileError>>()?;
-    parts.sort();
+    sort_sig_parts(&mut parts);
     Ok(parts.join(";"))
 }

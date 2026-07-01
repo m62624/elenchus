@@ -17,7 +17,20 @@ impl Report {
     /// Hand-written so the crate stays dependency-free and `no_std`.
     pub fn to_json(&self) -> String {
         use core::fmt::Write as _;
-        let mut s = String::new();
+        // A rough capacity estimate (fixed skeleton + ~64 bytes per report entry)
+        // avoids repeated reallocation as the string grows; it is only a hint —
+        // the exact byte count is unaffected either way.
+        let entries = self.conflicts.len()
+            + self.warnings.len()
+            + self.derived.len()
+            + self.defeated.len()
+            + self.unsat_core.len()
+            + self.retract.len()
+            + self.hints.len()
+            + self.orphans.len()
+            + self.unused_imports.len()
+            + self.placeholders.len();
+        let mut s = String::with_capacity(256 + entries * 64);
         let _ = write!(s, "{{\"status\":");
         status_name(self.status).write_json(&mut s);
         let _ = write!(s, ",\"exit_code\":{}", self.exit_code());

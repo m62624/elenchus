@@ -330,12 +330,14 @@ impl<'a> Eval<'a> {
     /// current values: a post-order walk of the reason graph so each atom's
     /// supports appear before it (facts first, the conflict atoms last), with
     /// every atom emitted once. Atoms with no recorded reason (UNKNOWN) are
-    /// skipped — a forced atom always has one.
-    pub(crate) fn build_trace(&self, causes: &[AtomId]) -> Vec<TraceStep> {
-        let mut visited = vec![false; self.c.atoms.len()];
+    /// skipped — a forced atom always has one. `visited` is a caller-owned scratch
+    /// buffer (reset to all-false on entry) so [`Eval::finish`] can reuse one
+    /// allocation across every conflict's trace instead of allocating fresh per call.
+    pub(crate) fn build_trace(&self, causes: &[AtomId], visited: &mut [bool]) -> Vec<TraceStep> {
+        visited.fill(false);
         let mut out = Vec::new();
         for &a in causes {
-            self.trace_dfs(a, &mut visited, &mut out);
+            self.trace_dfs(a, visited, &mut out);
         }
         out
     }
@@ -479,13 +481,15 @@ impl<'a> Eval<'a> {
         };
         // Materialize each raw conflict into its public form, attaching the
         // derivation chain (reasons are final once the forward pass is done).
+        // One scratch buffer, reused (reset) across every conflict's trace.
+        let mut visited = vec![false; self.c.atoms.len()];
         let conflicts: Vec<Conflict> = self
             .conflicts
             .iter()
             .map(|rc| Conflict {
                 origin: rc.origin.clone(),
                 atoms: rc.atoms.clone(),
-                trace: self.build_trace(&rc.cause),
+                trace: self.build_trace(&rc.cause, &mut visited),
             })
             .collect();
         Report {
