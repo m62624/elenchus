@@ -290,6 +290,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
             let dom_eq = match domain {
                 ExistsDomain::InSet(s) => !*w && s.data == st,
                 ExistsDomain::Witness(t) => *w && t.data == st,
+                ExistsDomain::Open => false, // proptest never generates the open form
             };
             name.data == n && binder.data == b && dom_eq && atom_eq(&atom.data, a)
         }

@@ -91,6 +91,8 @@ pub fn solve(c: &Compiled) -> Report {
     e.seed_facts();
     e.saturate_rules();
     e.check_premises();
+    // Unwitnessed EXISTS → WARNING; must precede `finish` so it can raise the verdict.
+    e.flag_unwitnessed_exists();
     let mut report = e.finish();
     // If the program is a CONFLICT but the facts/premises are consistent on their
     // own, the `ASSUME` hypotheses are what break it: name which to retract. The

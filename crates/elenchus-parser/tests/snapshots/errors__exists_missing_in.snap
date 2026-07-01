@@ -8,6 +8,6 @@ EXISTS  (1 problem)
   syntax  : EXISTS <binder> IN <set> (or WITNESS <term>)  then one condition line using the binder
   example : EXISTS h IN handlers
                 h handles request
-    line 2, col 13 - EXISTS expects `WITNESS <term>` or `IN <set>`: EXISTS <binder> WITNESS <term>
+    line 2, col 13 - EXISTS: after the binder use `WITNESS <term>`, `IN <set>`, or end the line (an unwitnessed existential)
       |     EXISTS h handlers
       |             ^^^^^^^^^

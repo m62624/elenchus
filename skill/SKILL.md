@@ -258,6 +258,9 @@ PREMISE request_is_covered:
     EXISTS h WITNESS auth_service    // "some handler covers it — namely this one"
         h handles request
 ```
+- **Unwitnessed?** `EXISTS h` with neither `IN` nor `WITNESS` is an existential that
+  named no one — it can't be checked, so you get a **WARNING** ("name a witness"),
+  not a conflict. Add a `WITNESS <term>` (or an `IN <set>`) to make it checkable.
 
 ### `WHEN … THEN …` — implication (with `AND` / `OR`)
 - **Syntax:** `WHEN <lit>` then zero or more `AND <lit>` **or** `OR <lit>` lines,

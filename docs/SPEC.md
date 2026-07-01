@@ -491,6 +491,13 @@ and it is safe *by construction*: a witness has nothing to enumerate. The asymme
 is deliberate — a universal (`FOR EACH`) must always name its domain with a `SET`;
 only the existential may point at a lone witness (see "one-binder rule").
 
+An `EXISTS` that names **neither** a `SET` nor a `WITNESS` (`EXISTS h` then the
+condition) is an existential claim with no candidate — nothing to check. It grounds
+to no clause and is reported as a **WARNING** ("name a witness"), never a `CONFLICT`
+and never a search. So the existential may leave its domain unnamed, but then it must
+name a witness or it is flagged as an unfinished premise — the "you claimed existence
+but pointed at no one" gap.
+
 **The `CLOSE` family.** Each kind is a compile-time graph operation over a
 relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
 ground pairs), so a relation `FOR EACH` then ranges over the closed relation:

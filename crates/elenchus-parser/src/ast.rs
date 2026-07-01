@@ -144,6 +144,12 @@ pub enum ExistsDomain<'a> {
     /// `WITNESS <term>` — the single named element that must satisfy the
     /// condition. Grounds to one atom; requires no `SET`.
     Witness(Located<'a, &'a str>),
+    /// Neither `IN <set>` nor `WITNESS <term>` — an existential claim with no
+    /// candidate named. It grounds to nothing (no clause); the solver surfaces it
+    /// as a WARNING nudging the author to name a witness. This is the "you claimed
+    /// existence but pointed at no one" gap — never a blow-up, there is nothing to
+    /// enumerate.
+    Open,
 }
 
 /// The body of an `PREMISE` or `RULE`.

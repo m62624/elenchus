@@ -240,6 +240,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         unused_imports: Vec::new(),
         consumed: Vec::new(),
         placeholders: Vec::new(),
+        unwitnessed_exists: Vec::new(),
     }
 }
 

@@ -279,12 +279,12 @@ fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         at,
         "EXISTS expects a binder: EXISTS <binder> WITNESS <term>",
     )?;
-    let (input, domain) = promote(
-        exists_domain(input),
+    let (input, domain) = exists_domain(input)?;
+    let (input, _) = promote(
+        eol(input),
         input,
-        "EXISTS expects `WITNESS <term>` or `IN <set>`: EXISTS <binder> WITNESS <term>",
+        "EXISTS: after the binder use `WITNESS <term>`, `IN <set>`, or end the line (an unwitnessed existential)",
     )?;
-    let (input, _) = promote(eol(input), input, "unexpected text after the EXISTS header")?;
     let at = input;
     let (input, atom) = promote(
         atom_line(input),
@@ -301,11 +301,26 @@ fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     ))
 }
 
-/// The domain of an `EXISTS`: either `WITNESS <term>` (one named element, no `SET`
-/// — the open-domain existential) or `IN <set>` (a declared set). A universal has
-/// no such choice; only `∃` may name a lone witness, and a witness grounds to a
-/// single atom, so neither form can enumerate an unnamed domain.
+/// The domain of an `EXISTS`: `WITNESS <term>` (one named element, no `SET` — the
+/// open-domain existential), `IN <set>` (a declared set), or nothing at all
+/// ([`ExistsDomain::Open`] — an existential that named no candidate). A universal
+/// has no such choice; only `∃` may name a lone witness or none, and a witness
+/// grounds to a single atom, so no form can enumerate an unnamed domain.
+///
+/// Never fails: a missing/unrecognised domain is left as `Open` **without
+/// consuming**, so the caller's `eol` check decides between a clean unwitnessed
+/// header (line ends here) and stray text (a committed error).
 fn exists_domain<'a>(input: Span<'a>) -> PResult<'a, ExistsDomain<'a>> {
+    match exists_named_domain(input) {
+        Ok((rest, domain)) => Ok((rest, domain)),
+        Err(_) => Ok((input, ExistsDomain::Open)),
+    }
+}
+
+/// `WITNESS <term>` or `IN <set>` — the two *named* existential domains. A
+/// recoverable `Error` when neither matches, so [`exists_domain`] can fall back to
+/// `Open`.
+fn exists_named_domain<'a>(input: Span<'a>) -> PResult<'a, ExistsDomain<'a>> {
     alt((
         map(
             preceded((space1, tag(kw::WITNESS), space1), identifier),

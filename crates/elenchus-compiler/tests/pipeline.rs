@@ -1316,6 +1316,18 @@ fn exists_witness_matches_a_singleton_set() {
 }
 
 #[test]
+fn exists_unwitnessed_emits_no_clause_but_records_an_advisory() {
+    // ∃ with neither SET nor WITNESS grounds to nothing (inert for the SAT core) but
+    // is recorded so the solver can raise a WARNING; the condition atom is not
+    // interned (the free binder never becomes a real atom).
+    let c = cs("PREMISE p:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(c.clauses.len(), 0);
+    assert!(c.atoms.is_empty());
+    assert_eq!(c.unwitnessed_exists.len(), 1);
+    assert_eq!(c.unwitnessed_exists[0].binder, "h");
+}
+
+#[test]
 fn grounding_count_is_linear_in_the_set() {
     // No domain product: N elements → exactly N groundings (here N clauses,
     // one at-least-one per element), never N².

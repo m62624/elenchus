@@ -65,7 +65,7 @@ pub use elenchus_parser::{Diagnostics, kw};
 pub use error::{CompileError, UnknownValue, levenshtein};
 pub use ir::{
     AtomId, AtomKey, Check, Clause, Compiled, Fact, KIND_UNSAT, Lit, Origin, PlaceholderInfo,
-    PlaceholderStatus, PortBinding, Rule, UnusedImport, Value,
+    PlaceholderStatus, PortBinding, Rule, UnusedImport, UnwitnessedExists, Value,
 };
 #[cfg(feature = "std")]
 pub use resolver::FileResolver;

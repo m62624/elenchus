@@ -15,7 +15,7 @@ use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
     AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, PlaceholderInfo,
-    PlaceholderStatus, PortBinding, Rule, Value,
+    PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
@@ -76,6 +76,9 @@ pub struct Compiler {
     /// They join the same conflict pool as external `--set`/API values in
     /// [`Compiler::resolve_ports`].
     provides: Vec<(PortRef, PortBinding)>,
+    /// `EXISTS` premises that named no candidate (neither `SET` nor `WITNESS`).
+    /// Inert for the SAT core (no clause), carried to the report as WARNINGs.
+    unwitnessed_exists: Vec<UnwitnessedExists>,
 }
 
 impl Compiler {
@@ -544,6 +547,20 @@ impl Compiler {
                 domain,
                 atom,
             } => {
+                // Open (neither SET nor WITNESS): the existential named no candidate,
+                // so there is nothing to check. Emit no clause; record a WARNING
+                // advisory that nudges the author to name a witness. Never a blow-up
+                // — there is nothing to enumerate.
+                if let ExistsDomain::Open = domain {
+                    let key = ctx.key(&atom.data)?;
+                    let origin = self.origin(source, line, Some(name), kw::EXISTS);
+                    self.unwitnessed_exists.push(UnwitnessedExists {
+                        origin,
+                        condition: alloc::format!("{key}"),
+                        binder: binder.data.to_string(),
+                    });
+                    return Ok(());
+                }
                 // ∃: at least one candidate satisfies the condition. `IN <set>`
                 // instantiates the condition per set element; `WITNESS <term>` is
                 // the singleton {term} the author names — no SET, exactly one atom.
@@ -571,6 +588,8 @@ impl Compiler {
                     ExistsDomain::Witness(w) => {
                         vec![ctx.key(&subst_atom(&atom.data, &[(binder.data, w.data)]))?]
                     }
+                    // Handled above with an early return (no clause).
+                    ExistsDomain::Open => unreachable!("Open EXISTS emits no clause"),
                 };
                 for k in &keys {
                     self.intern(k);
@@ -993,6 +1012,7 @@ impl Compiler {
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
             consumed,
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
+            unwitnessed_exists: self.unwitnessed_exists,
         }
     }
 }

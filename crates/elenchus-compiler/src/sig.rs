@@ -155,6 +155,9 @@ pub(crate) fn canonical_body(
                 ExistsDomain::Witness(w) => {
                     let _ = write!(s, "EXISTS|{}|WITNESS {}|", binder.data, w.data);
                 }
+                ExistsDomain::Open => {
+                    let _ = write!(s, "EXISTS|{}|OPEN|", binder.data);
+                }
             }
             s.push_str(&key_sig(&ctx.key(&atom.data)?));
         }

@@ -74,6 +74,28 @@ fn exists_witness_that_fails_is_conflict() {
 }
 
 #[test]
+fn exists_unwitnessed_is_warning() {
+    // ∃ that names neither a SET nor a WITNESS cannot be checked — the forge voice:
+    // WARNING with a hint to name a witness, not a clause and not a blow-up.
+    let r = vs("PREMISE someone_ready:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(
+        r.warnings[0].origin.premise.as_deref(),
+        Some("someone_ready")
+    );
+    assert_eq!(r.warnings[0].blocked_by, vec![String::from("t.h is ready")]);
+    assert!(r.warnings[0].hint.as_deref().unwrap().contains("WITNESS"));
+}
+
+#[test]
+fn exists_unwitnessed_warning_does_not_hide_a_conflict() {
+    // A real CONFLICT still wins over the unwitnessed-∃ WARNING (verdict precedence).
+    let r = vs("FACT x a\nNOT x a\nPREMISE p:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(r.status, Status::Conflict);
+}
+
+#[test]
 fn implication_missing_consequent_is_warning() {
     // WHEN flying THEN wing: flying TRUE, wing UNKNOWN → blocked → WARNING.
     let r = vs(r#"
