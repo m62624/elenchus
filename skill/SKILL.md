@@ -165,8 +165,11 @@ NOT  socrates is robot
   - ground **UNKNOWN** → your reason is unestablished → **WARNING** ("establish the ground").
 - It adds **no constraint** (one value lookup, never a blow-up) and never forces the
   ground true — an unestablished ground is *reported*, not assumed. Plain `FACT` is
-  unchanged; `BECAUSE` is opt-in. Today the ground is checked **one hop** (it must
-  hold), not yet recursively traced to first principles.
+  unchanged; `BECAUSE` is opt-in.
+- **Chains compose for free:** a ground can itself be a `FACT … BECAUSE …`, so a chain
+  of grounds is checked link by link and the **weakest link** surfaces (UNKNOWN → the
+  WARNING points at that ground; FALSE → CONFLICT there). Justify as shallow or as deep
+  as you like — a bare asserted ground is accepted as a first principle.
 ```vrf
 FACT db reachable                        // the ground: established evidence
 FACT api healthy BECAUSE db reachable    // the claim, and the reason for it
@@ -938,7 +941,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.14.0 -->
+<!-- skill-version: 0.13.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

@@ -164,6 +164,42 @@ fn plain_fact_is_unaffected_by_the_justification_layer() {
 }
 
 #[test]
+fn because_chain_all_grounds_hold_is_consistent() {
+    // A ground may itself be a justified FACT, so BECAUSE composes: each link is
+    // checked independently and, when every link holds, the whole chain stands. No
+    // extra machinery — the chain is emergent from the one-hop check.
+    let r = vs(
+        "FACT net up\nFACT db reachable BECAUSE net up\nFACT api healthy BECAUSE db reachable\nCHECK api\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty() && r.warnings.is_empty());
+}
+
+#[test]
+fn because_chain_surfaces_the_weakest_link() {
+    // The deepest ground (`net up`) is never established; the chain's WARNING points
+    // straight at that weakest link, not at the top-level claim.
+    let r =
+        vs("FACT db reachable BECAUSE net up\nFACT api healthy BECAUSE db reachable\nCHECK api\n")
+            .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].blocked_by, vec![String::from("t.net up")]);
+}
+
+#[test]
+fn because_chain_deep_false_ground_is_conflict() {
+    // A false ground anywhere in the chain surfaces as a CONFLICT at that link.
+    let r = vs(
+        "NOT net up\nFACT db reachable BECAUSE net up\nFACT api healthy BECAUSE db reachable\nCHECK api\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Conflict);
+    assert!(r.conflicts[0].atoms[0].contains("t.net up is FALSE"));
+}
+
+#[test]
 fn fact_because_unknown_ground_under_bidirectional_stays_warning() {
     // The interned-but-free ground does not manufacture a spurious UNDERDETERMINED
     // under BIDIRECTIONAL (the backward pass does not project an unconstrained

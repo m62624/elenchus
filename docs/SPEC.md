@@ -512,8 +512,16 @@ ground so the solver can read its settled value. The ground's value decides the 
 Because it is evaluative it can never blow up — one value lookup per justified fact —
 and an UNKNOWN ground is *reported* rather than silently forced true (which is why it
 is not a clause). A plain `FACT` with no `BECAUSE` is unchanged; supplying a ground is
-opt-in. (This is the first layer of a justification calculus: today the ground is
-checked one hop deep — it must hold — not yet recursively traced to first principles.)
+opt-in.
+
+A ground may itself be a justified `FACT … BECAUSE …`, so **the chain composes**: each
+link is checked independently, and the *weakest link* anywhere in the chain surfaces —
+an unestablished ground raises a WARNING at that link, a false one a CONFLICT. The
+author writes exactly as much of the chain as they want (each link stays `O(1)`), so
+justification is as shallow or as deep as the reasoning requires. What is *not* forced
+is that every ground must be justified: a bare asserted ground is accepted as a first
+principle. That keeps it opt-in and free of noise — the model justifies only what it
+chooses to, and the engine checks each step it is given.
 
 **The `CLOSE` family.** Each kind is a compile-time graph operation over a
 relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
