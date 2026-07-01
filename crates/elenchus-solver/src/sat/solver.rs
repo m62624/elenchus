@@ -49,6 +49,7 @@ pub(crate) struct Solver {
     var_inc: f64,
     polarity: Vec<bool>, // phase saving
     seen: Vec<bool>,     // reusable scratch for analyze (invariant: all-false between calls)
+    touched: Vec<Var>,   // reusable scratch for analyze (invariant: empty between calls)
     ok: bool,            // false once the formula is known UNSAT
     // Literals forced true before VSIDS branching. Decision levels 1..=len map
     // one-to-one to assumptions[0..]; an already-true assumption still consumes a
@@ -74,6 +75,7 @@ impl Solver {
             var_inc: 1.0,
             polarity: vec![false; n],
             seen: vec![false; n],
+            touched: Vec::new(),
             ok: true,
             assumptions: Vec::new(),
         };
@@ -283,11 +285,14 @@ impl Solver {
     }
 
     /// Learn an asserting clause from `conflict` and return (clause, backjump level).
-    /// Uses the reusable `seen` buffer and restores it to all-false on exit.
+    /// Uses the reusable `seen`/`touched` buffers and restores both on exit.
     fn analyze(&mut self, conflict: usize) -> (Vec<SatLit>, u32) {
         let cur_level = self.current_level();
         let mut learned: Vec<SatLit> = vec![SatLit(0)]; // slot 0 = asserting literal
-        let mut touched: Vec<Var> = Vec::new();
+        // Borrow the scratch buffer for this call (it is empty on entry/exit), so a
+        // long CDCL run reuses one allocation across every conflict instead of
+        // allocating a fresh `Vec` per conflict.
+        let mut touched: Vec<Var> = core::mem::take(&mut self.touched);
         let mut counter = 0usize;
         let mut idx = self.trail.len();
         let mut p: Option<SatLit> = None;
@@ -333,9 +338,10 @@ impl Solver {
         let backjump = self.assertion_level(&mut learned);
         self.var_inc *= 1.0 / 0.95; // VSIDS decay
 
-        for v in touched {
+        for v in touched.drain(..) {
             self.seen[v as usize] = false; // restore the scratch buffer
         }
+        self.touched = touched; // give the (now empty) buffer back for next time
         (learned, backjump)
     }
 

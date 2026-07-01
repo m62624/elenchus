@@ -571,17 +571,19 @@ impl Compiler {
                 }
                 let origin = self.origin(source, line, Some(name), kw::PREMISE);
 
-                let ante_groups: Vec<Vec<RawLit>> = match ante_conn {
-                    Conn::And => vec![ante.clone()],
-                    Conn::Or => ante.iter().map(|l| vec![l.clone()]).collect(),
+                // Borrow into the groups (no clone yet) — a literal is only ever
+                // cloned once, when a final clause actually needs to own it below.
+                let ante_groups: Vec<Vec<&RawLit>> = match ante_conn {
+                    Conn::And => vec![ante.iter().collect()],
+                    Conn::Or => ante.iter().map(|l| vec![l]).collect(),
                 };
-                let cons_groups: Vec<Vec<RawLit>> = match cons_conn {
-                    Conn::And => cons.iter().map(|l| vec![l.clone()]).collect(),
-                    Conn::Or => vec![cons.clone()],
+                let cons_groups: Vec<Vec<&RawLit>> = match cons_conn {
+                    Conn::And => cons.iter().map(|l| vec![l]).collect(),
+                    Conn::Or => vec![cons.iter().collect()],
                 };
                 for ag in &ante_groups {
                     for cg in &cons_groups {
-                        let mut lits = ag.clone();
+                        let mut lits: Vec<RawLit> = ag.iter().map(|l| (*l).clone()).collect();
                         for c in cg {
                             lits.push(RawLit {
                                 key: c.key.clone(),
@@ -1009,12 +1011,16 @@ impl Compiler {
     /// Intern all atoms (canonical sort), then lower the raw IR to ids.
     pub fn finalize(self) -> Compiled {
         let atoms: Vec<AtomKey> = self.keys.into_iter().collect(); // BTreeSet → sorted
-        let mut id_of: BTreeMap<AtomKey, AtomId> = BTreeMap::new();
-        for (i, k) in atoms.iter().enumerate() {
-            id_of.insert(k.clone(), i as AtomId);
-        }
+        // `atoms` is already sorted by `AtomKey`'s `Ord` (the same order `BTreeSet`
+        // iterated), so a binary search finds any interned key's id directly — no
+        // separate lookup map, and no cloning every key into one, is needed.
+        let id_of = |k: &AtomKey| {
+            atoms
+                .binary_search(k)
+                .expect("every referenced atom was interned") as AtomId
+        };
         let lower = |l: &RawLit| Lit {
-            atom: id_of[&l.key],
+            atom: id_of(&l.key),
             negated: l.negated,
         };
 
@@ -1022,7 +1028,7 @@ impl Compiler {
             .facts
             .into_iter()
             .map(|f| Fact {
-                atom: id_of[&f.key],
+                atom: id_of(&f.key),
                 value: f.value,
                 origin: f.origin,
                 soft: f.soft,
@@ -1050,15 +1056,16 @@ impl Compiler {
         let consumed = self
             .relation_consumed
             .iter()
-            .filter_map(|k| id_of.get(k).copied())
+            .filter_map(|k| atoms.binary_search(k).ok())
+            .map(|i| i as AtomId)
             .collect();
 
         let justifications = self
             .justifications
             .into_iter()
             .map(|j| Justification {
-                belief: id_of[&j.belief],
-                ground: id_of[&j.ground],
+                belief: id_of(&j.belief),
+                ground: id_of(&j.ground),
                 origin: j.origin,
             })
             .collect();
