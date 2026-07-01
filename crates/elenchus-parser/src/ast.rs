@@ -176,8 +176,9 @@ pub enum Body<'a> {
         /// The condition, carrying the binder in some position.
         atom: Located<'a, Atom<'a>>,
     },
-    /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...]` — antecedent + consequent.
-    /// Within one group the continuation keyword is uniform (no mixing `AND`/`OR`).
+    /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...] [UNLESS ...]*` — antecedent +
+    /// consequent, plus zero or more defeasible **exceptions**. Within one group the
+    /// continuation keyword is uniform (no mixing `AND`/`OR`).
     Impl {
         /// `WHEN`/`AND`/`OR` conditions.
         antecedent: Vec<Located<'a, Literal<'a>>>,
@@ -187,6 +188,13 @@ pub enum Body<'a> {
         consequent: Vec<Located<'a, Literal<'a>>>,
         /// How the consequent literals combine.
         cons_conn: Conn,
+        /// `UNLESS <literal>` exceptions (one per line, repeatable). Meaningful only
+        /// on a `RULE` (a defeasible default): the rule still derives its consequent
+        /// **unless** any listed exception is *established* TRUE, in which case the
+        /// default is suppressed. Empty = an ordinary (indefeasible) implication. A
+        /// `PREMISE` (a hard constraint) must leave this empty — the compiler rejects
+        /// an exception there.
+        exceptions: Vec<Located<'a, Literal<'a>>>,
     },
 }
 

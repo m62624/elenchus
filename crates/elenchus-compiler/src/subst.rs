@@ -70,11 +70,14 @@ pub(crate) fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         } => Body::Impl {
             antecedent: antecedent.iter().map(|l| subst_lit(l, subs)).collect(),
             ante_conn: *ante_conn,
             consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
             cons_conn: *cons_conn,
+            // Exceptions carry the binder too (`UNLESS x penguin` under `FOR EACH x`).
+            exceptions: exceptions.iter().map(|l| subst_lit(l, subs)).collect(),
         },
         Body::Exists {
             binder,
@@ -119,10 +122,12 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
             Body::Impl {
                 antecedent,
                 consequent,
+                exceptions,
                 ..
             } => antecedent
                 .iter()
                 .chain(consequent)
+                .chain(exceptions)
                 .for_each(|l| add(&l.data.atom)),
             Body::Exists { atom, .. } => add(&atom.data),
         },

@@ -70,6 +70,16 @@ fn then_without_literal() {
 }
 
 #[test]
+fn unless_without_literal() {
+    insta::assert_snapshot!(err(r#"
+        RULE r:
+            WHEN x a
+            THEN x b
+            UNLESS
+        "#));
+}
+
+#[test]
 fn and_literal_missing() {
     insta::assert_snapshot!(err(r#"
         PREMISE g:

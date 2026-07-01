@@ -883,3 +883,205 @@ fn a_derived_atom_does_not_make_its_consumer_orphan() {
     .unwrap();
     assert!(r.orphans.is_empty(), "{:?}", r.orphans);
 }
+
+// --- Defeasible rules: RULE … UNLESS (L3) --------------------------------------
+
+#[test]
+fn defeasible_established_exception_suppresses_the_default() {
+    // The antecedent holds, but the exception is *established* TRUE → the default is
+    // retracted, so the rule derives nothing and `NOT … can_fly` is consistent.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        NOT pengu can_fly
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty());
+    // The default was defeated: nothing derived can_fly.
+    assert!(!r.derived.iter().any(|d| d.atom.contains("can_fly")));
+    // The defeat is surfaced as an informational note naming the exception.
+    assert_eq!(r.defeated.len(), 1);
+    assert!(r.defeated[0].consequent.contains("can_fly"));
+    assert_eq!(
+        r.defeated[0].blocked_by,
+        vec![String::from("t.pengu is penguin")]
+    );
+}
+
+#[test]
+fn defeasible_backward_pass_agrees_when_fully_pinned() {
+    // Under BIDIRECTIONAL the exception enters the rule's clause (¬bird ∨ penguin ∨
+    // can_fly). With every atom pinned by a fact the clause is satisfied and there is
+    // exactly one model → CONSISTENT, matching the forward pass (no false conflict).
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        NOT pengu can_fly
+        CHECK BIDIRECTIONAL
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.conflicts.is_empty());
+}
+
+#[test]
+fn a_default_that_fires_normally_records_no_defeat() {
+    // When no exception is established, the rule fires and there is no DEFEATED note.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        CHECK
+        ")
+    .unwrap();
+    assert!(r.defeated.is_empty());
+}
+
+#[test]
+fn defeasible_unknown_exception_lets_the_default_fire() {
+    // The exception is never established (stays UNKNOWN) → assume-normal: the default
+    // still fires and derives the consequent.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom.contains("can_fly") && d.value == Value::True)
+    );
+}
+
+#[test]
+fn defeasible_false_exception_lets_the_default_fire() {
+    // An exception forced FALSE does not defeat the rule (only an established TRUE
+    // does) → the default fires, contradicting `NOT … can_fly`: CONFLICT.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        NOT pengu is penguin
+        NOT pengu can_fly
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Conflict);
+}
+
+#[test]
+fn defeasible_default_without_exception_fires_and_can_conflict() {
+    // No exception is established, so the default fires and derives can_fly; a
+    // `NOT … can_fly` then contradicts the derived value → CONFLICT (non-monotonic:
+    // adding `FACT pengu is penguin` would make this consistent).
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        NOT pengu can_fly
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Conflict);
+}
+
+#[test]
+fn defeasible_multiple_unless_blocks_if_any_fires() {
+    // Two exceptions; the rule is suppressed when *any* is established TRUE.
+    let r = vs(r"
+        RULE fly:
+            WHEN robin is bird
+            THEN robin can_fly
+            UNLESS robin is penguin
+            UNLESS robin is injured
+        FACT robin is bird
+        FACT robin is injured
+        NOT robin can_fly
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(!r.derived.iter().any(|d| d.atom.contains("can_fly")));
+}
+
+#[test]
+fn defeasible_per_element_over_a_set_defeats_only_the_exceptional_one() {
+    // `FOR EACH` instantiates the defeasible rule per element: tweety (no exception)
+    // flies, pengu (a penguin) is defeated — one rule, two outcomes.
+    let r = vs(r"
+        SET creatures
+            tweety
+            pengu
+        RULE fly FOR EACH x IN creatures:
+            WHEN x is bird
+            THEN x can_fly
+            UNLESS x is penguin
+        FACT tweety is bird
+        FACT pengu is bird
+        FACT pengu is penguin
+        NOT pengu can_fly
+        CHECK
+        ")
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom.contains("tweety") && d.atom.contains("can_fly"))
+    );
+    assert!(!r.derived.iter().any(|d| d.atom.contains("pengu")));
+}
+
+#[test]
+fn defeasible_exception_atom_is_not_flagged_as_orphan() {
+    // An atom mentioned only in an UNLESS is referenced by the rule, so the orphan
+    // lint stays silent.
+    let r = vs(r"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        CHECK
+        ")
+    .unwrap();
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+}
+
+#[test]
+fn premise_with_unless_is_a_compile_error() {
+    // UNLESS is RULE-only; a PREMISE carrying one is rejected at compile time.
+    let err = vs(r"
+        PREMISE p:
+            WHEN a is x
+            THEN b is y
+            UNLESS c is z
+        CHECK
+        ")
+    .unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("UNLESS"), "{msg}");
+    assert!(msg.contains("RULE"), "{msg}");
+}

@@ -293,6 +293,40 @@ RULE  ...  WHEN A THEN B   — DERIVES.  A=TRUE → ADDS fact B
 
 One **checks**, the other **produces** a new fact. This distinction is important to keep in mind.
 
+### `RULE … UNLESS …` — defeasible defaults (the exception layer)
+
+A plain `RULE` is *indefeasible*: `A ⇒ B`, no escape. Real rules have **defaults with
+exceptions** — "birds fly, but a penguin doesn't". An `UNLESS` line names an exception
+the model points at; the rule still derives its `THEN` **unless** that exception is
+*established* TRUE:
+
+```
+RULE fly:  WHEN x is bird  THEN x can_fly  UNLESS x is penguin
+```
+
+| exception `x is penguin` | antecedent `x is bird` | result |
+|---|---|---|
+| FALSE  | TRUE | rule fires — the default holds (`x can_fly` derived) |
+| UNKNOWN | TRUE | rule fires — nothing *established* defeats it (**assume-normal**) |
+| TRUE   | TRUE | rule **suppressed** — the default is retracted (nothing derived) |
+
+Only a *settled* exception defeats the default; a FALSE or merely-UNKNOWN exception
+leaves it standing. This makes the layer genuinely **non-monotonic**: adding
+`FACT pengu is penguin` *retracts* an otherwise-derived `pengu can_fly`. Exceptions
+are **repeatable** (`UNLESS` per line) and the rule is suppressed if **any** is
+established TRUE. `UNLESS` is **RULE-only** — a `PREMISE` (a hard constraint) with an
+`UNLESS` is a compile error.
+
+Semantics without blow-up (Law 5): in the forward pass this is one `O(1)` model-value
+lookup per exception that *gates* firing — the model supplies the exception, the engine
+only checks it, never searching for one. In the backward (`BIDIRECTIONAL`) pass the
+exception enters the rule's clause as an escape disjunct — `WHEN a THEN b UNLESS e`
+== `¬a ∨ e ∨ b` — which coincides with the forward reading on any complete model. When
+an established exception actually suppresses a firing default, the report notes it as an
+informational **`DEFEATED`** line (naming the rule, the withheld consequent, and the
+exception that defeated it); the verdict is unaffected — a defeated default is never a
+conflict.
+
 ## `ASSUME` — soft, retractable hypotheses
 
 `FACT`/`NOT` are commitments; `ASSUME` is a **hypothesis**. Syntactically it is a
@@ -358,8 +392,9 @@ namespacing and reuse.
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `PREMISE` | a first principle — **checked** | constraint |
-| `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
+| `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
+| `RULE … UNLESS …` | a defeasible exception on a `RULE`: it still derives its `THEN` **unless** the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only | rule + exception |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
 | `EXISTS … IN …` | at least one element of a `SET` satisfies the condition (a `PREMISE` body; the ∃ dual of `FOR EACH`) | quantification |
 | `EXISTS … WITNESS …` | prove the existential by naming the one element that satisfies it — no `SET`; grounds to a single atom (the open-domain ∃) | quantification |
@@ -611,6 +646,7 @@ a relation, `b` = clauses one body instance emits.
 | `EXISTS … WITNESS <term>` | `O(1)` — one clause over the single witness atom | one clause |
 | `WHEN … AND/OR … THEN …` (`PREMISE`) | one clause per (antecedent × consequent) group | those clauses |
 | `RULE` (`WHEN … THEN`) | one rule per antecedent literal | a forward-chaining saturate step |
+| `RULE … UNLESS <exc>` | `O(1)` per exception — a model-value lookup that gates firing; adds one escape literal to the rule's clause | bounded by the exceptions *written* |
 | `SET` | `O(|elements|)` recorded | — |
 | `FOR EACH … IN <set>` | `×|set|` body instances → `O(|set|·b)` | those clauses |
 | `FOR EACH … <rel> …` | `×|pairs|` body instances → `O(|pairs|·b)` | those clauses |
@@ -864,11 +900,14 @@ exists_body = "EXISTS" , name , "IN" , name , NEWLINE , atom_line ;
             (* ∃: at least one element of the SET satisfies the condition line *)
 atom_line   = atom , NEWLINE ;
 
-impl_body   = when_line , { cont_line } , then_line , { cont_line } ;
+impl_body   = when_line , { cont_line } , then_line , { cont_line } , { unless_line } ;
 when_line   = "WHEN" , literal , NEWLINE ;
 then_line   = "THEN" , literal , NEWLINE ;
 cont_line   = ( "AND" | "OR" ) , literal , NEWLINE ;
             (* one group (antecedent or consequent) may not mix AND and OR *)
+unless_line = "UNLESS" , literal , NEWLINE ;
+            (* a defeasible exception; RULE-only (a PREMISE with one is a compile
+               error) — repeatable, the rule is suppressed if ANY is established TRUE *)
 
 atom        = [ domain_ref , "." ] , subject , [ predicate , [ object ] ] ;
             (* a bare subject alone is a single-word proposition — a VAR port *)

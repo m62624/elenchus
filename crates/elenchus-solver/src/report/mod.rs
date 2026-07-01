@@ -85,6 +85,22 @@ pub struct Derived {
     pub origin: Origin,
 }
 
+/// A defeasible `RULE` whose default was suppressed by an established `UNLESS`
+/// exception: the antecedent held, but an exception was TRUE, so the rule derived
+/// nothing. **Purely informational** — it never changes the verdict, the warning
+/// pool, or the exit code (a defeated default is not a conflict). It makes the
+/// non-monotonic step legible: "this default was overridden, and by what".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Defeated {
+    /// Provenance of the defeated `RULE` (source, line, name).
+    pub origin: Origin,
+    /// The consequent the rule would have derived, as a human label (`,`-joined if
+    /// the `THEN` had several literals).
+    pub consequent: String,
+    /// Human labels of the established `UNLESS` exceptions that suppressed it.
+    pub blocked_by: Vec<String>,
+}
+
 /// The result of solving, self-contained (atom ids already resolved to labels).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -96,6 +112,10 @@ pub struct Report {
     pub warnings: Vec<Warning>,
     /// Facts produced by forward-chaining `RULE`s.
     pub derived: Vec<Derived>,
+    /// Defeasible `RULE`s whose default was suppressed by an established `UNLESS`
+    /// exception. Never affects [`Report::status`] or [`Report::exit_code`] — purely
+    /// informational (a defeated default is not a conflict).
+    pub defeated: Vec<Defeated>,
     /// When `UNDERDETERMINED`, the label of an atom left free by the constraints
     /// (asserting it would pin the model down).
     pub underdetermined: Option<String>,

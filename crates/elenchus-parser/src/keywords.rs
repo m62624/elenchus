@@ -23,6 +23,7 @@ pub mod kw {
     pub const BIDIRECTIONAL: &str = "BIDIRECTIONAL";
     pub const WHEN: &str = "WHEN";
     pub const THEN: &str = "THEN";
+    pub const UNLESS: &str = "UNLESS";
     pub const AND: &str = "AND";
     pub const OR: &str = "OR";
     pub const EXCLUSIVE: &str = "EXCLUSIVE";
@@ -245,6 +246,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "THEN <literal>",
             "the conclusion (then-part) of an implication; continue with AND/OR",
             "THEN motor uses fast_path",
+        ),
+    },
+    Keyword {
+        text: kw::UNLESS,
+        top_level: false,
+        card: card(
+            "RULE … THEN <literal> UNLESS <literal>  (one UNLESS per line, repeatable)",
+            "a defeasible exception on a RULE: the rule derives its THEN by default, but is suppressed when an UNLESS literal is established TRUE (FALSE/UNKNOWN lets the default stand)",
+            "RULE fly:\n    WHEN x is bird\n    THEN x can_fly\n    UNLESS x is penguin",
         ),
     },
     Keyword {

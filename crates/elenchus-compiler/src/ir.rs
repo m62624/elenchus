@@ -110,13 +110,17 @@ pub struct Clause {
 }
 
 /// A forward-chaining rule (from `RULE`): if all antecedent literals hold, derive
-/// the consequent literals.
+/// the consequent literals — *unless* an exception defeats it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
     /// Literals that must all hold for the rule to fire.
     pub antecedent: Vec<Lit>,
     /// Literals derived (asserted) when the antecedent holds.
     pub consequent: Vec<Lit>,
+    /// `UNLESS` exceptions (a defeasible default). The rule fires only when no
+    /// exception literal is *established* TRUE — an exception that is FALSE or
+    /// UNKNOWN lets the default stand. Empty = an ordinary indefeasible rule.
+    pub exceptions: Vec<Lit>,
     /// Where it came from (for the report).
     pub origin: Origin,
 }

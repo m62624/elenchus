@@ -463,6 +463,7 @@ impl Compiler {
                 ante_conn,
                 consequent,
                 cons_conn,
+                exceptions,
             } = body
             {
                 // A rule *derives* its consequent; an `OR` consequent is not a
@@ -473,7 +474,8 @@ impl Compiler {
                     });
                 }
                 let (ante, cons) = (raw_lits(antecedent, ctx)?, raw_lits(consequent, ctx)?);
-                for l in ante.iter().chain(cons.iter()) {
+                let exc = raw_lits(exceptions, ctx)?;
+                for l in ante.iter().chain(cons.iter()).chain(exc.iter()) {
                     self.intern(&l.key);
                 }
                 let origin = self.origin(source, line, Some(name), kw::RULE);
@@ -482,14 +484,17 @@ impl Compiler {
                     Conn::And => self.rules.push(RawRule {
                         antecedent: ante,
                         consequent: cons,
+                        exceptions: exc,
                         origin,
                     }),
-                    // (a ∨ b) → C == (a → C) ∧ (b → C): one rule per antecedent.
+                    // (a ∨ b) → C == (a → C) ∧ (b → C): one rule per antecedent. Each
+                    // split rule carries the same exceptions (they defeat every arm).
                     Conn::Or => {
                         for a in &ante {
                             self.rules.push(RawRule {
                                 antecedent: vec![a.clone()],
                                 consequent: cons.clone(),
+                                exceptions: exc.clone(),
                                 origin: origin.clone(),
                             });
                         }
@@ -542,7 +547,16 @@ impl Compiler {
                 ante_conn,
                 consequent,
                 cons_conn,
+                exceptions,
             } => {
+                // UNLESS is defeasible defaulting — it only makes sense on a RULE
+                // (which *derives*). A PREMISE is a hard constraint; an exception on
+                // it is a category error, so reject it with a teachable message.
+                if !exceptions.is_empty() {
+                    return Err(CompileError::PremiseException {
+                        name: name.to_string(),
+                    });
+                }
                 // Implication A → C as `Impossible(A_true ∧ ¬C)`. We group each
                 // side by its connective and emit one clause per (ante × cons)
                 // group pair — a uniform rule covering all AND/OR combinations:
@@ -1028,6 +1042,7 @@ impl Compiler {
             .map(|r| Rule {
                 antecedent: r.antecedent.iter().map(lower).collect(),
                 consequent: r.consequent.iter().map(lower).collect(),
+                exceptions: r.exceptions.iter().map(lower).collect(),
                 origin: r.origin,
             })
             .collect();

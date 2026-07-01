@@ -109,6 +109,7 @@ completeness exactly.
 | `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
+| `RULE … UNLESS …` | `RULE` body (last) | a **defeasible** exception: the rule still derives its `THEN` unless the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only |
 | `CHECK` | statement | run the engine (optionally for one subject) |
 | `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
 | `IMPORT` | statement | pull in another `.vrf` source; reference its atoms as `<domain>.<atom>` |
@@ -314,6 +315,23 @@ PREMISE needs_a_backend:
 RULE not_repro_blocks_proof:    // if it can't be reproduced, it isn't proven
     WHEN NOT case reproducible
     THEN NOT case proven        // derived FALSE — the `proven` branch is closed
+```
+
+### `RULE … UNLESS …` — a default with exceptions (defeasible)
+- **is** — a `RULE` that still derives its `THEN` **by default**, but is *suppressed*
+  when an `UNLESS` exception is **established** TRUE. A FALSE or UNKNOWN exception does
+  **not** defeat it (assume-normal). Adding the exception fact *retracts* the derived
+  conclusion — the one non-monotonic construct.
+- **use when** — "X holds, except when Y" — a general rule with legitimate exceptions
+  ("birds fly, but not penguins"), so an exception no longer forces a false CONFLICT.
+- **form** — one or more `UNLESS <literal>` lines **after** the `THEN` (suppressed if
+  **any** is established TRUE).  ·  **not:** `UNLESS` on a `PREMISE` (RULE-only — a
+  premise is a hard check); mixing it into the `WHEN`/`THEN` groups.
+```vrf
+RULE fly:
+    WHEN x is bird
+    THEN x can_fly
+    UNLESS x is penguin      // a penguin is a bird, yet does not fly — no conflict
 ```
 
 ### `SET` + `FOR EACH … IN …` — write a premise once, apply per element

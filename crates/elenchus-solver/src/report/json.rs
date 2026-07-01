@@ -66,6 +66,19 @@ impl Report {
             let _ = write!(s, ",\"value\":{}", matches!(d.value, Value::True));
             s.push('}');
         }
+        s.push_str("],\"defeated\":[");
+        for (i, d) in self.defeated.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push('{');
+            json_origin_fields(&d.origin, &mut s);
+            s.push_str(",\"consequent\":");
+            d.consequent.write_json(&mut s);
+            s.push_str(",\"blocked_by\":");
+            d.blocked_by.write_json(&mut s);
+            s.push('}');
+        }
         s.push_str("],\"underdetermined\":");
         match &self.underdetermined {
             Some(atom) => atom.write_json(&mut s),

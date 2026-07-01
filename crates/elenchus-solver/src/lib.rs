@@ -90,6 +90,9 @@ pub fn solve(c: &Compiled) -> Report {
     let mut e = Eval::new(c);
     e.seed_facts();
     e.saturate_rules();
+    // Note each defeasible RULE whose default an established UNLESS suppressed —
+    // read from the settled model. Informational only; never changes the verdict.
+    e.flag_defeated_defaults();
     e.check_premises();
     // Unwitnessed EXISTS → WARNING; must precede `finish` so it can raise the verdict.
     e.flag_unwitnessed_exists();

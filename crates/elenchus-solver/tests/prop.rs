@@ -374,6 +374,7 @@ fn build_with_rules(
                     atom: cv,
                     negated: cneg,
                 }],
+                exceptions: Vec::new(),
                 origin: origin(),
             }
         })

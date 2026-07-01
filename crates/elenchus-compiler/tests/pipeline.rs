@@ -186,6 +186,80 @@ fn rule_with_or_antecedent_splits_into_two_rules() {
 }
 
 #[test]
+fn rule_records_its_unless_exceptions() {
+    // A defeasible RULE keeps its UNLESS literals as `exceptions`; they are interned
+    // as ordinary atoms (so the solver can read their model value).
+    let src = r#"
+        RULE fly:
+            WHEN x bird
+            THEN x flies
+            UNLESS x penguin
+            UNLESS x injured
+        "#;
+    let c = cs(src).unwrap();
+    assert_eq!(c.rules.len(), 1);
+    assert_eq!(c.rules[0].exceptions.len(), 2);
+    // Each exception atom exists in the interned atom table.
+    assert!(
+        c.atoms
+            .iter()
+            .any(|a| a.subject == "x" && a.predicate.as_deref() == Some("penguin"))
+    );
+    assert!(
+        c.atoms
+            .iter()
+            .any(|a| a.subject == "x" && a.predicate.as_deref() == Some("injured"))
+    );
+}
+
+#[test]
+fn or_antecedent_split_rules_each_keep_the_exceptions() {
+    // (a ∨ b) → c UNLESS e splits into two rules, both carrying the exception.
+    let src = r#"
+        RULE r:
+            WHEN x a
+            OR x b
+            THEN x c
+            UNLESS x e
+        "#;
+    let c = cs(src).unwrap();
+    assert_eq!(c.rules.len(), 2);
+    assert!(c.rules.iter().all(|r| r.exceptions.len() == 1));
+}
+
+#[test]
+fn rules_differing_only_in_exception_are_not_deduped() {
+    // The exception is part of a rule's identity: two same-named rules that differ
+    // only by their UNLESS must both survive (not collapse as a redefinition).
+    let src = r#"
+        RULE r:
+            WHEN x a
+            THEN x c
+            UNLESS x p
+        RULE r:
+            WHEN x a
+            THEN x c
+            UNLESS x q
+        "#;
+    // Distinct bodies under the same name are a redefinition error (not a silent
+    // dedup) — which proves the exception is folded into the body signature.
+    assert!(cs(src).is_err());
+}
+
+#[test]
+fn premise_with_unless_is_rejected() {
+    // UNLESS is RULE-only; a PREMISE carrying one is a category error.
+    let src = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x c
+            UNLESS x e
+        "#;
+    let err = cs(src).unwrap_err();
+    assert!(matches!(err, CompileError::PremiseException { .. }));
+}
+
+#[test]
 fn rule_with_or_consequent_is_rejected() {
     // A rule cannot derive a disjunction — must be a PREMISE.
     let src = r#"

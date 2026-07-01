@@ -41,6 +41,8 @@ pub(crate) struct RawClause {
 pub(crate) struct RawRule {
     pub(crate) antecedent: Vec<RawLit>,
     pub(crate) consequent: Vec<RawLit>,
+    /// `UNLESS` exceptions — the rule is defeasible when non-empty.
+    pub(crate) exceptions: Vec<RawLit>,
     pub(crate) origin: Origin,
 }
 
@@ -138,6 +140,7 @@ pub(crate) fn canonical_body(
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         } => {
             let conn = |c: &Conn| if *c == Conn::Or { "OR" } else { "AND" };
             s.push_str("IMPL|ANTE|");
@@ -148,6 +151,10 @@ pub(crate) fn canonical_body(
             s.push_str(conn(cons_conn));
             s.push('|');
             s.push_str(&lit_sigs(consequent, ctx)?);
+            // Exceptions are part of a rule's identity: two same-named rules that
+            // differ only in an UNLESS must not dedup-collapse.
+            s.push_str("|EXC|");
+            s.push_str(&lit_sigs(exceptions, ctx)?);
         }
         Body::Exists {
             binder,

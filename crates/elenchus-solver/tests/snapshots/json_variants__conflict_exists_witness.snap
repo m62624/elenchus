@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":"covered","kind":"EXISTS","source":"v.vrf","line":3,"atoms":["d.auth is ready"],"trace":[{"atom":"d.auth is ready","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":2,"from":[]}]}],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":"covered","kind":"EXISTS","source":"v.vrf","line":3,"atoms":["d.auth is ready"],"trace":[{"atom":"d.auth is ready","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":2,"from":[]}]}],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[]}
