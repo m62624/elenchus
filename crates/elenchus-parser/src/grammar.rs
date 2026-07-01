@@ -17,13 +17,14 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
     character::complete::{char, line_ending, satisfy, space0, space1},
-    combinator::{eof, opt, recognize, value},
+    combinator::{eof, map, opt, recognize, value},
     multi::many0,
     sequence::{delimited, preceded, terminated},
 };
 
 use crate::ast::{
-    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+    Atom, Body, CloseKind, Conn, ExistsDomain, ListOp, Literal, Located, Program, Quant, Span,
+    Statement,
 };
 use crate::diag::{Diagnostic, Diagnostics};
 use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
@@ -276,27 +277,46 @@ fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, binder) = promote(
         identifier(input),
         at,
-        "EXISTS expects a binder: EXISTS <binder> IN <set>",
+        "EXISTS expects a binder: EXISTS <binder> WITNESS <term>",
     )?;
-    let (input, _) = promote(
-        (space1, tag(kw::IN), space1).parse(input),
+    let (input, domain) = promote(
+        exists_domain(input),
         input,
-        "EXISTS expects `IN <set>`: EXISTS <binder> IN <set>",
+        "EXISTS expects `WITNESS <term>` or `IN <set>`: EXISTS <binder> WITNESS <term>",
     )?;
-    let at = input;
-    let (input, set) = promote(identifier(input), at, "EXISTS expects a set name after IN")?;
-    let (input, _) = promote(
-        eol(input),
-        input,
-        "unexpected text after 'EXISTS <binder> IN <set>'",
-    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the EXISTS header")?;
     let at = input;
     let (input, atom) = promote(
         atom_line(input),
         at,
         "EXISTS needs a condition line using the binder",
     )?;
-    Ok((input, Body::Exists { binder, set, atom }))
+    Ok((
+        input,
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        },
+    ))
+}
+
+/// The domain of an `EXISTS`: either `WITNESS <term>` (one named element, no `SET`
+/// — the open-domain existential) or `IN <set>` (a declared set). A universal has
+/// no such choice; only `∃` may name a lone witness, and a witness grounds to a
+/// single atom, so neither form can enumerate an unnamed domain.
+fn exists_domain<'a>(input: Span<'a>) -> PResult<'a, ExistsDomain<'a>> {
+    alt((
+        map(
+            preceded((space1, tag(kw::WITNESS), space1), identifier),
+            ExistsDomain::Witness,
+        ),
+        map(
+            preceded((space1, tag(kw::IN), space1), identifier),
+            ExistsDomain::InSet,
+        ),
+    ))
+    .parse(input)
 }
 
 /// A continuation `AND <literal>` / `OR <literal>` line inside a `WHEN`/`THEN`

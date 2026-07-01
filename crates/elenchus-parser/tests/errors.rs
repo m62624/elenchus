@@ -273,8 +273,14 @@ fn close_with_an_unknown_kind() {
 
 #[test]
 fn exists_missing_in() {
-    // EXISTS without `IN` groups under EXISTS and shows its card once.
+    // EXISTS without `IN`/`WITNESS` groups under EXISTS and shows its card once.
     insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h handlers\n        h does x\n"));
+}
+
+#[test]
+fn exists_witness_missing_term() {
+    // `WITNESS` with no term is committed under EXISTS and points at the header.
+    insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h WITNESS\n        h does x\n"));
 }
 
 #[test]

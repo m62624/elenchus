@@ -8,7 +8,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use elenchus_parser::{Atom, Body, Conn, ListOp, Located, Quant, Statement, kw};
+use elenchus_parser::{Atom, Body, Conn, ExistsDomain, ListOp, Located, Quant, Statement, kw};
 
 use crate::closure::close;
 use crate::domain::DomainCtx;
@@ -539,28 +539,39 @@ impl Compiler {
                     }
                 }
             }
-            Body::Exists { binder, set, atom } => {
-                // ∃: at least one element of the SET satisfies the condition.
-                // Instantiate the condition per element (binder substituted) and
-                // emit a single at-least-one — exactly an `ATLEAST` whose atoms are
-                // generated from the set instead of hand-listed. Linear in `|set|`,
-                // one clause; the solver sees nothing new. The dual of a `FOR EACH`
-                // over a set (an "all"), so it resolves the set the same way.
-                let elements = match self.sets.get(set.data) {
-                    Some(els) => els.clone(),
-                    None => {
-                        return Err(CompileError::UnknownSet {
-                            file: source.to_string(),
-                            line: set.span.location_line(),
-                            set: set.data.to_string(),
-                            suggestion: nearest_set_suggestion(set.data, &self.sets),
-                        });
+            Body::Exists {
+                binder,
+                domain,
+                atom,
+            } => {
+                // ∃: at least one candidate satisfies the condition. `IN <set>`
+                // instantiates the condition per set element; `WITNESS <term>` is
+                // the singleton {term} the author names — no SET, exactly one atom.
+                // Either way we emit a single at-least-one (an `ATLEAST` whose atoms
+                // are generated, not hand-listed); the solver sees nothing new. A
+                // witness is `∃` over `{term}`, so there is nothing to enumerate.
+                let keys: Vec<AtomKey> = match domain {
+                    ExistsDomain::InSet(set) => {
+                        let elements = match self.sets.get(set.data) {
+                            Some(els) => els.clone(),
+                            None => {
+                                return Err(CompileError::UnknownSet {
+                                    file: source.to_string(),
+                                    line: set.span.location_line(),
+                                    set: set.data.to_string(),
+                                    suggestion: nearest_set_suggestion(set.data, &self.sets),
+                                });
+                            }
+                        };
+                        elements
+                            .iter()
+                            .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
+                            .collect::<Result<_, _>>()?
+                    }
+                    ExistsDomain::Witness(w) => {
+                        vec![ctx.key(&subst_atom(&atom.data, &[(binder.data, w.data)]))?]
                     }
                 };
-                let keys: Vec<AtomKey> = elements
-                    .iter()
-                    .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
-                    .collect::<Result<_, _>>()?;
                 for k in &keys {
                     self.intern(k);
                 }

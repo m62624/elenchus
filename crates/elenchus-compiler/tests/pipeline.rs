@@ -1296,6 +1296,26 @@ fn exists_over_an_undeclared_set_is_rejected() {
 }
 
 #[test]
+fn exists_witness_grounds_to_one_atom() {
+    // EXISTS ... WITNESS w = ∃ over the singleton {w}: a single at-least-one clause
+    // over the one named atom, and no SET is required (an open-domain existential).
+    let src = "PREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 1);
+    assert!(c.atoms.contains(&key("auth", "is", Some("ready"))));
+}
+
+#[test]
+fn exists_witness_matches_a_singleton_set() {
+    // Oracle: the witness form produces the same clauses/atoms as EXISTS over a
+    // one-element SET {auth} — a witness is just the author naming that element.
+    let via_witness = cs("PREMISE p:\n    EXISTS h WITNESS auth\n        h does x\n").unwrap();
+    let via_set = cs("SET s\n    auth\nPREMISE p:\n    EXISTS h IN s\n        h does x\n").unwrap();
+    assert_eq!(via_witness.clauses.len(), 1);
+    assert_eq!(via_witness.atoms, via_set.atoms);
+}
+
+#[test]
 fn grounding_count_is_linear_in_the_set() {
     // No domain product: N elements → exactly N groundings (here N clauses,
     // one at-least-one per element), never N².

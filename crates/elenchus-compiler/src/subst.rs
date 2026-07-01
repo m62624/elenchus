@@ -66,9 +66,13 @@ pub(crate) fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
             consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
             cons_conn: *cons_conn,
         },
-        Body::Exists { binder, set, atom } => Body::Exists {
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        } => Body::Exists {
             binder: binder.clone(),
-            set: set.clone(),
+            domain: domain.clone(),
             atom: Located {
                 data: subst_atom(&atom.data, subs),
                 span: atom.span,
