@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"PREMISE someone_ready:\\n    EXISTS h\\n        h is ready\\n\")"
+---
+RESULT: WARNING
+  WARNING   someone_ready (EXISTS)  [v.vrf:2]
+      blocked by: d.h is ready
+      fix: name a witness: EXISTS h WITNESS <term>  (or a set: EXISTS h IN <set>)
+SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
+EXIT_CODE: 1

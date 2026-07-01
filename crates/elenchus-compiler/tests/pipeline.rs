@@ -1316,6 +1316,36 @@ fn exists_witness_matches_a_singleton_set() {
 }
 
 #[test]
+fn for_each_grounds_an_exists_witness_naming_the_header_binder() {
+    // FOR EACH x IN outer, the witness IS the header binder x: grounding must
+    // substitute x into the witness term (not just the condition), so element `a`
+    // witnesses `a matches a` and `b` witnesses `b matches b` — one clause each.
+    let src = "SET outer\n    a\n    b\nPREMISE p FOR EACH x IN outer:\n    EXISTS h WITNESS x\n        h matches x\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 2);
+    assert!(c.atoms.contains(&key("a", "matches", Some("a"))));
+    assert!(c.atoms.contains(&key("b", "matches", Some("b"))));
+    // The literal binder name must never leak into an atom.
+    assert!(
+        !c.atoms
+            .iter()
+            .any(|a| a.subject == "x" || a.object.as_deref() == Some("x"))
+    );
+}
+
+#[test]
+fn for_each_grounds_an_exists_over_a_set() {
+    // FOR EACH x IN outer with an EXISTS over an inner SET: the header binder is
+    // substituted into the existential's condition once per outer element, and each
+    // instance is an at-least-one over the inner set (exercises the InSet subst arm).
+    let src = "SET outer\n    a\n    b\nSET inner\n    p\n    q\nPREMISE cover FOR EACH x IN outer:\n    EXISTS h IN inner\n        x needs h\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 2);
+    assert!(c.atoms.contains(&key("a", "needs", Some("p"))));
+    assert!(c.atoms.contains(&key("b", "needs", Some("q"))));
+}
+
+#[test]
 fn exists_unwitnessed_emits_no_clause_but_records_an_advisory() {
     // ∃ with neither SET nor WITNESS grounds to nothing (inert for the SAT core) but
     // is recorded so the solver can raise a WARNING; the condition atom is not

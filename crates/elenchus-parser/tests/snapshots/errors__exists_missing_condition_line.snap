@@ -1,0 +1,13 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"PREMISE p:\\n    EXISTS h WITNESS auth\\n\")"
+---
+RESULT: 1 syntax error
+
+EXISTS  (1 problem)
+  syntax  : EXISTS <binder> IN <set> (or WITNESS <term>)  then one condition line using the binder
+  example : EXISTS h IN handlers
+                h handles request
+    line 3, col 1 - EXISTS needs a condition line using the binder
+      | 
+      | ^

@@ -141,6 +141,14 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "conflict_assume_vs_fact_retract",
             "FACT x a\nASSUME NOT x a\nCHECK x\n",
         ),
+        (
+            "conflict_exists_witness",
+            "NOT auth is ready\nPREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n",
+        ),
+        (
+            "warning_exists_unwitnessed",
+            "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n",
+        ),
     ]
 }
 
@@ -162,6 +170,8 @@ fn json_is_valid_and_stable_for_every_variant() {
             value.get("exit_code").and_then(|v| v.as_i64()).is_some(),
             "{name}: exit_code"
         );
+        // Every documented array key must always be present (an empty array when the
+        // report has no such element) — the complete set the JSON contract promises.
         for key in [
             "conflicts",
             "warnings",
@@ -169,6 +179,9 @@ fn json_is_valid_and_stable_for_every_variant() {
             "unsat_core",
             "retract",
             "hints",
+            "orphans",
+            "unused_imports",
+            "placeholders",
         ] {
             assert!(
                 value.get(key).and_then(|v| v.as_array()).is_some(),

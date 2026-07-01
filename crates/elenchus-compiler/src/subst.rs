@@ -2,7 +2,7 @@
 //! bodies, and collect the domain prefixes a statement uses.
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
-use elenchus_parser::{Atom, Body, Literal, Located, Statement};
+use elenchus_parser::{Atom, Body, ExistsDomain, Literal, Located, Statement};
 
 /// A list of binder substitutions `(name, value)` applied during grounding: one
 /// entry for an `IN <set>` quantifier, two for a `<a> <rel> <b>` relation.
@@ -22,6 +22,16 @@ pub(crate) fn subst_atom<'s>(a: &Atom<'s>, subs: &Subs<'s>) -> Atom<'s> {
         subject: subst_ident(a.subject, subs),
         predicate: a.predicate.map(|p| subst_ident(p, subs)),
         object: a.object.map(|o| subst_ident(o, subs)),
+    }
+}
+
+/// Replace the binders in a located identifier (a set name or a witness term),
+/// preserving its span. Lets a `FOR EACH` binder flow into an `EXISTS` domain, e.g.
+/// `FOR EACH x IN s: EXISTS h WITNESS x` grounds the witness to each element.
+pub(crate) fn subst_located<'s>(l: &Located<'s, &'s str>, subs: &Subs<'s>) -> Located<'s, &'s str> {
+    Located {
+        data: subst_ident(l.data, subs),
+        span: l.span,
     }
 }
 
@@ -72,7 +82,13 @@ pub(crate) fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
             atom,
         } => Body::Exists {
             binder: binder.clone(),
-            domain: domain.clone(),
+            // Substitute into the domain too, so a witness/set named by the header
+            // binder (`EXISTS h WITNESS x` under `FOR EACH x`) grounds per element.
+            domain: match domain {
+                ExistsDomain::InSet(s) => ExistsDomain::InSet(subst_located(s, subs)),
+                ExistsDomain::Witness(w) => ExistsDomain::Witness(subst_located(w, subs)),
+                ExistsDomain::Open => ExistsDomain::Open,
+            },
             atom: Located {
                 data: subst_atom(&atom.data, subs),
                 span: atom.span,

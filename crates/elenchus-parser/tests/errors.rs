@@ -284,6 +284,13 @@ fn exists_witness_missing_term() {
 }
 
 #[test]
+fn exists_missing_condition_line() {
+    // A complete EXISTS header with no condition line under it is committed to the
+    // "needs a condition line" message (covers the final EXISTS parse branch).
+    insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h WITNESS auth\n"));
+}
+
+#[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
     // A trailing newline is not required: `eol` accepts EOF too. Drawn straight

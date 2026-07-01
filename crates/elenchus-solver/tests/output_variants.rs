@@ -201,3 +201,21 @@ fn underdetermined_with_witness_hint() {
         "#
     ));
 }
+
+// --- EXISTS witness / unwitnessed ------------------------------------------
+
+#[test]
+fn conflict_exists_witness() {
+    // The named witness is forced false → CONFLICT blamed on the EXISTS premise.
+    insta::assert_snapshot!(report(
+        "NOT auth is ready\nPREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n"
+    ));
+}
+
+#[test]
+fn warning_exists_unwitnessed() {
+    // EXISTS with no SET and no WITNESS → WARNING nudging to name a witness.
+    insta::assert_snapshot!(report(
+        "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n"
+    ));
+}
