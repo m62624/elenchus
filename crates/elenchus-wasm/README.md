@@ -1,10 +1,15 @@
 # elenchus (wasm / npm)
 
-A **WebAssembly build of the [elenchus](https://github.com/m62624/elenchus) engine** —
-a small three-valued SAT checker for logical consistency. You feed it a `.vrf`
-program as a string and get the verdict back as JSON (or a human report): program
-text in, JSON out. The engine (`parse → compile → solve`) is reused verbatim from
-the Rust core; nothing is reimplemented here.
+> ⚠️ **Experimental.** elenchus is mostly an AI-built experiment — written with the
+> help of a small local model (Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf) and various Claude
+> models, in roughly equal measure. Expect non-professional design choices, rough
+> edges, broken behavior, or mistakes. Use it at your own risk.
+
+The **WebAssembly build** of [elenchus](https://github.com/m62624/elenchus), part of
+that project — a small three-valued SAT checker for logical consistency. You feed it a
+`.vrf` program as a string and get the verdict back as JSON (or a human report):
+program text in, JSON out. The engine (`parse → compile → solve`) is reused verbatim
+from the Rust core; nothing is reimplemented here.
 
 It runs anywhere Node runs — no native binary, no PATH, no install step beyond
 `npm install`. **TypeScript types are included** (`.d.ts` generated from the
@@ -35,14 +40,14 @@ check(program, "json", maxClasses, maxPerClass); // cap grouped syntax errors
 checkFile("program.vrf");
 checkFileWithImports("entry.vrf");
 
-version();      // "elenchus 0.9.1"  (the ENGINE version, not the npm version)
+version();      // "elenchus x.y.z"  (the ENGINE version, not the npm version)
 skill();        // the full companion SKILL.md text
-skillVersion(); // "0.9.1" — the version the bundled skill targets
+skillVersion(); // "x.y.z" — the engine version the bundled skill targets
 about();         // short pointer to the skill
 ```
 
-`version()` / `skillVersion()` report the **engine** version (e.g. `0.9.1`),
-which is independent of this npm package's own version line.
+`version()` reports the **engine** version and `skillVersion()` the skill's
+target-version marker; both are independent of this npm package's own version line.
 
 ## What this package is — and isn't
 

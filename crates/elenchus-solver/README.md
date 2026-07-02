@@ -5,9 +5,12 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-The inference interpreter for [elenchus](https://github.com/m62624/elenchus) — the forward pass.
+The inference interpreter of [elenchus](https://github.com/m62624/elenchus), part of
+that project — the forward pass plus a backward SAT pass.
 
-`no_std` (needs `alloc`). Consumes the [`elenchus-compiler`] `Compiled` IR and
+`no_std` (needs `alloc`). Consumes the
+[`elenchus-compiler`](https://github.com/m62624/elenchus/tree/main/crates/elenchus-compiler)
+`Compiled` IR and
 evaluates it under three-valued Kleene logic (TRUE / FALSE / UNKNOWN, where
 UNKNOWN ≠ FALSE).
 
@@ -34,24 +37,38 @@ multithreading) is intentionally omitted.
 
 ## Usage
 
+`verify_source` takes a source label and one program string (every program opens with
+`DOMAIN`; atoms print namespaced as `<domain>.<atom>`). The program can be written
+multi-line or squeezed onto one line with `\n` separators — the parser is
+newline-oriented, not indentation-sensitive. Here a premise whose antecedent holds but
+whose consequent is never established, so the check is blocked (`WARNING`):
+
 ```rust
 use elenchus_solver::{verify_source, Status};
 
 let report = verify_source(
     "demo.vrf",
-    "FACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\n",
+    "DOMAIN demo\nFACT A has flying\nPREMISE w:\n    WHEN A has flying\n    THEN A has wing\nCHECK A\n",
 )
 .unwrap();
-assert_eq!(report.status, Status::Warning); // `A has wing` is UNKNOWN
+assert_eq!(report.status, Status::Warning); // `demo.A has wing` is UNKNOWN
 println!("{report}");
 ```
 
+The `Report`'s `Display` is the full human report (the same text the CLI prints):
+
 ```text
 RESULT: WARNING
-  WARNING   w (PREMISE)  [demo.vrf:2]
-      blocked by: A has wing
-SUMMARY: 0 conflicts, 1 warnings, 0 derived
+  WARNING   w (PREMISE)  [demo.vrf:3]
+      blocked by: demo.A has wing
+      fix: nothing determines `demo.A has wing` — add `FACT demo.A has wing` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
+SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
+EXIT_CODE: 1
 ```
+
+Sibling entry points cover the other inputs: `verify` resolves `IMPORT`s through a
+`Resolver`, and `verify_source_with` / `verify_with` bind `VAR` ports. Each returns the
+same `Report`.
 
 ## License
 
