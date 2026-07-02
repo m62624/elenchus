@@ -17,6 +17,7 @@ pub mod kw {
     pub const FACT: &str = "FACT";
     pub const NOT: &str = "NOT";
     pub const ASSUME: &str = "ASSUME";
+    pub const TRY: &str = "TRY";
     pub const PREMISE: &str = "PREMISE";
     pub const RULE: &str = "RULE";
     pub const CHECK: &str = "CHECK";
@@ -120,6 +121,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "ASSUME [NOT] <Subject> <predicate> [<object>]",
             "a soft, retractable hypothesis (the solver may ask you to drop it)",
             "ASSUME release is_ready",
+        ),
+    },
+    Keyword {
+        text: kw::TRY,
+        top_level: true,
+        card: card(
+            "TRY [NOT] <Subject> <predicate> [<object>]",
+            "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
+            "TRY release is_ready",
         ),
     },
     Keyword {

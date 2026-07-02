@@ -31,6 +31,14 @@ pub(crate) struct RawJustification {
     pub(crate) origin: Origin,
 }
 
+/// A `TRY` hypothesis keyed by atom identity (pre-interning counterpart of
+/// [`crate::ir::Hypothesis`]).
+pub(crate) struct RawHypothesis {
+    pub(crate) key: AtomKey,
+    pub(crate) negated: bool,
+    pub(crate) origin: Origin,
+}
+
 /// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
 pub(crate) struct RawClause {
     pub(crate) lits: Vec<RawLit>,

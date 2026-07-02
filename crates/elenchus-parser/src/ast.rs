@@ -231,6 +231,13 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
+    /// `TRY [NOT] <atom>` — a *hypothesis under test*, never committed. Unlike a
+    /// `FACT`/`ASSUME`, it does not enter the model or affect the verdict; the engine
+    /// runs one side-check and reports whether asserting it would **close** the open
+    /// model, **conflict** with what is established, or leave it **still open** — the
+    /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
+    /// checks it. The `Literal` carries the optional `NOT`.
+    Try(Located<'a, Literal<'a>>),
     /// `SET <name>` then one element identifier per line — declare a finite set
     /// to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
     Set {

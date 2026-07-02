@@ -150,6 +150,43 @@ pub struct Report {
     /// Never affects [`Report::status`] or [`Report::exit_code`] — purely
     /// informational. (Carried through from compilation; see [`PlaceholderInfo`].)
     pub placeholders: Vec<PlaceholderInfo>,
+    /// One record per `TRY <literal>` hypothesis: whether asserting the supplied
+    /// candidate would **close** the open model, **conflict** with what is
+    /// established, or leave it **still open** — the abduction (L5) voice. The
+    /// hypothesis is never committed, so this **never affects [`Report::status`] or
+    /// [`Report::exit_code`]** — purely informational (like DERIVED/DEFEATED).
+    pub tried: Vec<Tried>,
+}
+
+/// The engine's verdict on one `TRY <literal>` hypothesis — whether asserting the
+/// supplied candidate would resolve the program's open gap. Each is decided by a
+/// single side-solve (the program *plus* the candidate literal); the hypothesis is
+/// never committed to the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TryOutcome {
+    /// Adding the candidate makes the model unique — it closes the gap (the program
+    /// was underdetermined, and this pins it down).
+    Closes,
+    /// Adding the candidate makes the program unsatisfiable — it contradicts what is
+    /// already established.
+    Conflicts,
+    /// Adding the candidate keeps the program satisfiable but still not unique — it
+    /// does not, by itself, pin the model down.
+    StillOpen,
+}
+
+/// One `TRY <literal>` hypothesis and the engine's checked verdict on it. Purely
+/// advisory: the candidate is never committed, so it never changes the verdict or
+/// exit code — it only reports what asserting it *would* do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tried {
+    /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+    /// The ready-to-print candidate literal (e.g. `net.deploys is_ready` or
+    /// `NOT net.deploys is_ready`).
+    pub label: String,
+    /// The engine's checked verdict on asserting this candidate.
+    pub outcome: TryOutcome,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two

@@ -252,3 +252,54 @@ fn warning_fact_because_unknown() {
     // The cited ground is UNKNOWN → WARNING nudging to establish it.
     insta::assert_snapshot!(report("FACT api healthy BECAUSE db reachable\nCHECK api\n"));
 }
+
+// --- TRY (abduction / L5) --------------------------------------------------
+
+#[test]
+fn try_closes_the_gap() {
+    // An open model (a RULE whose antecedent is free): TRYing the antecedent pins
+    // it, so the engine reports the hypothesis would close the gap. Verdict stays
+    // UNDERDETERMINED — TRY is advisory, it never commits the candidate.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        CHECK BIDIRECTIONAL
+        TRY deploys is_ready
+        "#
+    ));
+}
+
+#[test]
+fn try_conflicts_with_established() {
+    // A hypothesis that contradicts a FACT: the engine reports it would conflict.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT deploys is_ready
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        CHECK BIDIRECTIONAL
+        TRY NOT deploys is_ready
+        "#
+    ));
+}
+
+#[test]
+fn try_leaves_it_still_open() {
+    // A hypothesis that pins one part but leaves another free: the model is still
+    // not unique, so the engine reports the gap stays open.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        RULE gate2:
+            WHEN backup done
+            THEN backup safe
+        CHECK BIDIRECTIONAL
+        TRY deploys is_ready
+        "#
+    ));
+}

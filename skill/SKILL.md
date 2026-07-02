@@ -51,7 +51,7 @@ until it is **CONSISTENT**.
 |--------|:----:|---------|----------------|
 | **CONSISTENT** | 0 | no contradiction; answer pinned down | done |
 | **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` — or, if that atom should follow automatically from an already-true `WHEN`, make it a `RULE` (which derives it) instead of a `PREMISE` |
-| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`fix: add …`) |
+| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`fix: add …`) — or `TRY <atom>` first to have the engine check a candidate would pin it before you commit |
 | **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — the `CORE`/`RETRACT` names each culprit with a `drop` (and, for a fact, a verified `flip it to: …  (checked)`); apply ONE, re-check |
 
 **The target before you act on the reasoning is `CONSISTENT` (exit 0) — nothing
@@ -193,6 +193,27 @@ FACT api healthy BECAUSE db reachable    // the claim, and the reason for it
 FACT   rel reviewed
 ASSUME rel in_prod            // what if this ships to prod?
 ASSUME NOT rel has_rollback
+```
+
+### `TRY` — test a hypothesis **without committing it** (abduction)
+- **is** — a candidate the engine *checks but never adopts*: it reports whether
+  asserting the atom would **close** the open model, **conflict** with what is
+  established, or leave it **still open** — then discards it. The verdict, exit code
+  and model are **untouched** (advisory, like `DERIVED`).
+- **use when** — an `UNDERDETERMINED` gap (or any "what would pin this?"): propose the
+  missing atom and let the engine *check* it before you actually write the `FACT`. This
+  is the "add" side of the fix loop (`CORE`/`RETRACT` say what to *drop/flip*; `TRY`
+  says whether an *add* would work).
+- **not `ASSUME`** — an `ASSUME` **is committed**: it enters the model, fires rules, and
+  can flip the verdict (and be `RETRACT`ed). A `TRY` does none of that — it only asks a
+  question. Reach for `TRY` to probe, `ASSUME` to actually suppose.
+- **form** — `TRY <atom>` · `TRY NOT <atom>`
+```vrf
+RULE gate:
+    WHEN deploys is_ready
+    THEN deploys unblocked
+CHECK BIDIRECTIONAL           // UNDERDETERMINED: is_ready is free
+TRY deploys is_ready          // → closes the gap: the model is now pinned  (checked)
 ```
 
 ### `PREMISE` — a checked first principle
@@ -559,6 +580,20 @@ hypotheses to drop. The verdict is still `CONFLICT` (exit 2), but the fix is
 Drop (or flip) any one of those `ASSUME` lines and re-check. A `FACT`/`PREMISE`
 is never listed here — only your hypotheses (JSON: `retract`, each item tagged
 `"kind":"ASSUME"`).
+
+**`TRY`** — the "add" side of the fix loop: for each `TRY <atom>` you wrote, the
+engine's checked verdict on whether asserting that candidate would resolve the gap.
+Where `CORE`/`RETRACT` say what to *drop or flip*, `TRY` says whether an *add* would
+work — **without committing it** (advisory; the verdict above is unchanged):
+```
+  TRY       deploys is_ready
+      closes the gap: the model is now pinned   (checked)
+```
+The verdict is one of three, always `(checked)` (the engine actually re-solved it):
+`closes the gap` (asserting it pins the model → now write it as a real `FACT`),
+`conflicts` (it clashes with what is established → the wrong candidate), or
+`still open` (it doesn't pin the model by itself → more is needed). JSON: `tried`,
+each item `{"outcome":"closes|conflicts|still_open"}`.
 
 **`HINT`** — advisory possible-typo nudge; **never changes the verdict**:
 ```

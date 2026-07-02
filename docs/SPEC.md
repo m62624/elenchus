@@ -385,9 +385,9 @@ engine *propose* the missing hypothesis itself.
 ## DSL: keywords
 
 **A purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
-`RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses, plus a few
-words for the body of constraints and rules, plus `DOMAIN`/`IMPORT`/`AS` for
-namespacing and reuse.
+`RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses and `TRY` for
+*uncommitted* what-if checks, plus a few words for the body of constraints and
+rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 
 | Word | Meaning | Kind |
 |---|---|---|
@@ -396,6 +396,7 @@ namespacing and reuse.
 | `FACT … BECAUSE …` | a TRUE assertion that names its ground; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) | premise + justification |
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
+| `TRY` | test a hypothesis **without committing it** (`[NOT]` atom): the engine reports whether asserting it would close the open model, conflict, or leave it open — never enters the model or the verdict (abduction, L5) | hypothesis (advisory) |
 | `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
@@ -1247,6 +1248,22 @@ only levers are removing a written construct or flipping a written fact. Proposi
 *new* missing premise that would restore consistency is a different layer
 (abduction): there the model supplies a candidate and the engine checks it — the
 engine never searches for one itself.
+
+**`TRY` — the abduction voice (the "add" side).** That different layer is `TRY
+[NOT] <atom>`: the model supplies a candidate the engine has **not** committed, and
+the engine runs one bounded side-solve (the program plus that single literal) to
+report which of three holds — **`closes`** (the program was underdetermined and the
+candidate makes the model unique), **`conflicts`** (the candidate makes the program
+unsatisfiable — it clashes with what is established), or **`still open`** (it stays
+satisfiable but not unique — the candidate does not pin it by itself). Each verdict is
+`(checked)` — the side-solve actually ran. It is the mirror of the repair voice: `CORE`
+/`retract` name what to *drop or flip*, `TRY` reports whether an *add* would work.
+Crucially it is **advisory** — the candidate never enters the model, so `TRY` never
+changes the verdict, exit code, model, or reasoning order (like `DERIVED`/`DEFEATED`).
+Cost is one re-solve per `TRY` line: the engine checks the supplied candidate, it never
+enumerates candidates of its own. On an already-unsatisfiable program every `TRY` reads
+as `conflicts` (adding a clause cannot clear a conflict — that is the repair voice's
+job). In JSON: a `tried` array, each item `{"outcome":"closes"|"conflicts"|"still_open"}`.
 
 ## Invariants and edge cases
 

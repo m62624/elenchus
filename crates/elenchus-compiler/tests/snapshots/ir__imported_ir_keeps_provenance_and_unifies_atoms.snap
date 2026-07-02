@@ -120,4 +120,5 @@ Compiled {
     placeholders: [],
     unwitnessed_exists: [],
     justifications: [],
+    hypotheses: [],
 }

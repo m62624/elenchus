@@ -8,20 +8,22 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use elenchus_parser::{Atom, Body, Conn, ExistsDomain, ListOp, Located, Quant, Statement, kw};
+use elenchus_parser::{
+    Atom, Body, Conn, ExistsDomain, ListOp, Literal, Located, Quant, Statement, kw,
+};
 
 use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Check, Clause, Compiled, Fact, Justification, Lit, Origin, PlaceholderInfo,
-    PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
+    AtomId, AtomKey, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit, Origin,
+    PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawClause, RawFact, RawJustification, RawLit, RawRule, canonical_body, clause_sig, key_sig,
-    list_kind, quant_sig, raw_lits,
+    RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule, canonical_body,
+    clause_sig, key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -82,6 +84,9 @@ pub struct Compiler {
     /// `FACT … BECAUSE <ground>` justifications. Inert for the SAT core (no clause);
     /// the solver checks the ground's value (FALSE → CONFLICT, UNKNOWN → WARNING).
     justifications: Vec<RawJustification>,
+    /// `TRY <literal>` hypotheses. Never committed to the model (no clause, no fact);
+    /// the solver runs one side-solve per hypothesis and reports the outcome.
+    hypotheses: Vec<RawHypothesis>,
 }
 
 impl Compiler {
@@ -224,6 +229,9 @@ impl Compiler {
                 };
                 self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
             }
+            Statement::Try(l) => {
+                self.add_hypothesis(source, l, ctx)?;
+            }
             Statement::Check {
                 subject,
                 bidirectional,
@@ -347,6 +355,32 @@ impl Compiler {
                 line: belief.span.location_line(),
                 premise: None,
                 kind: kw::BECAUSE,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `TRY <literal>` hypothesis. The candidate atom is interned here so it
+    /// has a SAT variable in the side-solve (an otherwise-unmentioned atom would have
+    /// no id). No fact and no clause are emitted — the hypothesis never enters the
+    /// model or the verdict; the solver only re-solves the program *plus* this literal
+    /// and reports whether it closes the open gap.
+    fn add_hypothesis(
+        &mut self,
+        source: &str,
+        lit: &Located<Literal>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        self.hypotheses.push(RawHypothesis {
+            key,
+            negated: lit.data.negated,
+            origin: Origin {
+                source: source.to_string(),
+                line: lit.span.location_line(),
+                premise: None,
+                kind: kw::TRY,
             },
         });
         Ok(())
@@ -1070,6 +1104,18 @@ impl Compiler {
             })
             .collect();
 
+        let hypotheses = self
+            .hypotheses
+            .into_iter()
+            .map(|h| Hypothesis {
+                lit: Lit {
+                    atom: id_of(&h.key),
+                    negated: h.negated,
+                },
+                origin: h.origin,
+            })
+            .collect();
+
         Compiled {
             atoms,
             facts,
@@ -1082,6 +1128,7 @@ impl Compiler {
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
             unwitnessed_exists: self.unwitnessed_exists,
             justifications,
+            hypotheses,
         }
     }
 }

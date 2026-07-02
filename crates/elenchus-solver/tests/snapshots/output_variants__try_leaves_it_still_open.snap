@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        RULE gate:\n            WHEN deploys is_ready\n            THEN deploys unblocked\n        RULE gate2:\n            WHEN backup done\n            THEN backup safe\n        CHECK BIDIRECTIONAL\n        TRY deploys is_ready\n        \"#)"
+---
+RESULT: UNDERDETERMINED
+  UNDERDETERMINED  an alternative model exists
+      fix: add FACT d.deploys unblocked (or NOT d.deploys unblocked) to pin the model
+  TRY       d.deploys is_ready
+      still open: it does not pin the model   (checked)
+SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 1

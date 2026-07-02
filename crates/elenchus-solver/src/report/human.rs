@@ -1,6 +1,6 @@
 //! The human-readable report rendering (the `Display for Report` path).
 use super::json::status_name;
-use super::{CoreItem, FixKind, Report, Status, TraceReason, TraceStep};
+use super::{CoreItem, FixKind, Report, Status, TraceReason, TraceStep, TryOutcome};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -202,6 +202,18 @@ impl Report {
                 ITEM,
                 "fix: add FACT {atom} (or NOT {atom}) to pin the model"
             )?;
+        }
+        // The abduction (L5) voice: each `TRY <literal>` hypothesis, with the engine's
+        // checked verdict on whether asserting it would close the open gap. Advisory —
+        // the candidate was never committed, so this never changed the result above.
+        for t in &self.tried {
+            emit!(out, SECTION, "TRY       {}", t.label)?;
+            let verdict = match t.outcome {
+                TryOutcome::Closes => "closes the gap: the model is now pinned",
+                TryOutcome::Conflicts => "conflicts: it clashes with what is already established",
+                TryOutcome::StillOpen => "still open: it does not pin the model",
+            };
+            emit!(out, ITEM, "{verdict}   (checked)")?;
         }
         for d in &self.derived {
             let v = match d.value {
