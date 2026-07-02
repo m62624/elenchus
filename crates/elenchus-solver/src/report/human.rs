@@ -1,10 +1,21 @@
 //! The human-readable report rendering (the `Display for Report` path).
 use super::json::status_name;
-use super::{Report, Status, TraceReason, TraceStep};
+use super::{CoreItem, FixKind, Report, Status, TraceReason, TraceStep};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use elenchus_compiler::{Origin, PlaceholderStatus, Value, kw};
+
+/// The verified `flip` alternative for a core / retract item, as a nested line —
+/// present only when the engine confirmed that asserting the opposite value restores
+/// consistency (so `(checked)` is never a promise the engine did not test). `None`
+/// when the only repair is `drop`.
+fn flip_line(it: &CoreItem) -> Option<String> {
+    it.fixes
+        .iter()
+        .find(|fx| fx.kind == FixKind::Flip)
+        .map(|fx| alloc::format!("or flip it to: {}   (checked)", fx.target))
+}
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -117,7 +128,7 @@ impl Report {
                 ITEM,
                 "But these ASSUME guesses cannot all be true together."
             )?;
-            emit!(out, ITEM, "Remove or flip ONE of them, then check again:")?;
+            emit!(out, ITEM, "Remove ONE of them, then check again:")?;
             for it in &self.retract {
                 emit!(
                     out,
@@ -127,6 +138,9 @@ impl Report {
                     it.origin.source,
                     it.origin.line
                 )?;
+                if let Some(flip) = flip_line(it) {
+                    emit!(out, NESTED, "{flip}")?;
+                }
             }
         } else {
             for c in &self.conflicts {
@@ -145,7 +159,7 @@ impl Report {
                 emit!(
                     out,
                     SECTION,
-                    "CORE  smallest jointly-unsatisfiable set ({}):",
+                    "CORE  these {} cannot all hold — drop ONE, then check again:",
                     self.unsat_core.len()
                 )?;
                 for it in &self.unsat_core {
@@ -159,6 +173,9 @@ impl Report {
                         it.origin.source,
                         it.origin.line
                     )?;
+                    if let Some(flip) = flip_line(it) {
+                        emit!(out, NESTED, "{flip}")?;
+                    }
                 }
             }
         }
@@ -180,7 +197,11 @@ impl Report {
         }
         if let Some(atom) = &self.underdetermined {
             emit!(out, SECTION, "UNDERDETERMINED  an alternative model exists")?;
-            emit!(out, ITEM, "pin it down: add  FACT {atom}  or  NOT {atom}")?;
+            emit!(
+                out,
+                ITEM,
+                "fix: add FACT {atom} (or NOT {atom}) to pin the model"
+            )?;
         }
         for d in &self.derived {
             let v = match d.value {

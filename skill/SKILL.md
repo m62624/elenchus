@@ -51,8 +51,8 @@ until it is **CONSISTENT**.
 |--------|:----:|---------|----------------|
 | **CONSISTENT** | 0 | no contradiction; answer pinned down | done |
 | **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` — or, if that atom should follow automatically from an already-true `WHEN`, make it a `RULE` (which derives it) instead of a `PREMISE` |
-| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
-| **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
+| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`fix: add …`) |
+| **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — the `CORE`/`RETRACT` names each culprit with a `drop` (and, for a fact, a verified `flip it to: …  (checked)`); apply ONE, re-check |
 
 **The target before you act on the reasoning is `CONSISTENT` (exit 0) — nothing
 else.** WARNING, UNDERDETERMINED and CONFLICT are *not* "done"; each is the engine
@@ -534,11 +534,12 @@ single premise is visibly violated), the smallest set jointly to blame:
 ```
   CONFLICT  - (UNSAT)  [<system>:0]
       the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
+  CORE  these 4 cannot all hold — drop ONE, then check again:
         a_to_b (PREMISE) [..]      a_to_not_b (PREMISE) [..]
         need_a_or_c (ATLEAST) [..] c_to_a (PREMISE) [..]
 ```
-Revisit exactly those four principles — one of them is wrong.
+Revisit exactly those four principles — one of them is wrong. Each item names its
+repair: `drop` it, or (for a `FACT`) a verified `flip it to: …  (checked)`.
 
 **`RETRACT`** — when your `FACT`s and `PREMISE`s are consistent but your `ASSUME`
 guesses can't all be true at once, the engine names the smallest set of
@@ -547,10 +548,13 @@ hypotheses to drop. The verdict is still `CONFLICT` (exit 2), but the fix is
 ```
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
+      Remove ONE of them, then check again:
       ASSUME rel in_prod   [program.vrf:6]
+        or flip it to: NOT rel in_prod   (checked)
       ASSUME NOT rel has_rollback   [program.vrf:7]
+        or flip it to: rel has_rollback   (checked)
       ASSUME NOT rel has_feature_flag   [program.vrf:8]
+        or flip it to: rel has_feature_flag   (checked)
 ```
 Drop (or flip) any one of those `ASSUME` lines and re-check. A `FACT`/`PREMISE`
 is never listed here — only your hypotheses (JSON: `retract`, each item tagged

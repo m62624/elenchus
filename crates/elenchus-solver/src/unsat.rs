@@ -1,7 +1,7 @@
 //! The minimal-unsat-core search: which named constructs / facts are jointly
 //! responsible for an unsatisfiable system, via SAT under assumptions.
 use crate::cnf::{clause_lit, fact_lit, rule_consequent_clause};
-use crate::report::{CoreItem, label};
+use crate::report::{CoreItem, Fix, FixKind, label};
 use crate::sat;
 use alloc::string::String;
 use alloc::vec;
@@ -63,9 +63,11 @@ pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
             } else {
                 label(c, f.atom)
             };
+            let fixes = fixes_for(c, &all, &active, i, &label);
             CoreItem {
                 origin: f.origin.clone(),
                 label,
+                fixes,
             }
         })
         .collect();
@@ -147,6 +149,71 @@ pub(crate) fn subset_is_sat(num_vars: usize, all: &[Construct], active: &[bool])
     sat::solve(&cnf).is_some()
 }
 
+/// Would *flipping* construct `i` (a single-unit `FACT`/`ASSUME`) — keeping every
+/// currently-active construct as-is, but asserting the opposite value for `i` —
+/// restore satisfiability? Only unit constructs can be flipped; a premise/rule has
+/// no single polarity to reverse, so this returns `false` for them (their only fix
+/// is `Drop`). Tested against the same `active` mask the drop-minimization used, so
+/// the flip advice shares the drop advice's frame of reference.
+pub(crate) fn flip_restores_sat(
+    num_vars: usize,
+    all: &[Construct],
+    active: &[bool],
+    i: usize,
+) -> bool {
+    // A flippable construct is exactly one unit clause holding one literal.
+    if all[i].clauses.len() != 1 || all[i].clauses[0].len() != 1 {
+        return false;
+    }
+    let flipped = all[i].clauses[0][0].negate();
+    let mut cnf = sat::Cnf::new(num_vars);
+    for (k, (cons, &keep)) in all.iter().zip(active).enumerate() {
+        if !keep {
+            continue;
+        }
+        if k == i {
+            cnf.add_clause(vec![flipped]);
+        } else {
+            for cl in &cons.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// The engine-verified repairs for a retained construct `i`: always `Drop` (its
+/// removal restores SAT — that is what put it in the minimal set), plus `Flip` **only
+/// when** re-solving with the fact flipped is actually consistent. `Flip` is offered
+/// only for a `FACT`/`ASSUME` (`i < c.facts.len()`, the 1:1 prefix in [`constructs`]);
+/// its target is the literal the flip would assert (opposite of the fact's value).
+pub(crate) fn fixes_for(
+    c: &Compiled,
+    all: &[Construct],
+    active: &[bool],
+    i: usize,
+    drop_target: &str,
+) -> Vec<Fix> {
+    let mut fixes = vec![Fix {
+        kind: FixKind::Drop,
+        target: String::from(drop_target),
+    }];
+    if i < c.facts.len() && flip_restores_sat(c.atoms.len(), all, active, i) {
+        let f = &c.facts[i];
+        // The flip asserts the opposite of the fact's current value.
+        let target = if matches!(f.value, Value::True) {
+            alloc::format!("NOT {}", label(c, f.atom))
+        } else {
+            label(c, f.atom)
+        };
+        fixes.push(Fix {
+            kind: FixKind::Flip,
+            target,
+        });
+    }
+    fixes
+}
+
 /// A fast sufficient core via one assumption-solve: each construct gets a fresh
 /// selector variable `s_k`, every clause becomes `(¬s_k ∨ clause)`, and we solve
 /// asserting all selectors true. The SAT core (a subset of the selectors) names a
@@ -204,11 +271,15 @@ pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
     }
     let mut core: Vec<CoreItem> = all
         .iter()
-        .zip(&active)
-        .filter(|&(_, &keep)| keep)
-        .map(|(k, _)| CoreItem {
-            origin: k.origin.clone(),
-            label: k.label.clone(),
+        .enumerate()
+        .filter(|&(i, _)| active[i])
+        .map(|(i, k)| {
+            let fixes = fixes_for(c, &all, &active, i, &k.label);
+            CoreItem {
+                origin: k.origin.clone(),
+                label: k.label.clone(),
+                fixes,
+            }
         })
         .collect();
     core.sort_by_key(|it| key(&it.origin));

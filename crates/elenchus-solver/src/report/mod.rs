@@ -183,13 +183,48 @@ pub struct OrphanFact {
     pub origin: Origin,
 }
 
-/// One construct named in an [`Report::unsat_core`].
+/// One construct named in an [`Report::unsat_core`] or [`Report::retract`], with the
+/// concrete repair actions that would clear the contradiction if applied to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreItem {
     /// Provenance of the construct (source, line, kind, premise name if any).
     pub origin: Origin,
     /// A human label: the premise/rule name, or the atom for a bare `FACT`/`NOT`.
     pub label: String,
+    /// Engine-verified minimal repairs for this construct: always a [`FixKind::Drop`]
+    /// (removing it restores consistency — that is what put it in the minimal set),
+    /// plus a [`FixKind::Flip`] **only when re-solving with the flipped fact actually
+    /// yields a consistent system**. Purely advisory — naming which single edit clears
+    /// the CONFLICT, without changing the verdict or exit code.
+    pub fixes: Vec<Fix>,
+}
+
+/// One concrete, engine-checked repair the reader can apply, then re-run — the
+/// engine's answer to "CONFLICT, but *what do I change?*". Purely advisory: applying
+/// it is the caller's choice, and its presence never affects [`Report::status`] or
+/// [`Report::exit_code`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fix {
+    /// What to do to the target.
+    pub kind: FixKind,
+    /// The ready-to-print target: the construct to drop, or the literal a flip would
+    /// assert instead (e.g. `NOT rel has_rollback`).
+    pub target: String,
+}
+
+/// The kind of a [`Fix`]. Only these two can repair a CONFLICT: a jointly-unsatisfiable
+/// clause set stays unsatisfiable under *more* clauses, so **adding** a fact can never
+/// clear a conflict (that is monotonicity, not a heuristic) — the only levers are
+/// removing a written construct or flipping a written fact's polarity. Proposing a
+/// *new* missing premise is a different layer (abduction), where the LLM supplies the
+/// candidate and the engine checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixKind {
+    /// Delete the written construct (`FACT` / `ASSUME` / `PREMISE` / `RULE`).
+    Drop,
+    /// Reverse a written fact's polarity (`FACT x` ↔ `NOT x`). Every `Flip` in a
+    /// [`CoreItem::fixes`] list is engine-verified: re-solving with it is consistent.
+    Flip,
 }
 
 /// Render atom `a` as the human string `domain.subject predicate [object]`. The

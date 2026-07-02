@@ -163,7 +163,7 @@ backward pass says so and suggests how to pin it:
 $ elenchus-cli service.vrf
 RESULT: UNDERDETERMINED
   UNDERDETERMINED  an alternative model exists
-      pin it down: add  FACT net.service_api is uncached  or  NOT net.service_api is uncached
+      fix: add FACT net.service_api is uncached (or NOT net.service_api is uncached) to pin the model
   DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:5]
 SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 1
@@ -198,8 +198,9 @@ $ elenchus-cli service.vrf
 RESULT: CONFLICT
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
+      Remove ONE of them, then check again:
       ASSUME net.api_auth is optional   [service.vrf:11]
+        or flip it to: NOT net.api_auth is optional   (checked)
   DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:4]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
 EXIT_CODE: 2

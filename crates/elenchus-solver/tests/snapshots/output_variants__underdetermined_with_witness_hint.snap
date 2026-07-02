@@ -4,6 +4,6 @@ expression: "report(r#\"\n        PREMISE e:\n            EXCLUSIVE\n           
 ---
 RESULT: UNDERDETERMINED
   UNDERDETERMINED  an alternative model exists
-      pin it down: add  FACT d.x b  or  NOT d.x b
+      fix: add FACT d.x b (or NOT d.x b) to pin the model
 SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 0 derived
 EXIT_CODE: 1

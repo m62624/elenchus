@@ -349,8 +349,9 @@ soft = ASSUME                             (hypotheses)
   The engine computes the **minimal set of `ASSUME`s to retract** — an irreducible
   group that cannot all hold *together with every fact and premise* — by
   deletion-minimization over the soft constructs only (hard constructs stay
-  pinned, so a `FACT`/`PREMISE` is **never** named). Dropping (or flipping) any one
-  restores consistency.
+  pinned, so a `FACT`/`PREMISE` is **never** named). Dropping any one restores
+  consistency; each item also carries a **verified `flip`** — the opposite value,
+  re-solved to confirm it is consistent before it is offered (never a bare promise).
 
 The verdict stays **`CONFLICT`** (exit code 2) — a contradiction is a
 contradiction — but the report carries a `retract` list instead of (and
@@ -360,16 +361,20 @@ superseding) the raw conflict pool, and names only hypotheses:
 RESULT: CONFLICT
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
+      Remove ONE of them, then check again:
       ASSUME rel in_prod   [program.vrf:6]
+        or flip it to: NOT rel in_prod   (checked)
       ASSUME NOT rel has_rollback   [program.vrf:7]
+        or flip it to: rel has_rollback   (checked)
       ASSUME NOT rel has_feature_flag   [program.vrf:8]
+        or flip it to: rel has_feature_flag   (checked)
 EXIT_CODE: 2
 ```
 
-In JSON this is the `retract` array; every item is tagged `"kind":"ASSUME"`, so a
-caller can distinguish "drop a hypothesis" from "a commitment is wrong"
-programmatically without a new status or exit code. Like a direct conflict, an
+In JSON this is the `retract` array; every item is tagged `"kind":"ASSUME"` and
+carries a `fixes` array (`{"action":"drop"|"flip","target":…}`), so a caller can
+distinguish "drop a hypothesis" from "a commitment is wrong" — and read the exact
+edit — programmatically without a new status or exit code. Like a direct conflict, an
 assumption clash that only emerges under case-splitting needs `BIDIRECTIONAL`;
 clashes visible in the forward pass (the common case) are caught without it.
 
@@ -1213,17 +1218,35 @@ an irreducible set, reported as `unsat_core`:
 ```
 CONFLICT  - (UNSAT)  [<system>:0]
     the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
+  CORE  these 4 cannot all hold — drop ONE, then check again:
         one_ab (ONEOF)   [..:1]
         a_implies_c (PREMISE) [..:5]
         b_implies_c (PREMISE) [..:8]
         x c (NOT)        [..:11]
+        or flip it to: x c   (checked)
 ```
 
 This costs O(n) SAT calls over the constructs — fine at our scale, and needs no
 proof logging (which the in-crate SAT core deliberately omits). A premise that
 desugared into several clauses is grouped back by origin, so the core blames whole
 premises, not clause shards.
+
+**The repair voice (what to change).** Every jointly-unsatisfiable finding — a
+`CORE` or a `retract` — carries the *minimal edit* that clears it, in one grammar:
+each item is a **`drop`** (removing it restores consistency — that is what put it in
+the minimal set), and a `FACT`/`ASSUME` additionally gets a **verified `flip`** (the
+opposite value, re-solved to confirm consistency before it is shown — `(checked)` is
+never a promise the engine did not test). A premise/rule has no single polarity, so
+its only repair is `drop`. In JSON each item's `fixes` array carries these as
+`{"action":"drop"|"flip","target":…}`.
+
+These two — `drop` and `flip` — are the *complete* toolbox for a CONFLICT, and this
+is a theorem, not a heuristic: an unsatisfiable clause set stays unsatisfiable under
+*more* clauses (monotonicity), so **adding** a fact can never clear a conflict. The
+only levers are removing a written construct or flipping a written fact. Proposing a
+*new* missing premise that would restore consistency is a different layer
+(abduction): there the model supplies a candidate and the engine checks it — the
+engine never searches for one itself.
 
 ## Invariants and edge cases
 
