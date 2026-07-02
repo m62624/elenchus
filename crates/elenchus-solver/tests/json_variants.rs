@@ -176,6 +176,20 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "unsat_core_joint",
             "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nCHECK x BIDIRECTIONAL\n",
         ),
+        // TRY hypotheses (abduction / L5): one case per outcome so the populated
+        // `tried` array shape is snapshotted for each of closes / conflicts / still_open.
+        (
+            "try_closes",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
+        ),
+        (
+            "try_conflicts",
+            "FACT deploys is_ready\nRULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY NOT deploys is_ready\n",
+        ),
+        (
+            "try_still_open",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nRULE gate2:\n    WHEN backup done\n    THEN backup safe\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
+        ),
     ]
 }
 

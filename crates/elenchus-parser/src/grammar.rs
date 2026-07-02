@@ -564,6 +564,22 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Assume(lit)))
 }
 
+/// `TRY [NOT] <atom>` — a hypothesis under test (the abduction voice). Same surface
+/// as `ASSUME` (an optional leading `NOT`, then an atom), but the compiler never
+/// commits it to the model: the engine only reports whether asserting it would close
+/// the open gap.
+fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::TRY), space1).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "TRY expects an atom: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the TRY atom")?;
+    Ok((input, Statement::Try(lit)))
+}
+
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
 /// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
@@ -844,6 +860,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_provide,
         stmt_fact,
         stmt_assume,
+        stmt_try,
         stmt_premise,
         stmt_rule,
         stmt_check,

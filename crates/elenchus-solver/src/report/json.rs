@@ -1,5 +1,5 @@
 //! JSON serialization of a [`Report`] (stable, machine-readable output).
-use super::{Fix, FixKind, Report, Status, TraceReason, TraceStep};
+use super::{Fix, FixKind, Report, Status, TraceReason, TraceStep, TryOutcome};
 use alloc::string::String;
 use elenchus_compiler::{Origin, PlaceholderStatus, Value};
 
@@ -29,7 +29,8 @@ impl Report {
             + self.hints.len()
             + self.orphans.len()
             + self.unused_imports.len()
-            + self.placeholders.len();
+            + self.placeholders.len()
+            + self.tried.len();
         let mut s = String::with_capacity(256 + entries * 64);
         let _ = write!(s, "{{\"status\":");
         status_name(self.status).write_json(&mut s);
@@ -185,6 +186,23 @@ impl Report {
                 Some(o) => o.write_json(&mut s),
                 None => s.push_str("null"),
             }
+            s.push('}');
+        }
+        s.push_str("],\"tried\":[");
+        for (i, t) in self.tried.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&t.origin, &mut s);
+            s.push_str(",\"label\":");
+            t.label.write_json(&mut s);
+            let outcome = match t.outcome {
+                TryOutcome::Closes => "closes",
+                TryOutcome::Conflicts => "conflicts",
+                TryOutcome::StillOpen => "still_open",
+            };
+            s.push_str(",\"outcome\":");
+            outcome.write_json(&mut s);
             s.push('}');
         }
         s.push_str("]}");

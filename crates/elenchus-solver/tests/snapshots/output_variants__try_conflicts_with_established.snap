@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        FACT deploys is_ready\n        RULE gate:\n            WHEN deploys is_ready\n            THEN deploys unblocked\n        CHECK BIDIRECTIONAL\n        TRY NOT deploys is_ready\n        \"#)"
+---
+RESULT: CONSISTENT
+  TRY       NOT d.deploys is_ready
+      conflicts: it clashes with what is already established   (checked)
+  DERIVED   d.deploys unblocked = TRUE   from gate (RULE)  [v.vrf:4]
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 0

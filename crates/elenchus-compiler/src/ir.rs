@@ -173,6 +173,12 @@ pub struct Compiled {
     /// hold"), UNKNOWN → WARNING ("your reason is unestablished"), TRUE → silent. It
     /// emits **no clause** — the check is evaluative, not a constraint.
     pub justifications: Vec<Justification>,
+    /// One record per `TRY <literal>` — the abduction (L5) layer. A hypothesis under
+    /// test: the LLM supplies a candidate the engine has *not* committed. The solver
+    /// runs one side-solve (the program plus this literal) and reports whether
+    /// asserting it would close the open model, conflict with it, or leave it open.
+    /// It emits **no clause and no fact** — it never enters the model or the verdict.
+    pub hypotheses: Vec<Hypothesis>,
 }
 
 /// An advisory record: an `EXISTS` premise that named no candidate — neither a
@@ -203,6 +209,18 @@ pub struct Justification {
     /// The cited ground atom whose value the engine checks.
     pub ground: AtomId,
     /// Provenance of the `BECAUSE` (source, line, kind = `BECAUSE`).
+    pub origin: Origin,
+}
+
+/// One `TRY <literal>` hypothesis: the candidate atom (with its polarity) and the
+/// provenance of the `TRY`. The solver adds this single literal to the program and
+/// re-solves, judging the outcome — it is **evaluative, not a constraint**: it emits
+/// no clause and no fact, so it never enters the model or affects the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hypothesis {
+    /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// Provenance of the `TRY` (source, line, kind = `TRY`).
     pub origin: Origin,
 }
 

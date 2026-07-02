@@ -505,6 +505,7 @@ impl<'a> Eval<'a> {
             orphans: Vec::new(), // filled by `solve` (advisory, post-verdict)
             unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
             placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
+            tried: Vec::new(),   // filled by `solve` (advisory, post-verdict)
         }
     }
 }

@@ -1,7 +1,7 @@
 //! The minimal-unsat-core search: which named constructs / facts are jointly
 //! responsible for an unsatisfiable system, via SAT under assumptions.
-use crate::cnf::{clause_lit, fact_lit, rule_consequent_clause};
-use crate::report::{CoreItem, Fix, FixKind, label};
+use crate::cnf::{build_cnf, clause_lit, fact_lit, rule_consequent_clause};
+use crate::report::{CoreItem, Fix, FixKind, Tried, TryOutcome, label};
 use crate::sat;
 use alloc::string::String;
 use alloc::vec;
@@ -289,4 +289,50 @@ pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
 /// Sort key giving conflicts/warnings a stable, source-then-line order.
 pub(crate) fn key(o: &Origin) -> (String, u32) {
     (o.source.clone(), o.line)
+}
+
+/// The abduction (L5) side-check: for each `TRY <literal>` hypothesis, judge whether
+/// asserting the supplied candidate would resolve the program's open model. Purely
+/// advisory — the candidate is **never committed**; each verdict is one bounded
+/// side-solve (the program CNF plus the single candidate literal), so cost grows with
+/// the number of `TRY` lines, never with any search the engine invents (Law 5).
+///
+/// The base program's model multiplicity (counted up to two) sets the baseline; adding
+/// the candidate either drops it to a unique model ([`TryOutcome::Closes`] — it pins the
+/// gap), makes the program unsatisfiable ([`TryOutcome::Conflicts`] — it clashes with
+/// what is established), or leaves more than one model ([`TryOutcome::StillOpen`] — it
+/// does not pin it). On an already-unsatisfiable program every hypothesis reads as
+/// `Conflicts` (adding a clause never clears a conflict — that is L4's job).
+pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
+    if c.hypotheses.is_empty() {
+        return Vec::new();
+    }
+    let (base_cnf, project) = build_cnf(c);
+    // A single base model over the constrained atoms means the program is already
+    // pinned; two means it is open (the same measure the backward pass uses).
+    let base_unique = sat::models(&base_cnf, &project, 2).len() == 1;
+    c.hypotheses
+        .iter()
+        .map(|h| {
+            let mut cnf = base_cnf.clone();
+            // Assert the candidate literal (positive unless it was written `TRY NOT …`).
+            cnf.add_clause(vec![sat::SatLit::new(h.lit.atom, !h.lit.negated)]);
+            let outcome = match sat::models(&cnf, &project, 2).len() {
+                0 => TryOutcome::Conflicts,
+                1 if !base_unique => TryOutcome::Closes,
+                _ => TryOutcome::StillOpen,
+            };
+            let name = label(c, h.lit.atom);
+            let text = if h.lit.negated {
+                alloc::format!("NOT {name}")
+            } else {
+                name
+            };
+            Tried {
+                origin: h.origin.clone(),
+                label: text,
+                outcome,
+            }
+        })
+        .collect()
 }

@@ -59,7 +59,7 @@ use elenchus_compiler::Compiled;
 
 use crate::analysis::{orphan_facts, similar_atom_pairs};
 use crate::eval::Eval;
-use crate::unsat::retract_assumptions;
+use crate::unsat::{retract_assumptions, tried_hypotheses};
 
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
@@ -74,7 +74,7 @@ pub use elenchus_compiler::{
 };
 pub use report::{
     Conflict, CoreItem, Derived, Fix, FixKind, OrphanFact, Report, SimilarAtoms, Status,
-    TraceReason, TraceStep, Warning,
+    TraceReason, TraceStep, Tried, TryOutcome, Warning,
 };
 pub use v3::V3;
 
@@ -124,6 +124,10 @@ pub fn solve(c: &Compiled) -> Report {
     // Advisory only: the per-port placeholders record (computed at compile time).
     // Never influences status/exit code.
     report.placeholders = c.placeholders.clone();
+    // Advisory only: the abduction (L5) side-check — for each `TRY <literal>`, whether
+    // asserting it would close the open model, conflict, or leave it open. Post-verdict,
+    // one bounded side-solve per hypothesis; never influences status/exit code.
+    report.tried = tried_hypotheses(c);
     report
 }
 
