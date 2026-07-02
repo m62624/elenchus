@@ -41,6 +41,10 @@ insta = "1.41"
 # Property-based testing
 proptest = "1"
 
+# Wall-clock benchmarks (informational only; CI gates use the deterministic
+# work counters instead — see crates/elenchus-solver/tests/perf_gates.rs)
+criterion = "0.7"
+
 # JSON (dev: validate Report::to_json output; runtime dep of the MCP server)
 serde_json = "1"
 

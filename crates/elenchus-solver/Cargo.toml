@@ -22,8 +22,16 @@ elenchus-compiler = { workspace = true }
 insta = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
+criterion = { workspace = true }
 
 [features]
 default = ["std"]
 # Propagates std to the compiler (enables FileResolver-based verification).
 std = ["elenchus-compiler/std"]
+
+# Wall-clock benchmarks: informational, run locally (or via the `benchmark` PR
+# label) — never a CI gate; the honest cross-hardware gates are the counter
+# tests in tests/perf_gates.rs.
+[[bench]]
+name = "sat"
+harness = false

@@ -12,13 +12,22 @@
 //! **core** (a sufficient subset of the assumptions) via MiniSat's `analyzeFinal`.
 //! This is the primitive behind incremental cores and what-if queries.
 //!
+//! **Incremental solving** ([`Incremental`]): one clause database answering a
+//! sequence of assumption queries, learned clauses persisting across them —
+//! the engine of the deletion-minimization and TRY-counting paths. Its
+//! deterministic [`Stats`] counters are the cross-hardware performance metric
+//! (`tests/perf_gates.rs`); [`SolverConfig`] switches the measured heuristics
+//! on for verdict/count-only callers.
+//!
 //! Pieces mirror varisat's modules: the trail + decision levels
 //! (`prop/assignment.rs`), two-watched-literal propagation (`prop/long.rs`),
-//! 1-UIP conflict analysis with clause learning (`analyze_conflict.rs`),
+//! 1-UIP conflict analysis with clause learning (`analyze_conflict.rs`) plus
+//! optional learned-clause minimization ([`SolverConfig::ccmin`]),
 //! non-chronological backjumping, VSIDS decisions with phase saving, and
 //! assumption-based solving. Remaining infrastructure (proof/DRAT logging,
-//! clause-DB GC, restarts, the `partial_ref` context, multithreading) is
-//! intentionally omitted.
+//! clause-DB GC, the `partial_ref` context, multithreading) is intentionally
+//! omitted; Luby restarts were implemented, measured on the work counters, and
+//! rejected (see [`SolverConfig::TURBO`]).
 
 use alloc::vec::Vec;
 
