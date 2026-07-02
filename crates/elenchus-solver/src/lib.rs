@@ -73,8 +73,8 @@ pub use elenchus_compiler::{
     normalize_import_path, read_data_bindings, read_data_source,
 };
 pub use report::{
-    Conflict, CoreItem, Derived, OrphanFact, Report, SimilarAtoms, Status, TraceReason, TraceStep,
-    Warning,
+    Conflict, CoreItem, Derived, Fix, FixKind, OrphanFact, Report, SimilarAtoms, Status,
+    TraceReason, TraceStep, Warning,
 };
 pub use v3::V3;
 

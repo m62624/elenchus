@@ -5,7 +5,7 @@ expression: "report(r#\"\n        PREMISE a_implies_b:\n            WHEN x a\n  
 RESULT: CONFLICT
   CONFLICT  - (UNSAT)  [<system>:0]
       the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
+  CORE  these 4 cannot all hold — drop ONE, then check again:
         a_implies_b (PREMISE)  [v.vrf:3]
         a_implies_not_b (PREMISE)  [v.vrf:6]
         atleast_a_c (ATLEAST)  [v.vrf:9]

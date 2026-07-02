@@ -1,5 +1,5 @@
 //! JSON serialization of a [`Report`] (stable, machine-readable output).
-use super::{Report, Status, TraceReason, TraceStep};
+use super::{Fix, FixKind, Report, Status, TraceReason, TraceStep};
 use alloc::string::String;
 use elenchus_compiler::{Origin, PlaceholderStatus, Value};
 
@@ -105,6 +105,7 @@ impl Report {
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
             it.label.write_json(&mut s);
+            json_fixes(&it.fixes, &mut s);
             s.push('}');
         }
         s.push_str("],\"retract\":[");
@@ -115,6 +116,7 @@ impl Report {
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
             it.label.write_json(&mut s);
+            json_fixes(&it.fixes, &mut s);
             s.push('}');
         }
         s.push_str("],\"hints\":[");
@@ -255,6 +257,28 @@ impl ToJson for TraceStep {
         }
         out.push('}');
     }
+}
+
+/// `,"fixes":[{"action":"drop|flip","target":..},..]` — the engine-verified repairs
+/// for one core / retract item (a `flip` entry is present only when re-solving with
+/// the flip is consistent, so tools can trust it without re-checking).
+fn json_fixes(fixes: &[Fix], out: &mut String) {
+    out.push_str(",\"fixes\":[");
+    for (i, fx) in fixes.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let action = match fx.kind {
+            FixKind::Drop => "drop",
+            FixKind::Flip => "flip",
+        };
+        out.push_str("{\"action\":");
+        action.write_json(out);
+        out.push_str(",\"target\":");
+        fx.target.write_json(out);
+        out.push('}');
+    }
+    out.push(']');
 }
 
 pub(crate) fn status_name(s: Status) -> &'static str {
