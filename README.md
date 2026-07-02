@@ -170,7 +170,8 @@ EXIT_CODE: 1
 ```
 
 UNDERDETERMINED means satisfiable but not fully pinned — add the missing fact and
-re-run until CONSISTENT.
+re-run until CONSISTENT (or `TRY` a candidate first to have the engine check it
+would pin the model, below).
 
 ### Trying a hypothesis — `ASSUME`
 
@@ -208,6 +209,38 @@ EXIT_CODE: 2
 
 The verdict stays CONFLICT, but the fix is "drop the hypothesis", not "a fact is
 wrong" — the engine did the backtracking for you.
+
+### Checking a hypothesis without committing — `TRY`
+
+Where `ASSUME` *commits* a soft guess, `TRY` only *asks a question*: it proposes a
+candidate the engine never adopts, and reports whether asserting it would close the
+open model, conflict with it, or leave it open. It is the "add" side of the fix loop
+(`CORE`/`RETRACT` say what to drop or flip) — and it never changes the verdict.
+
+```vrf
+// service.vrf
+DOMAIN net
+RULE auth_rule:
+    WHEN service_api is external
+    THEN api_auth is required
+CHECK service_api BIDIRECTIONAL       // UNDERDETERMINED: service_api is free
+TRY service_api is external           // would asserting this pin the model?
+```
+
+```console
+$ elenchus-cli service.vrf
+RESULT: UNDERDETERMINED
+  UNDERDETERMINED  an alternative model exists
+      fix: add FACT net.api_auth is required (or NOT net.api_auth is required) to pin the model
+  TRY       net.service_api is external
+      closes the gap: the model is now pinned   (checked)
+SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 1
+```
+
+`(checked)` means the engine actually re-solved with the candidate. Now write it as
+a real `FACT` and re-run — the model is CONSISTENT. `TRY` is purely advisory (JSON:
+a `tried` array); the candidate never enters the model or the verdict.
 
 ## Install
 
