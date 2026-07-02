@@ -33,22 +33,25 @@ pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
         .map(|i| i < c.facts.len() && c.facts[i].soft)
         .collect();
 
+    // One shared incremental solver answers every satisfiability question below.
+    let mut cs = ConstructSolver::new(c.atoms.len(), &all);
+
     // The hard program (drop every soft construct) must be consistent on its own,
     // else the facts/premises are to blame and we must not point at assumptions.
     let hard_only: Vec<bool> = is_soft.iter().map(|&s| !s).collect();
-    if !subset_is_sat(c.atoms.len(), &all, &hard_only) {
+    if !cs.subset_is_sat(&hard_only) {
         return Vec::new();
     }
     // The full program must actually be UNSAT for there to be anything to drop.
     let mut active = vec![true; all.len()];
-    if subset_is_sat(c.atoms.len(), &all, &active) {
+    if cs.subset_is_sat(&active) {
         return Vec::new();
     }
     // Deletion-minimize over the soft constructs only; hard ones stay pinned.
     for i in 0..all.len() {
         if active[i] && is_soft[i] {
             active[i] = false;
-            if subset_is_sat(c.atoms.len(), &all, &active) {
+            if cs.subset_is_sat(&active) {
                 active[i] = true; // still needed for the contradiction
             }
         }
@@ -63,7 +66,7 @@ pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
             } else {
                 label(c, f.atom)
             };
-            let fixes = fixes_for(c, &all, &active, i, &label);
+            let fixes = fixes_for(c, &mut cs, &all, &active, i, &label);
             CoreItem {
                 origin: f.origin.clone(),
                 label,
@@ -136,17 +139,74 @@ pub(crate) fn constructs(c: &Compiled) -> Vec<Construct> {
     out
 }
 
-/// Is the program satisfiable using only the constructs marked active?
-pub(crate) fn subset_is_sat(num_vars: usize, all: &[Construct], active: &[bool]) -> bool {
-    let mut cnf = sat::Cnf::new(num_vars);
-    for (k, &keep) in all.iter().zip(active) {
-        if keep {
+/// A persistent selector-guarded solver over the program's constructs — the shared
+/// engine of every minimization loop. Construct `k`'s clauses are loaded once as
+/// `(¬s_k ∨ clause)`; a query *assumes* `s_k` for each active construct. A selector
+/// that is not assumed is free, and since selectors occur only negatively, a free
+/// selector lets the solver switch that construct off — so each query is
+/// equisatisfiable with the formula containing exactly the active constructs.
+///
+/// Incremental on purpose: a deletion-minimization loop asks O(n) closely related
+/// SAT/UNSAT questions over one formula; sharing the clause database lets learned
+/// clauses answer later queries instead of being re-derived from scratch each time.
+/// Only *verdicts* are consumed by the loops (semantically unique, so the reported
+/// cores/fixes are byte-identical to the scratch-per-query implementation this
+/// replaces); the one query whose *contents* feed the report — the initial core
+/// candidate — is the solver's first, which on a fresh database is the exact same
+/// computation as a standalone `solve_assuming`.
+pub(crate) struct ConstructSolver {
+    inc: sat::Incremental,
+    /// Selector variables start here (== the program's atom count).
+    base: usize,
+}
+
+impl ConstructSolver {
+    /// Load every construct's clauses, guarded by one selector each.
+    pub(crate) fn new(num_vars: usize, all: &[Construct]) -> Self {
+        let mut cnf = sat::Cnf::new(num_vars + all.len());
+        for (i, k) in all.iter().enumerate() {
+            let s_neg = sat::SatLit::negative((num_vars + i) as sat::Var);
             for cl in &k.clauses {
-                cnf.add_clause(cl.clone());
+                let mut lits = Vec::with_capacity(cl.len() + 1);
+                lits.push(s_neg);
+                lits.extend_from_slice(cl);
+                cnf.add_clause(lits);
             }
         }
+        ConstructSolver {
+            inc: sat::Incremental::new(&cnf),
+            base: num_vars,
+        }
     }
-    sat::solve(&cnf).is_some()
+
+    /// The selector literal enabling construct `i`.
+    fn selector(&self, i: usize) -> sat::SatLit {
+        sat::SatLit::positive((self.base + i) as sat::Var)
+    }
+
+    /// Is the program satisfiable using only the constructs marked active?
+    pub(crate) fn subset_is_sat(&mut self, active: &[bool]) -> bool {
+        let asm: Vec<sat::SatLit> = active
+            .iter()
+            .enumerate()
+            .filter(|&(_, &a)| a)
+            .map(|(i, _)| self.selector(i))
+            .collect();
+        matches!(self.inc.solve(&asm), sat::Solved::Sat(_))
+    }
+
+    /// Like [`ConstructSolver::subset_is_sat`], but construct `i` is replaced by
+    /// asserting the single literal `flipped` (its selector stays free = off).
+    fn flip_is_sat(&mut self, active: &[bool], i: usize, flipped: sat::SatLit) -> bool {
+        let mut asm: Vec<sat::SatLit> = active
+            .iter()
+            .enumerate()
+            .filter(|&(k, &a)| a && k != i)
+            .map(|(k, _)| self.selector(k))
+            .collect();
+        asm.push(flipped);
+        matches!(self.inc.solve(&asm), sat::Solved::Sat(_))
+    }
 }
 
 /// Would *flipping* construct `i` (a single-unit `FACT`/`ASSUME`) — keeping every
@@ -156,7 +216,7 @@ pub(crate) fn subset_is_sat(num_vars: usize, all: &[Construct], active: &[bool])
 /// is `Drop`). Tested against the same `active` mask the drop-minimization used, so
 /// the flip advice shares the drop advice's frame of reference.
 pub(crate) fn flip_restores_sat(
-    num_vars: usize,
+    cs: &mut ConstructSolver,
     all: &[Construct],
     active: &[bool],
     i: usize,
@@ -165,21 +225,7 @@ pub(crate) fn flip_restores_sat(
     if all[i].clauses.len() != 1 || all[i].clauses[0].len() != 1 {
         return false;
     }
-    let flipped = all[i].clauses[0][0].negate();
-    let mut cnf = sat::Cnf::new(num_vars);
-    for (k, (cons, &keep)) in all.iter().zip(active).enumerate() {
-        if !keep {
-            continue;
-        }
-        if k == i {
-            cnf.add_clause(vec![flipped]);
-        } else {
-            for cl in &cons.clauses {
-                cnf.add_clause(cl.clone());
-            }
-        }
-    }
-    sat::solve(&cnf).is_some()
+    cs.flip_is_sat(active, i, all[i].clauses[0][0].negate())
 }
 
 /// The engine-verified repairs for a retained construct `i`: always `Drop` (its
@@ -189,6 +235,7 @@ pub(crate) fn flip_restores_sat(
 /// its target is the literal the flip would assert (opposite of the fact's value).
 pub(crate) fn fixes_for(
     c: &Compiled,
+    cs: &mut ConstructSolver,
     all: &[Construct],
     active: &[bool],
     i: usize,
@@ -198,7 +245,7 @@ pub(crate) fn fixes_for(
         kind: FixKind::Drop,
         target: String::from(drop_target),
     }];
-    if i < c.facts.len() && flip_restores_sat(c.atoms.len(), all, active, i) {
+    if i < c.facts.len() && flip_restores_sat(cs, all, active, i) {
         let f = &c.facts[i];
         // The flip asserts the opposite of the fact's current value.
         let target = if matches!(f.value, Value::True) {
@@ -214,29 +261,20 @@ pub(crate) fn fixes_for(
     fixes
 }
 
-/// A fast sufficient core via one assumption-solve: each construct gets a fresh
-/// selector variable `s_k`, every clause becomes `(¬s_k ∨ clause)`, and we solve
-/// asserting all selectors true. The SAT core (a subset of the selectors) names a
-/// sufficient set of constructs in a single solve — versus O(n) deletion solves.
-/// Returns an `active` mask over `all`.
-pub(crate) fn candidate_via_assumptions(c: &Compiled, all: &[Construct]) -> Vec<bool> {
-    let base = c.atoms.len();
-    let mut cnf = sat::Cnf::new(base + all.len());
-    let sel = |i: usize| (base + i) as sat::Var;
-    for (i, k) in all.iter().enumerate() {
-        let s_neg = sat::SatLit::negative(sel(i));
-        for cl in &k.clauses {
-            let mut lits = Vec::with_capacity(cl.len() + 1);
-            lits.push(s_neg);
-            lits.extend_from_slice(cl);
-            cnf.add_clause(lits);
-        }
-    }
-    let assumptions: Vec<sat::SatLit> = (0..all.len())
-        .map(|i| sat::SatLit::positive(sel(i)))
-        .collect();
-    let mut active = vec![false; all.len()];
-    match sat::solve_assuming(&cnf, &assumptions) {
+/// A fast sufficient core via one assumption-solve: solve asserting every selector
+/// true; the SAT core (a subset of the selectors) names a sufficient set of
+/// constructs in a single solve — versus O(n) deletion solves. Returns an `active`
+/// mask over the constructs.
+///
+/// Must be the **first** query on `cs`: on a fresh clause database this is the
+/// exact same computation as a standalone `solve_assuming` over the same CNF, so
+/// the returned candidate — whose contents shape the reported core — is identical
+/// to the pre-incremental implementation's.
+pub(crate) fn candidate_via_assumptions(cs: &mut ConstructSolver, count: usize) -> Vec<bool> {
+    let assumptions: Vec<sat::SatLit> = (0..count).map(|i| cs.selector(i)).collect();
+    let base = cs.base;
+    let mut active = vec![false; count];
+    match cs.inc.solve(&assumptions) {
         sat::Solved::Unsat(core) => {
             for lit in core {
                 let v = lit.var() as usize;
@@ -260,11 +298,14 @@ pub(crate) fn candidate_via_assumptions(c: &Compiled, all: &[Construct]) -> Vec<
 /// jointly to blame. Called only when the full system is UNSAT.
 pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
     let all = constructs(c);
-    let mut active = candidate_via_assumptions(c, &all);
+    // One incremental solver serves the candidate solve, the deletion loop, and
+    // the flip checks; the candidate must come first (see its docs).
+    let mut cs = ConstructSolver::new(c.atoms.len(), &all);
+    let mut active = candidate_via_assumptions(&mut cs, all.len());
     for i in 0..all.len() {
         if active[i] {
             active[i] = false;
-            if subset_is_sat(c.atoms.len(), &all, &active) {
+            if cs.subset_is_sat(&active) {
                 active[i] = true; // removing it restored SAT → it is part of the core
             }
         }
@@ -274,7 +315,7 @@ pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
         .enumerate()
         .filter(|&(i, _)| active[i])
         .map(|(i, k)| {
-            let fixes = fixes_for(c, &all, &active, i, &k.label);
+            let fixes = fixes_for(c, &mut cs, &all, &active, i, &k.label);
             CoreItem {
                 origin: k.origin.clone(),
                 label: k.label.clone(),

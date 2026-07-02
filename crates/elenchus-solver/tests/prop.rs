@@ -1135,3 +1135,316 @@ proptest! {
         }
     }
 }
+
+// --- unsat-core / retract equivalence with the scratch reference -------------
+
+use elenchus_solver::FixKind;
+
+/// A generated core case: atom count, per-atom fact choice (0=unknown, 1=T, 2=F,
+/// 3=soft T, 4=soft F), and raw clauses (each becoming its own named premise).
+type CoreCase = (usize, Vec<u8>, RawCnf);
+
+/// Instances aimed at the unsat-core machinery: short clauses so pure-clause
+/// UNSAT (no forward-visible conflict) is common, plus soft facts for retract.
+fn core_instance() -> impl Strategy<Value = CoreCase> {
+    (2usize..=5).prop_flat_map(|n| {
+        let facts = prop::collection::vec(0u8..5, n);
+        let lit = (0u32..(n as u32), any::<bool>());
+        let clause = prop::collection::vec(lit, 1..=2);
+        (Just(n), facts, prop::collection::vec(clause, 0..=8))
+    })
+}
+
+/// Like [`build_compiled`] but with soft facts, one distinct named premise per
+/// clause (so constructs don't collapse by origin), and a BIDIRECTIONAL check.
+fn build_core_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Compiled {
+    let mut compiled = build_compiled(n, &vec![0; n], raw);
+    compiled.facts = fact_choice
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| {
+            let (value, soft) = match c {
+                1 => (Value::True, false),
+                2 => (Value::False, false),
+                3 => (Value::True, true),
+                4 => (Value::False, true),
+                _ => return None,
+            };
+            Some(Fact {
+                atom: i as AtomId,
+                value,
+                origin: Origin {
+                    source: "<prop>".into(),
+                    line: 1 + i as u32,
+                    premise: None,
+                    kind: if soft { "ASSUME" } else { "FACT" },
+                },
+                soft,
+            })
+        })
+        .collect();
+    for (j, clause) in compiled.clauses.iter_mut().enumerate() {
+        clause.origin = Origin {
+            source: "<prop>".into(),
+            line: 100 + j as u32,
+            premise: Some(format!("k{j}")),
+            kind: "EXCLUSIVE",
+        };
+    }
+    compiled.checks = vec![Check {
+        subject: None,
+        bidirectional: true,
+    }];
+    compiled
+}
+
+/// Mirror of the engine's atom label for the atoms [`build_compiled`] makes.
+fn core_label(c: &Compiled, a: AtomId) -> String {
+    let k = &c.atoms[a as usize];
+    format!(
+        "{}.{} {}",
+        k.domain,
+        k.subject,
+        k.predicate.as_ref().unwrap()
+    )
+}
+
+/// One removable construct of the scratch reference: its clauses, report label,
+/// origin line (the engine's sort key here — one source), and fact index if any.
+struct RefConstruct {
+    clauses: Vec<Vec<SatLit>>,
+    label: String,
+    line: u32,
+    fact: Option<usize>,
+}
+
+/// The construct split, exactly as the engine does it: facts 1:1 first (unit
+/// clauses), then premises grouped by origin (distinct here by construction).
+fn ref_constructs(c: &Compiled) -> Vec<RefConstruct> {
+    let mut out: Vec<RefConstruct> = c
+        .facts
+        .iter()
+        .enumerate()
+        .map(|(i, f)| RefConstruct {
+            clauses: vec![vec![match f.value {
+                Value::True => SatLit::positive(f.atom),
+                Value::False => SatLit::negative(f.atom),
+            }]],
+            label: core_label(c, f.atom),
+            line: f.origin.line,
+            fact: Some(i),
+        })
+        .collect();
+    for clause in &c.clauses {
+        out.push(RefConstruct {
+            clauses: vec![
+                clause
+                    .lits
+                    .iter()
+                    .map(|l| SatLit::new(l.atom, l.negated))
+                    .collect(),
+            ],
+            label: clause.origin.premise.clone().unwrap_or_default(),
+            line: clause.origin.line,
+            fact: None,
+        });
+    }
+    out
+}
+
+/// The pre-incremental subset query: a fresh solver over only the active clauses.
+fn ref_subset_is_sat(num_vars: usize, all: &[RefConstruct], active: &[bool]) -> bool {
+    let mut cnf = Cnf::new(num_vars);
+    for (k, &keep) in all.iter().zip(active) {
+        if keep {
+            for cl in &k.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// The pre-incremental candidate: fresh selector CNF, one `solve_assuming`.
+fn ref_candidate(num_vars: usize, all: &[RefConstruct]) -> Vec<bool> {
+    let mut cnf = Cnf::new(num_vars + all.len());
+    for (i, k) in all.iter().enumerate() {
+        let s_neg = SatLit::negative((num_vars + i) as Var);
+        for cl in &k.clauses {
+            let mut lits = vec![s_neg];
+            lits.extend_from_slice(cl);
+            cnf.add_clause(lits);
+        }
+    }
+    let assumptions: Vec<SatLit> = (0..all.len())
+        .map(|i| SatLit::positive((num_vars + i) as Var))
+        .collect();
+    let mut active = vec![false; all.len()];
+    match sat::solve_assuming(&cnf, &assumptions) {
+        Solved::Unsat(core) => {
+            for lit in core {
+                let v = lit.var() as usize;
+                if v >= num_vars {
+                    active[v - num_vars] = true;
+                }
+            }
+        }
+        Solved::Sat(_) => active.iter_mut().for_each(|a| *a = true),
+    }
+    active
+}
+
+/// The pre-incremental flip query: fresh solver, construct `i`'s unit reversed.
+fn ref_flip_is_sat(num_vars: usize, all: &[RefConstruct], active: &[bool], i: usize) -> bool {
+    if all[i].clauses.len() != 1 || all[i].clauses[0].len() != 1 {
+        return false;
+    }
+    let flipped = all[i].clauses[0][0].negate();
+    let mut cnf = Cnf::new(num_vars);
+    for (k, (cons, &keep)) in all.iter().zip(active).enumerate() {
+        if !keep {
+            continue;
+        }
+        if k == i {
+            cnf.add_clause(vec![flipped]);
+        } else {
+            for cl in &cons.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// A retained construct's fixes: always Drop; Flip when the reference verifies it.
+/// Returns `(is_flip, target)` pairs matching the engine's `Fix` rendering.
+fn ref_fixes(
+    c: &Compiled,
+    all: &[RefConstruct],
+    active: &[bool],
+    i: usize,
+    drop_target: &str,
+) -> Vec<(bool, String)> {
+    let mut fixes = vec![(false, drop_target.to_string())];
+    if let Some(fi) = all[i].fact
+        && ref_flip_is_sat(c.atoms.len(), all, active, i)
+    {
+        let f = &c.facts[fi];
+        let target = if matches!(f.value, Value::True) {
+            format!("NOT {}", core_label(c, f.atom))
+        } else {
+            core_label(c, f.atom)
+        };
+        fixes.push((true, target));
+    }
+    fixes
+}
+
+/// One comparable core entry: origin line, label, and (is_flip, target) fixes.
+type FlatCore = Vec<(u32, String, Vec<(bool, String)>)>;
+
+/// The whole pre-incremental `minimal_unsat_core`, scratch solvers throughout.
+fn ref_minimal_core(c: &Compiled) -> FlatCore {
+    let all = ref_constructs(c);
+    let mut active = ref_candidate(c.atoms.len(), &all);
+    for i in 0..all.len() {
+        if active[i] {
+            active[i] = false;
+            if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true;
+            }
+        }
+    }
+    let mut core: FlatCore = all
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| active[i])
+        .map(|(i, k)| {
+            (
+                k.line,
+                k.label.clone(),
+                ref_fixes(c, &all, &active, i, &k.label),
+            )
+        })
+        .collect();
+    core.sort_by_key(|it| it.0);
+    core
+}
+
+/// The whole pre-incremental `retract_assumptions`, scratch solvers throughout.
+fn ref_retract(c: &Compiled) -> FlatCore {
+    if !c.facts.iter().any(|f| f.soft) {
+        return Vec::new();
+    }
+    let all = ref_constructs(c);
+    let is_soft: Vec<bool> = (0..all.len())
+        .map(|i| i < c.facts.len() && c.facts[i].soft)
+        .collect();
+    let hard_only: Vec<bool> = is_soft.iter().map(|&s| !s).collect();
+    if !ref_subset_is_sat(c.atoms.len(), &all, &hard_only) {
+        return Vec::new();
+    }
+    let mut active = vec![true; all.len()];
+    if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+        return Vec::new();
+    }
+    for i in 0..all.len() {
+        if active[i] && is_soft[i] {
+            active[i] = false;
+            if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true;
+            }
+        }
+    }
+    let mut core: FlatCore = (0..all.len())
+        .filter(|&i| active[i] && is_soft[i])
+        .map(|i| {
+            let f = &c.facts[i];
+            let label = if matches!(f.value, Value::False) {
+                format!("NOT {}", core_label(c, f.atom))
+            } else {
+                core_label(c, f.atom)
+            };
+            let fixes = ref_fixes(c, &all, &active, i, &label);
+            (f.origin.line, label, fixes)
+        })
+        .collect();
+    core.sort_by_key(|it| it.0);
+    core
+}
+
+/// Flatten the engine's `CoreItem`s to the reference's comparable shape.
+fn flatten_core(items: &[elenchus_solver::CoreItem]) -> FlatCore {
+    items
+        .iter()
+        .map(|it| {
+            (
+                it.origin.line,
+                it.label.clone(),
+                it.fixes
+                    .iter()
+                    .map(|f| (matches!(f.kind, FixKind::Flip), f.target.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// The incremental minimization (one shared selector solver) reports exactly
+    /// what the scratch-per-query implementation it replaced would have: same
+    /// unsat core, same retract set, same verified fixes, in the same order.
+    #[test]
+    fn incremental_minimization_matches_scratch_reference((n, facts, raw) in core_instance()) {
+        let compiled = build_core_compiled(n, &facts, &raw);
+        let report = solve(&compiled);
+        if !report.unsat_core.is_empty() {
+            prop_assert_eq!(flatten_core(&report.unsat_core), ref_minimal_core(&compiled));
+        }
+        if !report.retract.is_empty() {
+            prop_assert_eq!(flatten_core(&report.retract), ref_retract(&compiled));
+        }
+    }
+}
