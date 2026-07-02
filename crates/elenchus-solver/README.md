@@ -29,11 +29,31 @@ UNKNOWN ≠ FALSE).
 On `CHECK ... BIDIRECTIONAL` a **backward pass** runs too: the premises, rules and
 confident facts are encoded as CNF and solved by a small in-crate CDCL SAT core
 (`sat`, a `no_std` replication of [varisat](https://github.com/jix/varisat)'s
-algorithm — trail + decision levels, two-watched-literal propagation, 1-UIP
-clause learning, non-chronological backjumping, VSIDS). It counts models: 0 →
-jointly unsatisfiable (a CONFLICT the forward pass may miss), ≥2 → an alternative
-model exists (`UNDERDETERMINED`). varisat's infra (proof logging, GC, restarts,
-multithreading) is intentionally omitted.
+algorithm). It counts models: 0 → jointly unsatisfiable (a CONFLICT the forward
+pass may miss), ≥2 → an alternative model exists (`UNDERDETERMINED`).
+
+## Algorithms
+
+What actually runs, piece by piece — no ML, just classic algorithms:
+
+| Piece | Algorithm |
+|-------|-----------|
+| forward pass | forward chaining to a fixpoint over three-valued Kleene logic (TRUE / FALSE / UNKNOWN) |
+| SAT search | CDCL: assignment trail + decision levels, two-watched-literal propagation with blocking literals, 1-UIP conflict analysis with clause learning, non-chronological backjumping |
+| decision order | VSIDS activity with decay + phase saving; the next variable comes off an indexed max-heap (O(log n) per decision) |
+| learned clauses | MiniSat-style minimization (ccmin) — enabled only where the caller consumes verdicts/counts, so reported witnesses never shift |
+| assumptions | MiniSat's `analyzeFinal`: a contradicted assumption yields a sufficient unsat core |
+| incremental solving | one clause database answers a whole sequence of assumption queries; learned clauses persist between them |
+| model counting | enumeration with blocking clauses, counted up to two; per-query blocking clauses are disarmed by guard variables |
+| unsat core | assumption-selector core, then deletion minimization → an irreducible blamed set |
+| fix checking (drop / flip) | each candidate fix is re-solved on the shared incremental solver; only verified fixes are reported |
+| `TRY` (abduction) | one bounded side-solve per supplied hypothesis |
+| `BECAUSE` / `UNLESS` / `WITNESS` / `KNOWS` | direct reads of the settled model, constant work per line |
+| performance gating | deterministic work counters (decisions / propagations / conflicts / learned literals) — bit-identical on any hardware, asserted in tests; wall-clock benchmarks are informational only |
+
+Intentionally omitted from the SAT core: proof/DRAT logging, clause-database GC,
+multithreading. Luby restarts were implemented, measured on the work counters, and
+rejected — they only added conflicts on this engine's workloads.
 
 ## Usage
 

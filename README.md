@@ -43,6 +43,28 @@ Given a `.vrf` program it returns one of four verdicts (and a matching exit code
 The intended loop: run → if not `CONSISTENT`, add the missing facts or rethink the
 premises → re-run until `CONSISTENT`.
 
+## Under the hood
+
+No ML inside — the engine is a pipeline of small, classic algorithms:
+
+| Job | Algorithm |
+|-----|-----------|
+| parsing `.vrf` text | parser combinators (nom), one statement per line |
+| syntax errors | every error found in one pass, grouped by keyword; "did you mean" hints via Levenshtein distance |
+| atoms (`app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
+| deriving facts from `RULE`s | forward chaining to a fixpoint |
+| truth values | three-valued Kleene logic (TRUE / FALSE / UNKNOWN — "unknown" is not "false") |
+| `CHECK … BIDIRECTIONAL` | a small CDCL SAT solver (same algorithm family as MiniSat / varisat) |
+| "is the answer pinned down?" | model enumeration with blocking clauses, counted up to two |
+| "which lines are to blame" | assumption-based unsat core, then deletion minimization — the blamed set is irreducible |
+| `fix:` suggestions (drop / flip) | every suggested fix is re-solved first and only shown if it actually restores consistency |
+| `TRY` hypotheses | one bounded side-solve per hypothesis — the engine checks candidates, it never searches for them |
+| `BECAUSE` / `UNLESS` / `WITNESS` / `KNOWS` | direct lookups against the settled model, constant work per line |
+| typo hints | Levenshtein distance between atom names |
+
+Details (and the exact SAT-core feature list) live in
+[`crates/elenchus-solver`](crates/elenchus-solver).
+
 ## Example
 
 Three ordinary facts, each fine in isolation, that collide two inference steps apart —
