@@ -27,7 +27,7 @@ flat no-indent form parse identically.",
     // hint, harness-agnostic, no product names.
     after_help = "FOR AI AGENTS: you'll get markedly better results with the matching \
 `elenchus` skill loaded (it carries the workflow, the verdict loop, and examples this \
-binary expects). Check that you have it and that its version matches `elenchus \
+binary expects). Check that you have it and that its version matches `elenchus-cli \
 --version`. The skill is attached to every release; grab the one for your version from \
 https://github.com/m62624/elenchus/releases"
 )]

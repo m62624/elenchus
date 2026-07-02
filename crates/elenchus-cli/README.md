@@ -5,32 +5,32 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-The `elenchus-cli` command-line interface — check a `.vrf` program (file, inline
-text, or stdin) and print the verdict. A thin `std` wrapper over the engine
-crates (`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
+The command-line interface of [elenchus](https://github.com/m62624/elenchus), part of
+that project. It reads a `.vrf` program (a file, inline text, or stdin), runs the
+consistency check, and prints the verdict. A thin `std` wrapper over the engine crates
+(`elenchus-parser` → `elenchus-compiler` → `elenchus-solver`).
 
-The **skill** ([`skill/SKILL.md`](../../skill/SKILL.md)) teaches an LLM agent how
-to use elenchus end-to-end — when to reach for it, the DSL, worked examples, and
-the iterate-to-CONSISTENT workflow. It's adapted for the CLI and works in any
-harness that supports shell tools.
+The companion **skill** ([`skill/SKILL.md`](https://github.com/m62624/elenchus/blob/main/skill/SKILL.md)) teaches an LLM agent
+how to drive it end to end — the DSL, worked examples, and the iterate-to-CONSISTENT
+loop. It works in any harness that can run shell tools.
 
 ## Usage
 
+One input, three ways — a positional file, inline `--text`, or stdin `-`:
+
 ```console
-$ elenchus-cli path/to/program.vrf          # check a file (IMPORTs resolve relative to it)
+$ elenchus-cli path/to/program.vrf              # a file (IMPORTs resolve relative to it)
 $ elenchus-cli --text "DOMAIN d
 FACT x a
-CHECK x"                                      # inline program (every file starts with DOMAIN)
-$ cat program.vrf | elenchus-cli -          # stdin
-$ elenchus-cli program.vrf --format json        # machine-readable output
-$ elenchus-cli broken.vrf --max-per-class 3     # cap places shown per error class
+CHECK x"                                          # inline, multi-line
+$ printf 'DOMAIN d\nFACT x a\nNOT x a\nCHECK x\n' | elenchus-cli -   # stdin, one line
+$ elenchus-cli program.vrf --format json          # machine-readable, one line out
+$ elenchus-cli broken.vrf --max-per-class 3       # cap places shown per error class
 ```
 
-One input, three ways: a positional `<file>`, inline `--text`, or explicit stdin
-with `-`. Running `elenchus-cli` with no input prints help instead of waiting on
-stdin. `--text` and a file are mutually exclusive. **`IMPORT` resolves only for
-the file form** — `--text` and stdin are treated as a single source, so a program
-using `IMPORT` must be passed as a file.
+`--text` and a file are mutually exclusive; with no input at all the CLI prints help
+instead of blocking on stdin. **`IMPORT` resolves only for the file form** — `--text`
+and stdin are treated as a single source.
 
 Exit code doubles as a CI gate:
 
@@ -42,46 +42,42 @@ Exit code doubles as a CI gate:
 
 ## Output
 
-Human (default) — e.g. a gate whose consequent has not been stated yet:
+**Human (default).** Here a gate whose consequent has not been established yet — the
+premise cannot be checked, so the verdict is `WARNING` and the report says exactly
+which atom is missing and how to supply it:
 
-```text
+```console
 $ elenchus-cli ready.vrf
 RESULT: WARNING
   WARNING   ready (PREMISE)  [ready.vrf:3]
       blocked by: web.svc tested
+      fix: nothing determines `web.svc tested` — add `FACT web.svc tested` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value
 SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
 EXIT_CODE: 1
 ```
 
-JSON (`--format json`) — one line, for tooling and agents:
+**JSON (`--format json`)** — a single line, for tooling and agents. Here a CONSISTENT
+run that forward-chained one derived fact:
 
 ```json
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[{"premise":"r","kind":"RULE","source":"<text>","line":3,"atom":"d.a ready","value":true}],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"beliefs":[]}
 ```
 
 ### Syntax errors
 
-A malformed program exits `2` and prints the errors **grouped by class** (one
-class per keyword): the correct syntax and a real example are shown *once per
-class*, with every offending place listed beneath — line, caret, and the specific
-problem. **Every** error is collected in one pass (the parser recovers and keeps
-going).
+A malformed program exits `2` and prints every error found in one pass, **grouped by
+class** (one class per keyword): the correct syntax and a real example are shown *once
+per class*, with each offending place listed beneath — line, caret, and the specific
+problem.
 
-```text
+```console
 $ elenchus-cli broken.vrf
-RESULT: 2 syntax errors in broken.vrf
-
-FACT  (1 problem)
-  syntax  : FACT [<domain>.]<Subject> <predicate> [<object>]
-  example : FACT socrates is human
-    line 1, col 6 - FACT expects an atom: <Subject> <predicate> [<object>]
-      | FACT lonely
-      |      ^^^^^^
+RESULT: 1 syntax error in broken.vrf
 
 THEN  (1 problem)
   syntax  : THEN <literal>
   example : THEN motor uses fast_path
-    line 5, col 9 - THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
+    line 4, col 9 - THEN expects a literal: [NOT] <Subject> <predicate> [<object>]
       |     THEN
       |         ^
 ```
@@ -93,8 +89,7 @@ Two independent caps control the volume (both default to "all"):
 | `--max-classes N` | number of classes shown | `… and N more classes` |
 | `--max-per-class N` | places shown within each class | `… and N more <keyword> problems` |
 
-By default (neither flag) you get **everything**. Set just one to cap that
-dimension and leave the other full; set both for full control.
+Set just one to cap that dimension and leave the other full; set both for full control.
 
 ## License
 
