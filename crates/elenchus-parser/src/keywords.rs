@@ -18,6 +18,8 @@ pub mod kw {
     pub const NOT: &str = "NOT";
     pub const ASSUME: &str = "ASSUME";
     pub const TRY: &str = "TRY";
+    pub const KNOWS: &str = "KNOWS";
+    pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
     pub const RULE: &str = "RULE";
     pub const CHECK: &str = "CHECK";
@@ -130,6 +132,24 @@ pub const KEYWORDS: &[Keyword] = &[
             "TRY [NOT] <Subject> <predicate> [<object>]",
             "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
             "TRY release is_ready",
+        ),
+    },
+    Keyword {
+        text: kw::KNOWS,
+        top_level: true,
+        card: card(
+            "KNOWS <Agent> [NOT] <Subject> <predicate> [<object>]",
+            "attribute factive knowledge to an agent: knowledge must be true, so knowing an established-FALSE atom is a CONFLICT (the epistemic L6 voice)",
+            "KNOWS alice door is_locked",
+        ),
+    },
+    Keyword {
+        text: kw::BELIEVES,
+        top_level: true,
+        card: card(
+            "BELIEVES <Agent> [NOT] <Subject> <predicate> [<object>]",
+            "attribute a non-factive belief to an agent: a false belief is reported, not a conflict (advisory — never changes the verdict)",
+            "BELIEVES bob door is_locked",
         ),
     },
     Keyword {

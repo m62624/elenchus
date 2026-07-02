@@ -303,3 +303,52 @@ fn try_leaves_it_still_open() {
         "#
     ));
 }
+
+// --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
+
+#[test]
+fn knows_a_falsehood_is_a_conflict() {
+    // Knowledge is factive (axiom T): you cannot know what the world establishes
+    // FALSE. `alice KNOWS door locked` against `NOT door locked` is a CONFLICT.
+    insta::assert_snapshot!(report("NOT door locked\nKNOWS alice door locked\n"));
+}
+
+#[test]
+fn knows_a_truth_is_silent() {
+    // Knowing something the world establishes TRUE holds — no report, CONSISTENT.
+    insta::assert_snapshot!(report("FACT door locked\nKNOWS alice door locked\n"));
+}
+
+#[test]
+fn knows_the_unestablished_is_a_warning() {
+    // A knowledge claim the world has not established cannot be confirmed factive:
+    // a WARNING nudging you to assert it or downgrade to BELIEVES.
+    insta::assert_snapshot!(report("KNOWS alice door locked\n"));
+}
+
+#[test]
+fn believes_a_falsehood_is_a_false_belief() {
+    // Belief is non-factive: a false belief is reported (WARNING-level) but is never
+    // a CONFLICT — the world stays consistent, bob is simply wrong.
+    insta::assert_snapshot!(report("NOT door locked\nBELIEVES bob door locked\n"));
+}
+
+#[test]
+fn knowing_both_polarities_is_incoherent() {
+    // One agent that KNOWS both φ and ¬φ is incoherent (axiom T makes both true): a
+    // single CONFLICT, with no redundant per-claim "unconfirmed" warnings.
+    insta::assert_snapshot!(report("KNOWS a x p\nKNOWS a NOT x p\n"));
+}
+
+#[test]
+fn knows_a_negated_truth_is_silent() {
+    // Negated knowledge works: alice correctly knows the door is NOT locked.
+    insta::assert_snapshot!(report("NOT door locked\nKNOWS alice NOT door locked\n"));
+}
+
+#[test]
+fn believes_the_unestablished_is_silent() {
+    // Believing something the world has not established is allowed and unremarkable
+    // (belief is non-factive): no report, CONSISTENT.
+    insta::assert_snapshot!(report("BELIEVES bob door locked\n"));
+}

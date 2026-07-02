@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"BELIEVES NOT x y\\n\")"
+---
+RESULT: 1 syntax error
+
+BELIEVES  (1 problem)
+  syntax  : BELIEVES <Agent> [NOT] <Subject> <predicate> [<object>]
+  example : BELIEVES bob door is_locked
+    line 1, col 10 - BELIEVES expects an agent name, then an atom: <Agent> [NOT] <Subject> <predicate> [<object>]
+      | BELIEVES NOT x y
+      |          ^^^^^^^

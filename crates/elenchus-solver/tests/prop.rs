@@ -243,6 +243,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         unwitnessed_exists: Vec::new(),
         justifications: Vec::new(),
         hypotheses: Vec::new(),
+        attributions: Vec::new(),
     }
 }
 

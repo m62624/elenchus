@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"KNOWS alice a b c d\\n\")"
+---
+RESULT: 1 syntax error
+
+KNOWS  (1 problem)
+  syntax  : KNOWS <Agent> [NOT] <Subject> <predicate> [<object>]
+  example : KNOWS alice door is_locked
+    line 1, col 18 - unexpected text after the KNOWS atom
+      | KNOWS alice a b c d
+      |                  ^^

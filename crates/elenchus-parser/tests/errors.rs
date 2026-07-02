@@ -308,6 +308,37 @@ fn fact_because_missing_ground() {
 }
 
 #[test]
+fn knows_missing_agent() {
+    // `KNOWS` commits on its keyword, then needs an agent name — a bare `NOT` (a
+    // reserved word) is not one, so it fails under KNOWS with the agent-name message.
+    insta::assert_snapshot!(err("KNOWS NOT door locked\n"));
+}
+
+#[test]
+fn knows_missing_atom() {
+    // An agent with no atom after it: `KNOWS` expects a claim to attribute.
+    insta::assert_snapshot!(err("KNOWS alice\n"));
+}
+
+#[test]
+fn knows_atom_not_an_identifier() {
+    // A non-identifier where the claimed atom should be (a digit cannot start one).
+    insta::assert_snapshot!(err("KNOWS alice 9\n"));
+}
+
+#[test]
+fn knows_trailing_text() {
+    // A fourth word past the atom triple is unexpected text after the KNOWS atom.
+    insta::assert_snapshot!(err("KNOWS alice a b c d\n"));
+}
+
+#[test]
+fn believes_missing_agent() {
+    // `BELIEVES` shares the tail with `KNOWS`; a missing agent fails under BELIEVES.
+    insta::assert_snapshot!(err("BELIEVES NOT x y\n"));
+}
+
+#[test]
 fn top_level_card_examples_actually_parse() {
     // The examples a model is told to copy must themselves be valid programs.
     // A trailing newline is not required: `eol` accepts EOF too. Drawn straight

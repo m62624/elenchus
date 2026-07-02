@@ -73,8 +73,8 @@ pub use elenchus_compiler::{
     normalize_import_path, read_data_bindings, read_data_source,
 };
 pub use report::{
-    Conflict, CoreItem, Derived, Fix, FixKind, OrphanFact, Report, SimilarAtoms, Status,
-    TraceReason, TraceStep, Tried, TryOutcome, Warning,
+    Conflict, CoreItem, Derived, FalseBelief, Fix, FixKind, OrphanFact, Report, SimilarAtoms,
+    Status, TraceReason, TraceStep, Tried, TryOutcome, Warning,
 };
 pub use v3::V3;
 
@@ -99,6 +99,10 @@ pub fn solve(c: &Compiled) -> Report {
     // FACT … BECAUSE justifications (L2): ground FALSE → CONFLICT, UNKNOWN → WARNING.
     // Also before `finish`, and after the forward pass has settled the model.
     e.check_justifications();
+    // KNOWS/BELIEVES attributions (L6 modal/epistemic): factive knowledge that is FALSE
+    // → CONFLICT, UNKNOWN → WARNING; a per-agent φ/¬φ incoherence → CONFLICT; a false
+    // belief → a WARNING-level note. Also before `finish`, reading the settled model.
+    e.check_attributions();
     let mut report = e.finish();
     // If the program is a CONFLICT but the facts/premises are consistent on their
     // own, the `ASSUME` hypotheses are what break it: name which to retract. The

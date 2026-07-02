@@ -3,12 +3,13 @@
 use crate::cnf::build_cnf;
 use crate::report::CoreItem;
 use crate::report::{
-    Conflict, Defeated, Derived, Report, Status, TraceReason, TraceStep, Warning, label,
+    Conflict, Defeated, Derived, FalseBelief, Report, Status, TraceReason, TraceStep, Warning,
+    label,
 };
 use crate::sat;
 use crate::unsat::{key, minimal_unsat_core};
 use crate::v3::{V3, v3_to_value};
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -103,6 +104,9 @@ pub(crate) struct Eval<'a> {
     /// Informational notes: a defeasible `RULE` whose default was suppressed by an
     /// established `UNLESS` exception. Never affects the verdict.
     defeated: Vec<Defeated>,
+    /// `BELIEVES <agent> <literal>` claims the world establishes FALSE — false beliefs
+    /// (L6). Non-factive, so never a CONFLICT; raises the verdict to WARNING.
+    false_beliefs: Vec<FalseBelief>,
     /// Minimal set of constructs to blame when the backward pass finds UNSAT.
     unsat_core: Vec<CoreItem>,
 }
@@ -117,6 +121,7 @@ impl<'a> Eval<'a> {
             warnings: Vec::new(),
             derived: Vec::new(),
             defeated: Vec::new(),
+            false_beliefs: Vec::new(),
             unsat_core: Vec::new(),
         }
     }
@@ -464,17 +469,125 @@ impl<'a> Eval<'a> {
         }
     }
 
+    /// Check each `KNOWS`/`BELIEVES <agent> <literal>` attribution against the settled
+    /// forward model — the L6 modal/epistemic layer. Knowledge is factive (axiom T:
+    /// `K φ → φ`), so a `KNOWS` whose claim the world establishes FALSE is impossible
+    /// (**CONFLICT**), and one the world leaves UNKNOWN is unconfirmed (**WARNING**); a
+    /// held (TRUE) claim is silent. Belief is non-factive, so a `BELIEVES` whose claim
+    /// is FALSE is only a *false belief* note (WARNING-level, never a CONFLICT); an
+    /// unestablished or held belief is silent. Finally, a single agent that claims to
+    /// **know both φ and ¬φ** is incoherent (**CONFLICT**) — flagged only where the
+    /// world leaves the atom UNKNOWN, since a pinned atom already surfaces the
+    /// impossible side as a factivity conflict above. Emits **no clause** — like
+    /// [`Eval::check_justifications`] this runs before [`Eval::finish`] so it can raise
+    /// the verdict, but it never forces an atom's value.
+    pub(crate) fn check_attributions(&mut self) {
+        // Incoherent knowers first: a single agent that KNOWS both φ and ¬φ is a
+        // CONFLICT on its own. The returned pairs let the per-claim loop suppress the
+        // now-redundant "unconfirmed" WARNINGs those same claims would otherwise raise.
+        let incoherent = self.flag_incoherent_knowers();
+        let c = self.c;
+        for a in &c.attributions {
+            let name = self.label(a.lit.atom);
+            let claim = if a.lit.negated {
+                alloc::format!("NOT {name}")
+            } else {
+                name.clone()
+            };
+            match (a.factive, lit_value(&self.model, &a.lit)) {
+                // KNOWS a truth, or a held / merely-unestablished belief → silent.
+                (_, V3::True) | (false, V3::Unknown) => {}
+                // KNOWS a falsehood: impossible — you cannot know what is not so.
+                (true, V3::False) => self.conflicts.push(RawConflict {
+                    origin: a.origin.clone(),
+                    atoms: vec![alloc::format!(
+                        "{} cannot know {claim} — it is FALSE",
+                        a.agent
+                    )],
+                    cause: vec![a.lit.atom],
+                }),
+                // KNOWS something the world has not established: unconfirmed knowledge —
+                // unless this very claim is already named in a know-both incoherence.
+                (true, V3::Unknown) => {
+                    if !incoherent.contains(&(a.agent.clone(), a.lit.atom)) {
+                        self.warnings.push(Warning {
+                            origin: a.origin.clone(),
+                            blocked_by: vec![name],
+                            hint: Some(alloc::format!(
+                                "{} claims to know {claim}, but it is not established — assert it (FACT/RULE) or use BELIEVES",
+                                a.agent
+                            )),
+                        });
+                    }
+                }
+                // BELIEVES a falsehood: allowed (belief is non-factive), but flagged.
+                (false, V3::False) => self.false_beliefs.push(FalseBelief {
+                    origin: a.origin.clone(),
+                    agent: a.agent.clone(),
+                    claim,
+                }),
+            }
+        }
+    }
+
+    /// Flag any single agent that claims to **know both φ and ¬φ** (axiom T makes both
+    /// true, a contradiction). Only reported where the world leaves the atom UNKNOWN —
+    /// a pinned atom already surfaces the impossible side via factivity in
+    /// [`Eval::check_attributions`], so this adds exactly the world-silent case. Returns
+    /// the `(agent, atom)` pairs it flagged, so the caller can drop the redundant
+    /// per-claim "unconfirmed" warnings for them.
+    fn flag_incoherent_knowers(&mut self) -> BTreeSet<(String, AtomId)> {
+        // (agent, atom) → the origins of the positive [0] and negative [1] KNOWS claims.
+        let mut polar: BTreeMap<(&str, AtomId), [Option<&Origin>; 2]> = BTreeMap::new();
+        for a in &self.c.attributions {
+            if !a.factive {
+                continue;
+            }
+            let slot = polar
+                .entry((a.agent.as_str(), a.lit.atom))
+                .or_insert([None, None]);
+            slot[usize::from(a.lit.negated)].get_or_insert(&a.origin);
+        }
+        // Materialize the flagged (agent, atom) pairs and their conflict origins first,
+        // so the borrow of `self.c` (via `polar`) ends before we mutate `self`.
+        let flagged: Vec<(String, AtomId, Origin)> = polar
+            .iter()
+            .filter_map(|((agent, atom), origins)| match origins {
+                [Some(_), Some(neg)] if self.model[*atom as usize] == V3::Unknown => {
+                    Some((String::from(*agent), *atom, (*neg).clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut out = BTreeSet::new();
+        for (agent, atom, origin) in flagged {
+            let name = self.label(atom);
+            self.conflicts.push(RawConflict {
+                origin,
+                atoms: vec![alloc::format!(
+                    "{agent} cannot know both {name} and NOT {name}"
+                )],
+                cause: Vec::new(),
+            });
+            out.insert((agent, atom));
+        }
+        out
+    }
+
     /// Run the backward pass, sort deterministically, and assemble the report.
     pub(crate) fn finish(mut self) -> Report {
         let underdetermined = self.backward_pass();
         self.conflicts.sort_by_key(|c| key(&c.origin));
         self.warnings.sort_by_key(|w| key(&w.origin));
         self.defeated.sort_by_key(|d| key(&d.origin));
+        self.false_beliefs.sort_by_key(|b| key(&b.origin));
         let status = if !self.conflicts.is_empty() {
             Status::Conflict
         } else if underdetermined.is_some() {
             Status::Underdetermined
-        } else if !self.warnings.is_empty() {
+        } else if !self.warnings.is_empty() || !self.false_beliefs.is_empty() {
+            // A false belief (`BELIEVES` a falsehood) is worth attention but is never a
+            // contradiction in the world — it raises the verdict to WARNING, not CONFLICT.
             Status::Warning
         } else {
             Status::Consistent
@@ -506,6 +619,7 @@ impl<'a> Eval<'a> {
             unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
             placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
             tried: Vec::new(),   // filled by `solve` (advisory, post-verdict)
+            beliefs: self.false_beliefs,
         }
     }
 }
