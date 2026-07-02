@@ -216,6 +216,28 @@ CHECK BIDIRECTIONAL           // UNDERDETERMINED: is_ready is free
 TRY deploys is_ready          // → closes the gap: the model is now pinned  (checked)
 ```
 
+### `KNOWS` / `BELIEVES` — what an agent knows or believes (epistemic)
+- **is** — attribute a claim about the world to a *named agent*. `KNOWS` is **factive**
+  (knowledge implies truth): knowing an established-**FALSE** atom is a **CONFLICT** ("you
+  cannot know a falsehood"), knowing an **UNKNOWN** one is a **WARNING** (unconfirmed), and
+  one agent knowing both φ and ¬φ is a **CONFLICT**. `BELIEVES` is **non-factive**: a false
+  belief is a WARNING-level note, **never** a CONFLICT — a mind may be mistaken.
+- **use when** — the problem is about *who thinks what*, not just what is true: a false
+  assumption held by a service/person, mistaken vs. correct beliefs, "does what they know
+  match the facts?". `KNOWS` for a claim that *must* be true; `BELIEVES` to model a
+  possibly-wrong one.
+- **the agent is a label** — it never becomes an atom or a clause; the engine only checks
+  the claim against the settled world model (a side check, never touching the SAT core).
+  Not full modal logic: no nested `KNOWS`, no common knowledge (a future layer).
+- **not `KNOWS` vs `BELIEVES`** — knowing false is an error (CONFLICT); believing false is
+  allowed (a flagged note). Pick by whether a mistaken claim should fail or just be seen.
+- **form** — `KNOWS <Agent> [NOT] <atom>` · `BELIEVES <Agent> [NOT] <atom>`
+```vrf
+NOT door locked
+KNOWS alice door locked       // CONFLICT: alice cannot know door locked — it is FALSE
+BELIEVES bob door locked      // BELIEF: bob believes it — but it is FALSE (a false belief)
+```
+
 ### `PREMISE` — a checked first principle
 - **is** — a constraint the engine **checks**; a violated premise is a CONFLICT. It
   only checks — it never establishes a value (that is a `RULE`).
@@ -594,6 +616,18 @@ The verdict is one of three, always `(checked)` (the engine actually re-solved i
 `conflicts` (it clashes with what is established → the wrong candidate), or
 `still open` (it doesn't pin the model by itself → more is needed). JSON: `tried`,
 each item `{"outcome":"closes|conflicts|still_open"}`.
+
+**`BELIEF`** — a `BELIEVES <agent> <atom>` whose claim the world establishes FALSE: a
+*false belief*. Belief is non-factive, so this is a WARNING-level note, **never** a
+CONFLICT — the world is consistent, the agent is simply wrong:
+```
+  BELIEF    bob believes plan.door locked — but it is FALSE (a false belief)   [plan.vrf:3]
+```
+A factive `KNOWS` is stricter: knowing a FALSE atom is a `CONFLICT` ("alice cannot know
+… — it is FALSE", with the `why:` trace of the atom's value); knowing an UNKNOWN one is a
+`WARNING` (assert it, or downgrade to `BELIEVES`); one agent knowing both φ and ¬φ is a
+`CONFLICT`. JSON: false beliefs are a `beliefs` array (`{"agent":…,"claim":…}`); `KNOWS`
+findings appear in `conflicts`/`warnings` like any other.
 
 **`HINT`** — advisory possible-typo nudge; **never changes the verdict**:
 ```

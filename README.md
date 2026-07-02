@@ -242,6 +242,40 @@ EXIT_CODE: 1
 a real `FACT` and re-run — the model is CONSISTENT. `TRY` is purely advisory (JSON:
 a `tried` array); the candidate never enters the model or the verdict.
 
+### What an agent knows or believes — `KNOWS` / `BELIEVES`
+
+Sometimes the question isn't *what is true* but *who has it right*. `KNOWS` and
+`BELIEVES` attribute a claim about the world to a named agent, checked against the
+facts. Knowledge is **factive** — you cannot *know* a falsehood, so a `KNOWS` against
+an established-FALSE atom is a `CONFLICT`. Belief is **non-factive** — a false
+`BELIEVES` is only a flagged note, never a conflict (a mind may be mistaken):
+
+```vrf
+// knowledge.vrf
+DOMAIN ops
+NOT db reachable                 // the truth: the database is down
+KNOWS monitor db reachable       // the monitor claims to KNOW it is up
+BELIEVES cache db reachable      // the cache merely BELIEVES it is up
+```
+
+```console
+$ elenchus-cli knowledge.vrf
+RESULT: CONFLICT
+  CONFLICT  - (KNOWS)  [knowledge.vrf:4]
+      monitor cannot know ops.db reachable — it is FALSE
+      why:
+        ops.db reachable = FALSE   [NOT knowledge.vrf:3]
+  BELIEF    cache believes ops.db reachable — but it is FALSE (a false belief)   [knowledge.vrf:5]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived, 1 false beliefs
+EXIT_CODE: 2
+```
+
+Same false claim, two verdicts: knowing it is an error (`CONFLICT`), believing it is
+merely surfaced (`BELIEF`). The agent is just a label — it never enters the SAT core;
+the engine only checks each claim against the settled world (JSON: false beliefs in a
+`beliefs` array, `KNOWS` findings in `conflicts`/`warnings`). This is the checkable
+core of epistemic logic (L6) — not full possible-worlds modal logic.
+
 ## Install
 
 Two binaries — the `elenchus` CLI (crate `elenchus-cli`) and the `elenchus-mcp`
