@@ -158,11 +158,13 @@ pub struct Report {
     pub tried: Vec<Tried>,
     /// One record per `BELIEVES <agent> <literal>` whose claim the settled world model
     /// establishes FALSE — a *false belief* (the epistemic L6 layer). Belief is
-    /// non-factive (unlike `KNOWS`), so this is **never a CONFLICT**; it is surfaced as
-    /// a WARNING-level note naming who believes what against the facts. A held or merely
-    /// unestablished belief is silent. (Factive `KNOWS` findings do not live here — an
-    /// impossible or unconfirmed *knowledge* claim is a CONFLICT / WARNING respectively,
-    /// in [`Report::conflicts`] / [`Report::warnings`], like a `BECAUSE` justification.)
+    /// non-factive (unlike `KNOWS`), so this is **never a CONFLICT**; it is a visible but
+    /// **informational** note (naming who believes what against the facts) that never
+    /// affects [`Report::status`] or [`Report::exit_code`] — like DERIVED/DEFEATED. A held
+    /// or merely unestablished belief is silent. (Factive `KNOWS` findings do not live
+    /// here — an impossible or unconfirmed *knowledge* claim is a CONFLICT / WARNING
+    /// respectively, in [`Report::conflicts`] / [`Report::warnings`], like a `BECAUSE`
+    /// justification.)
     pub beliefs: Vec<FalseBelief>,
 }
 
@@ -200,9 +202,9 @@ pub struct Tried {
 /// One `BELIEVES <agent> <literal>` whose claim the settled world model establishes
 /// FALSE — a false belief (the epistemic L6 layer). Because belief is non-factive
 /// (unlike `KNOWS`, where knowing a falsehood is a CONFLICT), this is not a
-/// contradiction in the world; it is surfaced as a WARNING-level note naming who
-/// believes what against the facts. It raises the verdict to WARNING but never to
-/// CONFLICT.
+/// contradiction in the world; it is surfaced as a visible but **informational** note
+/// (exit 0, like DEFEATED) naming who believes what against the facts. It never raises
+/// the verdict — neither to WARNING nor to CONFLICT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FalseBelief {
     /// Provenance of the `BELIEVES` (source, line, kind = `BELIEVES`).

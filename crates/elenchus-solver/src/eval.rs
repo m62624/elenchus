@@ -105,7 +105,8 @@ pub(crate) struct Eval<'a> {
     /// established `UNLESS` exception. Never affects the verdict.
     defeated: Vec<Defeated>,
     /// `BELIEVES <agent> <literal>` claims the world establishes FALSE — false beliefs
-    /// (L6). Non-factive, so never a CONFLICT; raises the verdict to WARNING.
+    /// (L6). Non-factive, so never a CONFLICT; purely informational (exit 0, like
+    /// DEFEATED) — a visible BELIEF note that never changes the verdict.
     false_beliefs: Vec<FalseBelief>,
     /// Minimal set of constructs to blame when the backward pass finds UNSAT.
     unsat_core: Vec<CoreItem>,
@@ -474,8 +475,9 @@ impl<'a> Eval<'a> {
     /// `K φ → φ`), so a `KNOWS` whose claim the world establishes FALSE is impossible
     /// (**CONFLICT**), and one the world leaves UNKNOWN is unconfirmed (**WARNING**); a
     /// held (TRUE) claim is silent. Belief is non-factive, so a `BELIEVES` whose claim
-    /// is FALSE is only a *false belief* note (WARNING-level, never a CONFLICT); an
-    /// unestablished or held belief is silent. Finally, a single agent that claims to
+    /// is FALSE is only a *false belief* note (informational, exit 0 like DEFEATED —
+    /// never a CONFLICT and never raises the verdict); an unestablished or held belief
+    /// is silent. Finally, a single agent that claims to
     /// **know both φ and ¬φ** is incoherent (**CONFLICT**) — flagged only where the
     /// world leaves the atom UNKNOWN, since a pinned atom already surfaces the
     /// impossible side as a factivity conflict above. Emits **no clause** — like
@@ -585,13 +587,16 @@ impl<'a> Eval<'a> {
             Status::Conflict
         } else if underdetermined.is_some() {
             Status::Underdetermined
-        } else if !self.warnings.is_empty() || !self.false_beliefs.is_empty() {
-            // A false belief (`BELIEVES` a falsehood) is worth attention but is never a
-            // contradiction in the world — it raises the verdict to WARNING, not CONFLICT.
+        } else if !self.warnings.is_empty() {
             Status::Warning
         } else {
             Status::Consistent
         };
+        // A false belief (`BELIEVES` a falsehood) is **not** folded into `status`: the
+        // world stays consistent, an agent is simply wrong. Like DEFEATED it is an
+        // informational note (exit 0) — it prints a visible BELIEF line but never raises
+        // the verdict. WARNING keeps its single meaning: a check blocked by an UNKNOWN
+        // atom (which is what an *unconfirmed KNOWS* is, and it does stay a WARNING).
         // Materialize each raw conflict into its public form, attaching the
         // derivation chain (reasons are final once the forward pass is done).
         // One scratch buffer, reused (reset) across every conflict's trace.

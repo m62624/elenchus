@@ -183,9 +183,9 @@ pub struct Compiled {
     /// layer. The solver checks each attribution against the settled world model:
     /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
     /// falsehood), UNKNOWN → WARNING; a non-factive belief (`BELIEVES`) that is FALSE
-    /// → WARNING; plus a per-agent coherence check (knowing φ and ¬φ → CONFLICT). It
-    /// emits **no clause and no fact** — the agent is a report-side label, never a
-    /// SAT atom.
+    /// → an informational note (exit 0, never raises the verdict); plus a per-agent
+    /// coherence check (knowing φ and ¬φ → CONFLICT). It emits **no clause and no fact**
+    /// — the agent is a report-side label, never a SAT atom.
     pub attributions: Vec<Attribution>,
 }
 
@@ -236,9 +236,9 @@ pub struct Hypothesis {
 /// label, not an atom), the claimed literal, whether it is factive (`KNOWS`), and the
 /// provenance. The solver checks the literal's model value per agent — factive:
 /// FALSE → CONFLICT (you cannot know a falsehood), UNKNOWN → WARNING; non-factive:
-/// FALSE → WARNING (a false belief), else silent — plus a per-agent coherence check
-/// (knowing φ and ¬φ → CONFLICT). It is **evaluative, not a constraint**: no clause,
-/// no fact, the agent never enters the SAT core.
+/// FALSE → an informational note (exit 0, a false belief), else silent — plus a
+/// per-agent coherence check (knowing φ and ¬φ → CONFLICT). It is **evaluative, not a
+/// constraint**: no clause, no fact, the agent never enters the SAT core.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attribution {
     /// The agent the claim is attributed to (a bare label, not an atom).

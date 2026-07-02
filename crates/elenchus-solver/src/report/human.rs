@@ -196,8 +196,9 @@ impl Report {
             }
         }
         // The epistemic (L6) false-belief voice: an agent `BELIEVES` a claim the world
-        // establishes FALSE. Belief is non-factive, so this is a WARNING-level note, not
-        // a CONFLICT (that is reserved for `KNOWS` — you cannot *know* a falsehood).
+        // establishes FALSE. Belief is non-factive, so this is an informational note (exit
+        // 0, like DEFEATED) — never a CONFLICT (that is reserved for `KNOWS` — you cannot
+        // *know* a falsehood) and it never raises the verdict.
         for b in &self.beliefs {
             emit!(
                 out,
@@ -333,10 +334,10 @@ impl Report {
         } else {
             alloc::format!(", {} defeated", self.defeated.len())
         };
-        // A false belief raises the verdict to WARNING without being a `warnings` entry,
-        // so name its count here (only when non-zero) — otherwise the summary would read
-        // "0 warnings" under a WARNING verdict. Appended like `defeated`, so programs
-        // with no false belief keep their exact summary line.
+        // A false belief is informational (exit 0), so it is not a `warnings` entry; name
+        // its count here (only when non-zero), appended like `defeated`, so the visible
+        // BELIEF lines are accounted for while programs with no false belief keep their
+        // exact summary line.
         let beliefs = if self.beliefs.is_empty() {
             String::new()
         } else {

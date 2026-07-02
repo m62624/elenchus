@@ -399,7 +399,7 @@ rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `TRY` | test a hypothesis **without committing it** (`[NOT]` atom): the engine reports whether asserting it would close the open model, conflict, or leave it open — never enters the model or the verdict (abduction, L5) | hypothesis (advisory) |
 | `KNOWS` | attribute **factive** knowledge to an agent (`<Agent> [NOT]` atom): knowledge implies truth, so knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING; knowing both φ and ¬φ is a CONFLICT (epistemic, L6) | attribution (checked) |
-| `BELIEVES` | attribute a **non-factive** belief to an agent (`<Agent> [NOT]` atom): a false belief is reported (WARNING-level) but never a CONFLICT — belief may be mistaken (epistemic, L6) | attribution (advisory) |
+| `BELIEVES` | attribute a **non-factive** belief to an agent (`<Agent> [NOT]` atom): a false belief is reported as an informational note (exit 0, never raises the verdict) but never a CONFLICT — belief may be mistaken (epistemic, L6) | attribution (advisory) |
 | `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
@@ -1285,8 +1285,9 @@ cost discipline forbids). What it checks:
   (axiom T makes both true) — flagged where the world leaves the atom UNKNOWN (a pinned
   atom already surfaces the impossible side via factivity).
 - **Belief is non-factive.** A `BELIEVES` whose claim is **FALSE** is a *false belief*: a
-  WARNING-level note ("bob believes X — but it is FALSE"), **never a CONFLICT**. The world
-  is consistent; the agent is simply wrong. An unestablished or held belief is silent.
+  visible but **informational** note ("bob believes X — but it is FALSE"), exit 0 like
+  `DEFEATED` — it never raises the verdict and is **never a CONFLICT**. The world is
+  consistent; the agent is simply wrong. An unestablished or held belief is silent.
 
 Cost is one model-value lookup per attribution (plus an `O(k)` per-agent coherence pass) —
 the engine checks what the model supplies, it never enumerates epistemic alternatives.

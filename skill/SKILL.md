@@ -221,7 +221,8 @@ TRY deploys is_ready          // → closes the gap: the model is now pinned  (c
   (knowledge implies truth): knowing an established-**FALSE** atom is a **CONFLICT** ("you
   cannot know a falsehood"), knowing an **UNKNOWN** one is a **WARNING** (unconfirmed), and
   one agent knowing both φ and ¬φ is a **CONFLICT**. `BELIEVES` is **non-factive**: a false
-  belief is a WARNING-level note, **never** a CONFLICT — a mind may be mistaken.
+  belief is an informational note (exit 0, never raises the verdict), **never** a
+  CONFLICT — a mind may be mistaken.
 - **use when** — the problem is about *who thinks what*, not just what is true: a false
   assumption held by a service/person, mistaken vs. correct beliefs, "does what they know
   match the facts?". `KNOWS` for a claim that *must* be true; `BELIEVES` to model a
@@ -618,8 +619,9 @@ The verdict is one of three, always `(checked)` (the engine actually re-solved i
 each item `{"outcome":"closes|conflicts|still_open"}`.
 
 **`BELIEF`** — a `BELIEVES <agent> <atom>` whose claim the world establishes FALSE: a
-*false belief*. Belief is non-factive, so this is a WARNING-level note, **never** a
-CONFLICT — the world is consistent, the agent is simply wrong:
+*false belief*. Belief is non-factive, so this is an **informational** note (exit 0, like
+`DEFEATED` — it never changes the verdict), **never** a CONFLICT — the world is
+consistent, the agent is simply wrong:
 ```
   BELIEF    bob believes plan.door locked — but it is FALSE (a false belief)   [plan.vrf:3]
 ```

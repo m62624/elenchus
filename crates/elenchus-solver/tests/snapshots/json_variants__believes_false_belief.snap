@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"beliefs":[{"premise":null,"kind":"BELIEVES","source":"v.vrf","line":3,"agent":"bob","claim":"d.door locked"}]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"beliefs":[{"premise":null,"kind":"BELIEVES","source":"v.vrf","line":3,"agent":"bob","claim":"d.door locked"}]}
