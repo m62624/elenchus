@@ -21,6 +21,129 @@ struct Watch {
     blocking: SatLit,
 }
 
+/// A variable's slot in [`VarOrder::pos`] when it is not on the heap.
+const NOT_IN_HEAP: usize = usize::MAX;
+
+/// MiniSat-style variable-order heap: a binary max-heap over variables keyed by
+/// `(activity desc, index asc)`, with a position index so a bumped variable can
+/// sift up in place. The tie-break replicates the linear argmax scan this
+/// replaced **exactly** (first = lowest-index variable among equal activities),
+/// so the decision sequence — and therefore every model, core, and report — is
+/// byte-identical; only the cost changes, O(log n) per decision instead of a
+/// full O(n) scan (which dominated on programs whose atoms are mostly
+/// unconstrained, since each must still be decided to complete a model).
+///
+/// Invariant: every unassigned variable is on the heap. Popped variables that
+/// turn out assigned are simply discarded; [`Solver::backtrack`] re-inserts
+/// whatever it unassigns.
+struct VarOrder {
+    heap: Vec<Var>,
+    pos: Vec<usize>, // var -> index in `heap`, or NOT_IN_HEAP
+}
+
+impl VarOrder {
+    /// All variables start at zero activity, so plain index order already
+    /// satisfies the heap property under the tie-break.
+    fn new(n: usize) -> Self {
+        VarOrder {
+            heap: (0..n as Var).collect(),
+            pos: (0..n).collect(),
+        }
+    }
+
+    /// Strict priority order: higher activity first, lower index on ties.
+    fn less(activity: &[f64], a: Var, b: Var) -> bool {
+        let (aa, ab) = (activity[a as usize], activity[b as usize]);
+        aa > ab || (aa == ab && a < b)
+    }
+
+    fn contains(&self, v: Var) -> bool {
+        self.pos[v as usize] != NOT_IN_HEAP
+    }
+
+    fn sift_up(&mut self, activity: &[f64], mut i: usize) {
+        let v = self.heap[i];
+        while i > 0 {
+            let p = (i - 1) >> 1;
+            if Self::less(activity, v, self.heap[p]) {
+                self.heap[i] = self.heap[p];
+                self.pos[self.heap[i] as usize] = i;
+                i = p;
+            } else {
+                break;
+            }
+        }
+        self.heap[i] = v;
+        self.pos[v as usize] = i;
+    }
+
+    fn sift_down(&mut self, activity: &[f64], mut i: usize) {
+        let v = self.heap[i];
+        loop {
+            let l = 2 * i + 1;
+            if l >= self.heap.len() {
+                break;
+            }
+            let r = l + 1;
+            let c = if r < self.heap.len() && Self::less(activity, self.heap[r], self.heap[l]) {
+                r
+            } else {
+                l
+            };
+            if Self::less(activity, self.heap[c], v) {
+                self.heap[i] = self.heap[c];
+                self.pos[self.heap[i] as usize] = i;
+                i = c;
+            } else {
+                break;
+            }
+        }
+        self.heap[i] = v;
+        self.pos[v as usize] = i;
+    }
+
+    /// Register a brand-new highest-index variable and put it on the heap. At
+    /// zero activity it sorts after every existing zero-activity variable (the
+    /// index tie-break), exactly where the old linear scan would have found it.
+    fn push_var(&mut self, activity: &[f64], v: Var) {
+        debug_assert_eq!(self.pos.len(), v as usize);
+        self.pos.push(NOT_IN_HEAP);
+        self.insert(activity, v);
+    }
+
+    /// Put `v` (back) on the heap; a no-op if it is already there.
+    fn insert(&mut self, activity: &[f64], v: Var) {
+        if self.contains(v) {
+            return;
+        }
+        self.pos[v as usize] = self.heap.len();
+        self.heap.push(v);
+        self.sift_up(activity, self.heap.len() - 1);
+    }
+
+    /// Remove and return the highest-priority variable, or `None` when empty.
+    fn pop(&mut self, activity: &[f64]) -> Option<Var> {
+        let top = *self.heap.first()?;
+        self.pos[top as usize] = NOT_IN_HEAP;
+        let last = self.heap.pop().expect("non-empty: first() succeeded");
+        if !self.heap.is_empty() {
+            self.heap[0] = last;
+            self.pos[last as usize] = 0;
+            self.sift_down(activity, 0);
+        }
+        Some(top)
+    }
+
+    /// Restore heap order after `v`'s activity increased (a VSIDS bump). A
+    /// uniform rescale of all activities needs nothing — order is unchanged.
+    fn bumped(&mut self, activity: &[f64], v: Var) {
+        if self.contains(v) {
+            let i = self.pos[v as usize];
+            self.sift_up(activity, i);
+        }
+    }
+}
+
 /// What the decision phase produced. The search loop reacts to each.
 enum Decision {
     /// A literal (an assumption or a VSIDS branch) was enqueued; propagate next.
@@ -36,7 +159,6 @@ enum Decision {
 /// clause database with two-watched-literal indices, VSIDS activities with phase
 /// saving, and a reusable `seen` scratch buffer for conflict analysis.
 pub(crate) struct Solver {
-    num_vars: usize,
     clauses: Vec<Vec<SatLit>>, // originals + learned + blocking
     watches: Vec<Vec<Watch>>, // indexed by literal code; a clause watching `w` lives in watches[!w]
     assign: Vec<Option<bool>>, // per var
@@ -47,6 +169,7 @@ pub(crate) struct Solver {
     qhead: usize,
     activity: Vec<f64>,
     var_inc: f64,
+    order: VarOrder,     // decision queue: every unassigned var is on it
     polarity: Vec<bool>, // phase saving
     seen: Vec<bool>,     // reusable scratch for analyze (invariant: all-false between calls)
     touched: Vec<Var>,   // reusable scratch for analyze (invariant: empty between calls)
@@ -70,7 +193,6 @@ impl Solver {
     pub(crate) fn with_config(cnf: &Cnf, config: SolverConfig) -> Self {
         let n = cnf.num_vars;
         let mut s = Solver {
-            num_vars: n,
             clauses: Vec::new(),
             watches: vec![Vec::new(); 2 * n],
             assign: vec![None; n],
@@ -81,6 +203,7 @@ impl Solver {
             qhead: 0,
             activity: vec![0.0; n],
             var_inc: 1.0,
+            order: VarOrder::new(n),
             polarity: vec![false; n],
             seen: vec![false; n],
             touched: Vec::new(),
@@ -288,11 +411,13 @@ impl Solver {
     fn bump(&mut self, v: usize) {
         self.activity[v] += self.var_inc;
         if self.activity[v] > 1e100 {
+            // A uniform rescale preserves the order, so the heap needs nothing.
             for a in &mut self.activity {
                 *a *= 1e-100;
             }
             self.var_inc *= 1e-100;
         }
+        self.order.bumped(&self.activity, v as Var);
     }
 
     /// Learn an asserting clause from `conflict` and return (clause, backjump level).
@@ -468,6 +593,7 @@ impl Solver {
             let v = self.trail[i].var() as usize;
             self.polarity[v] = self.assign[v] == Some(true);
             self.assign[v] = None;
+            self.order.insert(&self.activity, v as Var); // back on the queue
         }
         self.trail.truncate(new_len);
         self.decisions.truncate(level as usize);
@@ -490,17 +616,16 @@ impl Solver {
     // -- decisions --
 
     /// Choose the next decision: the unassigned variable with the highest VSIDS
-    /// activity, using its saved phase. `None` means all variables are assigned.
-    fn pick_branch(&self) -> Option<SatLit> {
-        let mut best: Option<usize> = None;
-        let mut best_act = -1.0;
-        for v in 0..self.num_vars {
-            if self.assign[v].is_none() && self.activity[v] > best_act {
-                best_act = self.activity[v];
-                best = Some(v);
+    /// activity (lowest index on ties — the [`VarOrder`] tie-break), using its
+    /// saved phase. `None` means all variables are assigned: every unassigned
+    /// variable is on the heap, so an exhausted heap is a full assignment.
+    fn pick_branch(&mut self) -> Option<SatLit> {
+        while let Some(v) = self.order.pop(&self.activity) {
+            if self.assign[v as usize].is_none() {
+                return Some(SatLit::new(v, self.polarity[v as usize]));
             }
         }
-        best.map(|v| SatLit::new(v as Var, self.polarity[v]))
+        None
     }
 
     // -- the state machine --
@@ -615,6 +740,24 @@ impl Solver {
     pub(crate) fn add_clause_root(&mut self, lits: &[SatLit]) {
         self.backtrack(0);
         self.add_clause(lits);
+    }
+
+    /// Grow the variable universe by one fresh (unconstrained, unassigned)
+    /// variable and return it. Lets a caller mint session variables (e.g.
+    /// blocking-clause guards) on demand instead of pre-declaring the lot —
+    /// a variable that does not exist yet costs no decisions.
+    pub(crate) fn add_var(&mut self) -> Var {
+        let v = self.assign.len() as Var;
+        self.assign.push(None);
+        self.level.push(0);
+        self.reason.push(Reason::Decision);
+        self.activity.push(0.0);
+        self.polarity.push(false);
+        self.seen.push(false);
+        self.watches.push(Vec::new());
+        self.watches.push(Vec::new());
+        self.order.push_var(&self.activity, v);
+        v
     }
 
     /// The cumulative work counters (never reset).

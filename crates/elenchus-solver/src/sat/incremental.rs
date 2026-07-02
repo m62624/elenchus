@@ -64,6 +64,13 @@ impl Incremental {
         self.solver.add_clause_root(lits);
     }
 
+    /// Mint a fresh, unconstrained variable (e.g. a blocking-clause guard) and
+    /// return it. Minting on demand beats pre-declaring a batch: a variable that
+    /// does not exist yet is never branched on, so unused guards cost nothing.
+    pub fn add_var(&mut self) -> super::Var {
+        self.solver.add_var()
+    }
+
     /// Cumulative deterministic work counters — bit-identical on any hardware,
     /// the honest cross-machine performance metric (see [`Stats`]).
     pub fn stats(&self) -> &Stats {

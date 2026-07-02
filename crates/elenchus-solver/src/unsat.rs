@@ -361,55 +361,61 @@ pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
     if c.hypotheses.is_empty() {
         return Vec::new();
     }
-    let (mut cnf, project) = build_cnf(c);
+    let (cnf, project) = build_cnf(c);
     // One incremental solver counts models for the base program AND every
     // hypothesis, instead of cloning + re-solving the CNF per hypothesis. Each
-    // counting session gets its own **guard variable**: its blocking clause is
-    // `(¬guard ∨ ¬model-projection)`, active only while that session assumes its
-    // guard — so blocked models never leak into another hypothesis's count. Counts
-    // (up to 2, distinct on `project`) are semantic — independent of enumeration
-    // order — so the reported outcomes are identical to the clone-per-hypothesis
-    // implementation this replaces.
-    let guard_base = cnf.num_vars;
-    cnf.num_vars += 1 + c.hypotheses.len();
+    // counting session mints its own **guard variable** on entry: its blocking
+    // clause is `(¬guard ∨ ¬model-projection)`, active only while that session
+    // assumes its guard — so blocked models never leak into another hypothesis's
+    // count. Counts (up to 2, distinct on `project`) are semantic — independent
+    // of enumeration order — so the reported outcomes are identical to the
+    // clone-per-hypothesis implementation this replaces.
+    //
     // Counts are heuristic-invariant, so the turbo profile is sound throughout.
     let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
     // Count the models of (program ∧ assumptions) projected on `project`, up to 2.
-    let count2 = |inc: &mut sat::Incremental, assume: &[sat::SatLit], guard: sat::Var| match inc
-        .solve(assume)
-    {
-        sat::Solved::Unsat(_) => 0,
-        sat::Solved::Sat(model) => {
-            let mut block = Vec::with_capacity(project.len() + 1);
-            block.push(sat::SatLit::negative(guard));
-            block.extend(project.iter().map(|&v| {
-                if model[v as usize] {
-                    sat::SatLit::negative(v)
-                } else {
-                    sat::SatLit::positive(v)
+    // The guard lives exactly as long as its session: minted on entry (a future
+    // session's guard does not exist yet, so it is never branched on) and
+    // **retired** on exit with a root unit `¬guard` (a past session's blocking
+    // clause is satisfied at level 0 forever, its guard assigned and never
+    // branched on again). Without both ends every solve would branch over
+    // O(#hypotheses) idle guards — quadratic over a long TRY list.
+    let count2 = |inc: &mut sat::Incremental, assume: &[sat::SatLit]| {
+        let guard = inc.add_var();
+        let count = match inc.solve(assume) {
+            sat::Solved::Unsat(_) => 0,
+            sat::Solved::Sat(model) => {
+                let mut block = Vec::with_capacity(project.len() + 1);
+                block.push(sat::SatLit::negative(guard));
+                block.extend(project.iter().map(|&v| {
+                    if model[v as usize] {
+                        sat::SatLit::negative(v)
+                    } else {
+                        sat::SatLit::positive(v)
+                    }
+                }));
+                inc.add_clause(&block);
+                let mut asm = Vec::with_capacity(assume.len() + 1);
+                asm.extend_from_slice(assume);
+                asm.push(sat::SatLit::positive(guard));
+                match inc.solve(&asm) {
+                    sat::Solved::Sat(_) => 2,
+                    sat::Solved::Unsat(_) => 1,
                 }
-            }));
-            inc.add_clause(&block);
-            let mut asm = Vec::with_capacity(assume.len() + 1);
-            asm.extend_from_slice(assume);
-            asm.push(sat::SatLit::positive(guard));
-            match inc.solve(&asm) {
-                sat::Solved::Sat(_) => 2,
-                sat::Solved::Unsat(_) => 1,
             }
-        }
+        };
+        inc.add_clause(&[sat::SatLit::negative(guard)]);
+        count
     };
     // A single base model over the constrained atoms means the program is already
     // pinned; two means it is open (the same measure the backward pass uses).
-    let base_unique = count2(&mut inc, &[], guard_base as sat::Var) == 1;
+    let base_unique = count2(&mut inc, &[]) == 1;
     c.hypotheses
         .iter()
-        .enumerate()
-        .map(|(i, h)| {
+        .map(|h| {
             // Assume the candidate literal (positive unless written `TRY NOT …`).
             let lit = sat::SatLit::new(h.lit.atom, !h.lit.negated);
-            let guard = (guard_base + 1 + i) as sat::Var;
-            let outcome = match count2(&mut inc, &[lit], guard) {
+            let outcome = match count2(&mut inc, &[lit]) {
                 0 => TryOutcome::Conflicts,
                 1 if !base_unique => TryOutcome::Closes,
                 _ => TryOutcome::StillOpen,
