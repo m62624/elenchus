@@ -190,6 +190,22 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "try_still_open",
             "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nRULE gate2:\n    WHEN backup done\n    THEN backup safe\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
         ),
+        // KNOWS / BELIEVES (modal/epistemic, L6): factive knowledge that is FALSE →
+        // CONFLICT, UNKNOWN → WARNING; a per-agent incoherence → CONFLICT; a false
+        // belief → the populated `beliefs` array.
+        (
+            "knows_false_conflict",
+            "NOT door locked\nKNOWS alice door locked\n",
+        ),
+        ("knows_unknown_warning", "KNOWS alice door locked\n"),
+        (
+            "believes_false_belief",
+            "NOT door locked\nBELIEVES bob door locked\n",
+        ),
+        (
+            "knows_incoherent_conflict",
+            "KNOWS a x p\nKNOWS a NOT x p\n",
+        ),
     ]
 }
 

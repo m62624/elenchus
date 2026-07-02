@@ -39,6 +39,16 @@ pub(crate) struct RawHypothesis {
     pub(crate) origin: Origin,
 }
 
+/// A `KNOWS`/`BELIEVES` attribution keyed by atom identity (pre-interning
+/// counterpart of [`crate::ir::Attribution`]).
+pub(crate) struct RawAttribution {
+    pub(crate) agent: String,
+    pub(crate) key: AtomKey,
+    pub(crate) negated: bool,
+    pub(crate) factive: bool,
+    pub(crate) origin: Origin,
+}
+
 /// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
 pub(crate) struct RawClause {
     pub(crate) lits: Vec<RawLit>,

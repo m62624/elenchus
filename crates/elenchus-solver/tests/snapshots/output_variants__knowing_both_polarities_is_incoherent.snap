@@ -1,0 +1,9 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"KNOWS a x p\\nKNOWS a NOT x p\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  - (KNOWS)  [v.vrf:3]
+      a cannot know both d.x p and NOT d.x p
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

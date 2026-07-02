@@ -43,6 +43,11 @@ pub(crate) fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
         referenced[j.belief as usize] = true;
         referenced[j.ground as usize] = true;
     }
+    // A `KNOWS`/`BELIEVES <agent> <atom>` checks its atom against the world model, so a
+    // `FACT` that exists only to be known or believed is not an inert leftover.
+    for a in &c.attributions {
+        referenced[a.lit.atom as usize] = true;
+    }
     let mut out: Vec<OrphanFact> = c
         .facts
         .iter()

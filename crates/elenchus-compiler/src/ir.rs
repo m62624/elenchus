@@ -179,6 +179,14 @@ pub struct Compiled {
     /// asserting it would close the open model, conflict with it, or leave it open.
     /// It emits **no clause and no fact** — it never enters the model or the verdict.
     pub hypotheses: Vec<Hypothesis>,
+    /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
+    /// layer. The solver checks each attribution against the settled world model:
+    /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
+    /// falsehood), UNKNOWN → WARNING; a non-factive belief (`BELIEVES`) that is FALSE
+    /// → an informational note (exit 0, never raises the verdict); plus a per-agent
+    /// coherence check (knowing φ and ¬φ → CONFLICT). It emits **no clause and no fact**
+    /// — the agent is a report-side label, never a SAT atom.
+    pub attributions: Vec<Attribution>,
 }
 
 /// An advisory record: an `EXISTS` premise that named no candidate — neither a
@@ -221,6 +229,25 @@ pub struct Hypothesis {
     /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
     pub lit: Lit,
     /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+}
+
+/// One `KNOWS`/`BELIEVES <agent> <literal>` attribution: the agent (a report-side
+/// label, not an atom), the claimed literal, whether it is factive (`KNOWS`), and the
+/// provenance. The solver checks the literal's model value per agent — factive:
+/// FALSE → CONFLICT (you cannot know a falsehood), UNKNOWN → WARNING; non-factive:
+/// FALSE → an informational note (exit 0, a false belief), else silent — plus a
+/// per-agent coherence check (knowing φ and ¬φ → CONFLICT). It is **evaluative, not a
+/// constraint**: no clause, no fact, the agent never enters the SAT core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribution {
+    /// The agent the claim is attributed to (a bare label, not an atom).
+    pub agent: String,
+    /// The claimed literal (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// `true` for `KNOWS` (factive), `false` for `BELIEVES` (non-factive).
+    pub factive: bool,
+    /// Provenance of the `KNOWS`/`BELIEVES` (source, line, kind).
     pub origin: Origin,
 }
 

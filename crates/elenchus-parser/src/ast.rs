@@ -238,6 +238,22 @@ pub enum Statement<'a> {
     /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
     /// checks it. The `Literal` carries the optional `NOT`.
     Try(Located<'a, Literal<'a>>),
+    /// `KNOWS <agent> [NOT] <atom>` / `BELIEVES <agent> [NOT] <atom>` — attribute a
+    /// claim about the world to a *named agent* (the modal/epistemic L6 layer). The
+    /// agent is a bare identifier, a report-side label only: it never becomes an atom
+    /// or a clause. `factive` is `true` for `KNOWS` — knowledge implies truth (axiom
+    /// T), so knowing an established-FALSE atom is a CONFLICT and an UNKNOWN one a
+    /// WARNING; `BELIEVES` is non-factive, so a false belief is merely reported. The
+    /// engine checks each attribution against the settled world model — a side check,
+    /// never a hack on the SAT core. The `Literal` carries the optional `NOT`.
+    Knows {
+        /// The agent the claim is attributed to (a bare identifier, not an atom).
+        agent: Located<'a, &'a str>,
+        /// The claimed atom, with its optional leading `NOT`.
+        hypo: Located<'a, Literal<'a>>,
+        /// `true` for `KNOWS` (factive), `false` for `BELIEVES` (non-factive).
+        factive: bool,
+    },
     /// `SET <name>` then one element identifier per line — declare a finite set
     /// to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
     Set {

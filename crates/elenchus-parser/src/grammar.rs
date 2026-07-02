@@ -580,6 +580,64 @@ fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Try(lit)))
 }
 
+/// `KNOWS <agent> [NOT] <atom>` — attribute factive knowledge to a named agent (the
+/// epistemic L6 voice). The agent is a bare identifier; the rest is an ordinary
+/// literal. Knowledge is factive, so the engine later checks the atom against the
+/// settled world model (FALSE → CONFLICT, UNKNOWN → WARNING).
+fn stmt_knows<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::KNOWS), space1).parse(input)?;
+    epistemic(input, true, kw::KNOWS)
+}
+
+/// `BELIEVES <agent> [NOT] <atom>` — attribute a *non-factive* belief. Same surface
+/// as `KNOWS`, but a false belief is only reported (advisory), never a CONFLICT.
+fn stmt_believes<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::BELIEVES), space1).parse(input)?;
+    epistemic(input, false, kw::BELIEVES)
+}
+
+/// Shared tail of `KNOWS`/`BELIEVES`: a bare `<agent>` identifier, then `[NOT] <atom>`,
+/// then end of line. `factive` distinguishes the two keywords; `kw` names it in the
+/// error messages. Once the leading keyword matched, a missing agent or atom is a
+/// hard [`promote`]d failure rather than a silent backtrack.
+fn epistemic<'a>(input: Span<'a>, factive: bool, kw: &str) -> PResult<'a, Statement<'a>> {
+    let at = input;
+    let (input, agent) = promote(
+        identifier(input),
+        at,
+        &alloc::format!(
+            "{kw} expects an agent name, then an atom: <Agent> [NOT] <Subject> <predicate> [<object>]"
+        ),
+    )?;
+    let at = input;
+    let (input, _) = promote(
+        space1(input),
+        at,
+        &alloc::format!("name an atom after the {kw} agent"),
+    )?;
+    let at = input;
+    let (input, hypo) = promote(
+        literal(input),
+        at,
+        &alloc::format!(
+            "{kw} expects an atom after the agent: [NOT] <Subject> <predicate> [<object>]"
+        ),
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        &alloc::format!("unexpected text after the {kw} atom"),
+    )?;
+    Ok((
+        input,
+        Statement::Knows {
+            agent,
+            hypo,
+            factive,
+        },
+    ))
+}
+
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
 /// `NOT` literal is never mistaken for a top-level negation.
 fn stmt_negation<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
@@ -861,6 +919,8 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_fact,
         stmt_assume,
         stmt_try,
+        stmt_knows,
+        stmt_believes,
         stmt_premise,
         stmt_rule,
         stmt_check,

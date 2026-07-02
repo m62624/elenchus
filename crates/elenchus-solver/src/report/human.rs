@@ -195,6 +195,21 @@ impl Report {
                 emit!(out, ITEM, "fix: {hint}")?;
             }
         }
+        // The epistemic (L6) false-belief voice: an agent `BELIEVES` a claim the world
+        // establishes FALSE. Belief is non-factive, so this is an informational note (exit
+        // 0, like DEFEATED) — never a CONFLICT (that is reserved for `KNOWS` — you cannot
+        // *know* a falsehood) and it never raises the verdict.
+        for b in &self.beliefs {
+            emit!(
+                out,
+                SECTION,
+                "BELIEF    {} believes {} — but it is FALSE (a false belief)   [{}:{}]",
+                b.agent,
+                b.claim,
+                b.origin.source,
+                b.origin.line
+            )?;
+        }
         if let Some(atom) = &self.underdetermined {
             emit!(out, SECTION, "UNDERDETERMINED  an alternative model exists")?;
             emit!(
@@ -319,15 +334,25 @@ impl Report {
         } else {
             alloc::format!(", {} defeated", self.defeated.len())
         };
+        // A false belief is informational (exit 0), so it is not a `warnings` entry; name
+        // its count here (only when non-zero), appended like `defeated`, so the visible
+        // BELIEF lines are accounted for while programs with no false belief keep their
+        // exact summary line.
+        let beliefs = if self.beliefs.is_empty() {
+            String::new()
+        } else {
+            alloc::format!(", {} false beliefs", self.beliefs.len())
+        };
         emit!(
             out,
             ROOT,
-            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived{}",
+            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived{}{}",
             self.conflicts.len(),
             underdetermined,
             self.warnings.len(),
             self.derived.len(),
-            defeated
+            defeated,
+            beliefs
         )?;
         out.tail(ROOT, format_args!("EXIT_CODE: {}", self.exit_code()))
     }

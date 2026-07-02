@@ -386,7 +386,8 @@ engine *propose* the missing hypothesis itself.
 
 **A purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
 `RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses and `TRY` for
-*uncommitted* what-if checks, plus a few words for the body of constraints and
+*uncommitted* what-if checks, plus `KNOWS`/`BELIEVES` for *epistemic* claims about
+what an agent knows or believes, plus a few words for the body of constraints and
 rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 
 | Word | Meaning | Kind |
@@ -397,6 +398,8 @@ rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `TRY` | test a hypothesis **without committing it** (`[NOT]` atom): the engine reports whether asserting it would close the open model, conflict, or leave it open — never enters the model or the verdict (abduction, L5) | hypothesis (advisory) |
+| `KNOWS` | attribute **factive** knowledge to an agent (`<Agent> [NOT]` atom): knowledge implies truth, so knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING; knowing both φ and ¬φ is a CONFLICT (epistemic, L6) | attribution (checked) |
+| `BELIEVES` | attribute a **non-factive** belief to an agent (`<Agent> [NOT]` atom): a false belief is reported as an informational note (exit 0, never raises the verdict) but never a CONFLICT — belief may be mistaken (epistemic, L6) | attribution (advisory) |
 | `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
@@ -1264,6 +1267,36 @@ Cost is one re-solve per `TRY` line: the engine checks the supplied candidate, i
 enumerates candidates of its own. On an already-unsatisfiable program every `TRY` reads
 as `conflicts` (adding a clause cannot clear a conflict — that is the repair voice's
 job). In JSON: a `tried` array, each item `{"outcome":"closes"|"conflicts"|"still_open"}`.
+
+**`KNOWS` / `BELIEVES` — the epistemic voice (who knows what, L6).** These attribute a
+claim about the world to a *named agent*: `KNOWS <agent> [NOT] <atom>` and
+`BELIEVES <agent> [NOT] <atom>`. The agent is a bare label — it never becomes an atom or
+a clause; the engine checks each attribution against the **settled world model**, so this
+is a side checker, not a hack on the SAT core. The layer captures the *checkable* core of
+epistemic logic — **not** full possible-worlds/S5 (that would enumerate worlds, which the
+cost discipline forbids). What it checks:
+
+- **Knowledge is factive (axiom T, `K φ → φ`).** A `KNOWS` whose claim the world
+  establishes **FALSE** is impossible — a **CONFLICT** ("you cannot know a falsehood"),
+  reported like a `BECAUSE` justification, with the derivation trace of why the atom is
+  false. A `KNOWS` the world leaves **UNKNOWN** is unconfirmed — a **WARNING** (assert it,
+  or downgrade to `BELIEVES`). A held (TRUE) claim is silent.
+- **A knower must be coherent.** One agent that `KNOWS` both φ and ¬φ is a **CONFLICT**
+  (axiom T makes both true) — flagged where the world leaves the atom UNKNOWN (a pinned
+  atom already surfaces the impossible side via factivity).
+- **Belief is non-factive.** A `BELIEVES` whose claim is **FALSE** is a *false belief*: a
+  visible but **informational** note ("bob believes X — but it is FALSE"), exit 0 like
+  `DEFEATED` — it never raises the verdict and is **never a CONFLICT**. The world is
+  consistent; the agent is simply wrong. An unestablished or held belief is silent.
+
+Cost is one model-value lookup per attribution (plus an `O(k)` per-agent coherence pass) —
+the engine checks what the model supplies, it never enumerates epistemic alternatives.
+Removing a `KNOWS`/`BELIEVES` line never changes any other finding. In JSON, a false
+belief is a `beliefs` array item `{"agent":…,"claim":…}`; factive `KNOWS` findings live in
+`conflicts`/`warnings` like any other. Deliberately out of scope (a future layer): common
+knowledge, nested modalities `K_a K_b φ`, introspection (S4/S5 axioms), and any deductive
+closure of knowledge — each needs enumeration or search, which the LLM supplies, not the
+engine.
 
 ## Invariants and edge cases
 

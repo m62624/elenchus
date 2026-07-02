@@ -156,6 +156,16 @@ pub struct Report {
     /// hypothesis is never committed, so this **never affects [`Report::status`] or
     /// [`Report::exit_code`]** — purely informational (like DERIVED/DEFEATED).
     pub tried: Vec<Tried>,
+    /// One record per `BELIEVES <agent> <literal>` whose claim the settled world model
+    /// establishes FALSE — a *false belief* (the epistemic L6 layer). Belief is
+    /// non-factive (unlike `KNOWS`), so this is **never a CONFLICT**; it is a visible but
+    /// **informational** note (naming who believes what against the facts) that never
+    /// affects [`Report::status`] or [`Report::exit_code`] — like DERIVED/DEFEATED. A held
+    /// or merely unestablished belief is silent. (Factive `KNOWS` findings do not live
+    /// here — an impossible or unconfirmed *knowledge* claim is a CONFLICT / WARNING
+    /// respectively, in [`Report::conflicts`] / [`Report::warnings`], like a `BECAUSE`
+    /// justification.)
+    pub beliefs: Vec<FalseBelief>,
 }
 
 /// The engine's verdict on one `TRY <literal>` hypothesis — whether asserting the
@@ -187,6 +197,22 @@ pub struct Tried {
     pub label: String,
     /// The engine's checked verdict on asserting this candidate.
     pub outcome: TryOutcome,
+}
+
+/// One `BELIEVES <agent> <literal>` whose claim the settled world model establishes
+/// FALSE — a false belief (the epistemic L6 layer). Because belief is non-factive
+/// (unlike `KNOWS`, where knowing a falsehood is a CONFLICT), this is not a
+/// contradiction in the world; it is surfaced as a visible but **informational** note
+/// (exit 0, like DEFEATED) naming who believes what against the facts. It never raises
+/// the verdict — neither to WARNING nor to CONFLICT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FalseBelief {
+    /// Provenance of the `BELIEVES` (source, line, kind = `BELIEVES`).
+    pub origin: Origin,
+    /// The agent holding the false belief.
+    pub agent: String,
+    /// The believed claim, ready to print (e.g. `door locked` or `NOT door locked`).
+    pub claim: String,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two

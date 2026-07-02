@@ -30,7 +30,8 @@ impl Report {
             + self.orphans.len()
             + self.unused_imports.len()
             + self.placeholders.len()
-            + self.tried.len();
+            + self.tried.len()
+            + self.beliefs.len();
         let mut s = String::with_capacity(256 + entries * 64);
         let _ = write!(s, "{{\"status\":");
         status_name(self.status).write_json(&mut s);
@@ -203,6 +204,18 @@ impl Report {
             };
             s.push_str(",\"outcome\":");
             outcome.write_json(&mut s);
+            s.push('}');
+        }
+        s.push_str("],\"beliefs\":[");
+        for (i, b) in self.beliefs.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&b.origin, &mut s);
+            s.push_str(",\"agent\":");
+            b.agent.write_json(&mut s);
+            s.push_str(",\"claim\":");
+            b.claim.write_json(&mut s);
             s.push('}');
         }
         s.push_str("]}");

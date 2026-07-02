@@ -117,6 +117,8 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
         }
         Statement::Negation(a) => add(&a.data),
         Statement::Assume(l) | Statement::Try(l) => add(&l.data.atom),
+        // The agent is a bare label (no domain); only the claimed atom carries one.
+        Statement::Knows { hypo, .. } => add(&hypo.data.atom),
         Statement::Premise { body, .. } | Statement::Rule { body, .. } => match body {
             Body::List { atoms, .. } => atoms.iter().for_each(|a| add(&a.data)),
             Body::Impl {

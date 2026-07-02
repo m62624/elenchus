@@ -16,14 +16,14 @@ use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit, Origin,
-    PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit,
+    Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule, canonical_body,
-    clause_sig, key_sig, list_kind, quant_sig, raw_lits,
+    RawAttribution, RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule,
+    canonical_body, clause_sig, key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -87,6 +87,9 @@ pub struct Compiler {
     /// `TRY <literal>` hypotheses. Never committed to the model (no clause, no fact);
     /// the solver runs one side-solve per hypothesis and reports the outcome.
     hypotheses: Vec<RawHypothesis>,
+    /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
+    /// clause, no fact); the solver checks each against the world model per agent.
+    attributions: Vec<RawAttribution>,
 }
 
 impl Compiler {
@@ -231,6 +234,13 @@ impl Compiler {
             }
             Statement::Try(l) => {
                 self.add_hypothesis(source, l, ctx)?;
+            }
+            Statement::Knows {
+                agent,
+                hypo,
+                factive,
+            } => {
+                self.add_attribution(source, agent, hypo, *factive, ctx)?;
             }
             Statement::Check {
                 subject,
@@ -381,6 +391,36 @@ impl Compiler {
                 line: lit.span.location_line(),
                 premise: None,
                 kind: kw::TRY,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `KNOWS`/`BELIEVES <agent> <literal>` attribution. The claimed atom is
+    /// interned so it has a SAT variable to read from the settled model; the agent is
+    /// a bare label and is **not** interned (it never becomes an atom or a clause). No
+    /// fact and no clause are emitted — the attribution is evaluative: the solver
+    /// checks the atom's model value per agent and reports, never forcing it.
+    fn add_attribution(
+        &mut self,
+        source: &str,
+        agent: &Located<&str>,
+        lit: &Located<Literal>,
+        factive: bool,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        self.attributions.push(RawAttribution {
+            agent: agent.data.to_string(),
+            key,
+            negated: lit.data.negated,
+            factive,
+            origin: Origin {
+                source: source.to_string(),
+                line: agent.span.location_line(),
+                premise: None,
+                kind: if factive { kw::KNOWS } else { kw::BELIEVES },
             },
         });
         Ok(())
@@ -1116,6 +1156,20 @@ impl Compiler {
             })
             .collect();
 
+        let attributions = self
+            .attributions
+            .into_iter()
+            .map(|a| Attribution {
+                agent: a.agent,
+                lit: Lit {
+                    atom: id_of(&a.key),
+                    negated: a.negated,
+                },
+                factive: a.factive,
+                origin: a.origin,
+            })
+            .collect();
+
         Compiled {
             atoms,
             facts,
@@ -1129,6 +1183,7 @@ impl Compiler {
             unwitnessed_exists: self.unwitnessed_exists,
             justifications,
             hypotheses,
+            attributions,
         }
     }
 }
