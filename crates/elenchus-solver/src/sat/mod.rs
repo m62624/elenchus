@@ -22,12 +22,32 @@
 
 use alloc::vec::Vec;
 
+mod incremental;
 mod models;
 mod solver;
 
+pub use incremental::Incremental;
 pub use models::{Models, all_models, models, models_upto};
 
 use solver::Solver;
+
+/// Deterministic work counters, accumulated over a solver's lifetime.
+///
+/// The CDCL search is fully deterministic, so these numbers are **bit-identical
+/// on any machine** — unlike wall-clock time, they are an honest performance
+/// metric on shared/noisy hardware (CI). Tests compare them across solving
+/// strategies to prove one does strictly less work than another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// Literals decided on (assumptions and VSIDS branches alike).
+    pub decisions: u64,
+    /// Literals taken off the propagation queue (the unit-propagation workload).
+    pub propagations: u64,
+    /// Conflicts hit (= clauses learned).
+    pub conflicts: u64,
+    /// Total literals across all learned clauses (the clause-learning volume).
+    pub learned_literals: u64,
+}
 
 /// A boolean variable, identified by a dense index.
 pub type Var = u32;

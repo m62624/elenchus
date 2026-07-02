@@ -125,3 +125,127 @@ fn larger_random_like_sat_is_solved() {
         );
     }
 }
+
+// --- the incremental (re-entrant) solver -------------------------------------
+
+#[test]
+fn incremental_reentrant_queries_share_one_database() {
+    // A chain (a → b), (b → c): assuming a forces the whole chain.
+    let mut c = Cnf::new(3);
+    c.add_clause(vec![SatLit::negative(0), SatLit::positive(1)]);
+    c.add_clause(vec![SatLit::negative(1), SatLit::positive(2)]);
+    let mut inc = Incremental::new(&c);
+    match inc.solve(&[SatLit::positive(0)]) {
+        Solved::Sat(m) => assert!(m[0] && m[1] && m[2]),
+        Solved::Unsat(_) => panic!("chain under `a` is SAT"),
+    }
+    // Assuming a ∧ ¬c contradicts the chain; the core names only assumptions.
+    let asm = [SatLit::positive(0), SatLit::negative(2)];
+    match inc.solve(&asm) {
+        Solved::Unsat(core) => {
+            assert!(!core.is_empty());
+            assert!(core.iter().all(|l| asm.contains(l)));
+        }
+        Solved::Sat(_) => panic!("a ∧ ¬c violates the chain"),
+    }
+    // The solver stays usable after an UNSAT query.
+    assert!(matches!(inc.solve(&[SatLit::negative(2)]), Solved::Sat(_)));
+}
+
+#[test]
+fn incremental_added_clauses_persist_across_queries() {
+    let mut c = Cnf::new(2);
+    c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let mut inc = Incremental::new(&c);
+    assert!(matches!(inc.solve(&[]), Solved::Sat(_)));
+    inc.add_clause(&[SatLit::negative(0)]);
+    inc.add_clause(&[SatLit::negative(1)]);
+    // (a∨b) ∧ ¬a ∧ ¬b is now UNSAT regardless of assumptions — and stays so.
+    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(
+        inc.solve(&[SatLit::positive(0)]),
+        Solved::Unsat(_)
+    ));
+}
+
+#[test]
+fn incremental_stats_count_work_and_never_reset() {
+    // The four-combos formula forces decisions, propagation, and conflicts.
+    let mut c = Cnf::new(2);
+    let (a, b) = (0u32, 1u32);
+    c.add_clause(vec![SatLit::positive(a), SatLit::positive(b)]);
+    c.add_clause(vec![SatLit::negative(a), SatLit::positive(b)]);
+    c.add_clause(vec![SatLit::positive(a), SatLit::negative(b)]);
+    c.add_clause(vec![SatLit::negative(a), SatLit::negative(b)]);
+    let mut inc = Incremental::new(&c);
+    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    let first = inc.stats().clone();
+    assert!(first.decisions >= 1);
+    assert!(first.propagations >= 1);
+    assert!(first.conflicts >= 1);
+    assert!(first.learned_literals >= 1);
+    // Counters are cumulative: a second query can only grow them.
+    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    let second = inc.stats().clone();
+    assert!(second.decisions >= first.decisions);
+    assert!(second.propagations >= first.propagations);
+    assert!(second.conflicts >= first.conflicts);
+    assert!(second.learned_literals >= first.learned_literals);
+}
+
+#[test]
+fn incremental_reuse_beats_scratch_on_work_counters() {
+    // The honest, hardware-independent speed test: a deletion-minimization-shaped
+    // query sequence costs strictly fewer conflicts on one shared database than on
+    // fresh solvers, because learned clauses persist. Deterministic — exact on CI.
+    //
+    // The formula mirrors the real unsat-core workload: m independent UNSAT pairs
+    // (all four combos of a_j, b_j excluded), every clause guarded by its own
+    // selector variable s_k, queries assuming selector subsets.
+    let pairs = 3usize;
+    let base = 2 * pairs; // a_j = 2j, b_j = 2j+1
+    let selectors = 4 * pairs; // one per clause
+    let mut c = Cnf::new(base + selectors);
+    let mut sel = Vec::new();
+    for j in 0..pairs as u32 {
+        let (a, b) = (2 * j, 2 * j + 1);
+        for (i, combo) in [
+            [SatLit::positive(a), SatLit::positive(b)],
+            [SatLit::negative(a), SatLit::positive(b)],
+            [SatLit::positive(a), SatLit::negative(b)],
+            [SatLit::negative(a), SatLit::negative(b)],
+        ]
+        .iter()
+        .enumerate()
+        {
+            let s = (base + 4 * j as usize + i) as u32;
+            sel.push(SatLit::positive(s));
+            c.add_clause(vec![SatLit::negative(s), combo[0], combo[1]]);
+        }
+    }
+    // Query 0: every clause active (UNSAT). Queries 1..: drop one clause each —
+    // the other pairs stay complete, so every query is UNSAT too.
+    let mut queries = vec![sel.clone()];
+    for i in 0..sel.len() {
+        let mut q = sel.clone();
+        q.remove(i);
+        queries.push(q);
+    }
+
+    let mut shared = Incremental::new(&c);
+    for q in &queries {
+        assert!(matches!(shared.solve(q), Solved::Unsat(_)));
+    }
+    let shared_conflicts = shared.stats().conflicts;
+
+    let mut scratch_conflicts = 0;
+    for q in &queries {
+        let mut fresh = Incremental::new(&c);
+        assert!(matches!(fresh.solve(q), Solved::Unsat(_)));
+        scratch_conflicts += fresh.stats().conflicts;
+    }
+    assert!(
+        shared_conflicts < scratch_conflicts,
+        "shared database must hit fewer conflicts: {shared_conflicts} vs {scratch_conflicts}"
+    );
+}

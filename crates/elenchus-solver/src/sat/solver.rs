@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{Cnf, SatLit, Var};
+use super::{Cnf, SatLit, Stats, Var};
 
 /// Why a variable was assigned — needed for conflict analysis and backtracking.
 #[derive(Clone, Copy)]
@@ -55,6 +55,7 @@ pub(crate) struct Solver {
     // one-to-one to assumptions[0..]; an already-true assumption still consumes a
     // (dummy) level so that mapping holds. Empty for a plain solve.
     pub(crate) assumptions: Vec<SatLit>,
+    stats: Stats, // deterministic work counters (never reset over the lifetime)
 }
 
 impl Solver {
@@ -78,6 +79,7 @@ impl Solver {
             touched: Vec::new(),
             ok: true,
             assumptions: Vec::new(),
+            stats: Stats::default(),
         };
         for clause in &cnf.clauses {
             s.add_clause(clause);
@@ -188,6 +190,7 @@ impl Solver {
         while self.qhead < self.trail.len() {
             let p = self.trail[self.qhead];
             self.qhead += 1;
+            self.stats.propagations += 1;
             if let Some(cref) = self.propagate_lit(p) {
                 return Some(cref);
             }
@@ -287,6 +290,7 @@ impl Solver {
     /// Learn an asserting clause from `conflict` and return (clause, backjump level).
     /// Uses the reusable `seen`/`touched` buffers and restores both on exit.
     fn analyze(&mut self, conflict: usize) -> (Vec<SatLit>, u32) {
+        self.stats.conflicts += 1;
         let cur_level = self.current_level();
         let mut learned: Vec<SatLit> = vec![SatLit(0)]; // slot 0 = asserting literal
         // Borrow the scratch buffer for this call (it is empty on entry/exit), so a
@@ -342,6 +346,7 @@ impl Solver {
             self.seen[v as usize] = false; // restore the scratch buffer
         }
         self.touched = touched; // give the (now empty) buffer back for next time
+        self.stats.learned_literals += learned.len() as u64;
         (learned, backjump)
     }
 
@@ -474,6 +479,7 @@ impl Solver {
                 return Decision::UnsatCore(self.analyze_final(p.negate()));
             } else {
                 self.decisions.push(self.trail.len());
+                self.stats.decisions += 1;
                 self.enqueue(p, Reason::Decision);
                 return Decision::Propagated;
             }
@@ -482,6 +488,7 @@ impl Solver {
             None => Decision::Sat,
             Some(lit) => {
                 self.decisions.push(self.trail.len());
+                self.stats.decisions += 1;
                 self.enqueue(lit, Reason::Decision);
                 Decision::Propagated
             }
@@ -547,6 +554,33 @@ impl Solver {
         self.backtrack(0);
         self.add_clause(&block);
         true
+    }
+
+    // -- the incremental (re-entrant) interface --
+
+    /// Re-entrant assumption solve: rewind to level 0, install `assumptions`, and
+    /// drive the search to a terminal state. Level-0 consequences (root units,
+    /// learned clauses) persist across calls — that is the whole point: a sequence
+    /// of related queries shares one clause database instead of re-solving from
+    /// scratch. Same contract as [`Solver::run`].
+    pub(crate) fn solve_with(&mut self, assumptions: &[SatLit]) -> Result<(), Vec<SatLit>> {
+        self.backtrack(0);
+        self.assumptions.clear();
+        self.assumptions.extend_from_slice(assumptions);
+        self.run()
+    }
+
+    /// Attach a clause at level 0, rewinding first so the two-watched invariant
+    /// holds (mirrors [`Solver::block`]). For clauses added between incremental
+    /// queries, e.g. guarded blocking clauses.
+    pub(crate) fn add_clause_root(&mut self, lits: &[SatLit]) {
+        self.backtrack(0);
+        self.add_clause(lits);
+    }
+
+    /// The cumulative work counters (never reset).
+    pub(crate) fn stats(&self) -> &Stats {
+        &self.stats
     }
 }
 

@@ -1074,3 +1074,64 @@ proptest! {
         prop_assert_eq!(verdict_shape(&a), verdict_shape(&b));
     }
 }
+
+// --- the incremental (re-entrant) solver -------------------------------------
+
+/// One incremental step: clauses to add first, then assumptions to solve under.
+type IncStep = (RawCnf, Vec<(u32, bool)>);
+
+/// A base instance plus a query script: each step optionally adds a few clauses,
+/// then solves under its own assumption set.
+fn incremental_script() -> impl Strategy<Value = (usize, RawCnf, Vec<IncStep>)> {
+    (1usize..=8).prop_flat_map(|n| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        let clause = prop::collection::vec(lit.clone(), 1..=4);
+        let base = prop::collection::vec(clause.clone(), 0..=12);
+        let step = (
+            prop::collection::vec(clause, 0..=2),
+            prop::collection::vec(lit, 0..=n),
+        );
+        (Just(n), base, prop::collection::vec(step, 1..=6))
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(500))]
+
+    /// A whole incremental session — interleaved clause additions and assumption
+    /// queries on ONE solver — agrees with brute force at every step, returns
+    /// only valid models, and returns only sufficient cores. This is the
+    /// correctness contract that lets learned clauses persist across queries.
+    #[test]
+    fn incremental_session_matches_bruteforce((n, base, steps) in incremental_script()) {
+        let mut inc = sat::Incremental::new(&to_cnf(n, &base));
+        let mut clauses = to_clauses(&base);
+        for (extra, asm) in &steps {
+            for cl in to_clauses(extra) {
+                inc.add_clause(&cl);
+                clauses.push(cl);
+            }
+            let assumptions = to_assumptions(asm);
+            match inc.solve(&assumptions) {
+                Solved::Sat(model) => {
+                    prop_assert!(brute_sat_assuming(n, &clauses, asm), "SAT but oracle says UNSAT");
+                    for clause in &clauses {
+                        prop_assert!(clause.iter().any(|&l| model[l.var() as usize] != l.is_negative()));
+                    }
+                    for &(v, p) in asm {
+                        prop_assert_eq!(model[v as usize], p);
+                    }
+                }
+                Solved::Unsat(core) => {
+                    prop_assert!(!brute_sat_assuming(n, &clauses, asm), "UNSAT but oracle says SAT");
+                    for l in &core {
+                        prop_assert!(assumptions.contains(l), "core lit {:?} not an assumption", l);
+                    }
+                    let core_pairs: Vec<(u32, bool)> =
+                        core.iter().map(|l| (l.var(), !l.is_negative())).collect();
+                    prop_assert!(!brute_sat_assuming(n, &clauses, &core_pairs), "core not sufficient");
+                }
+            }
+        }
+    }
+}
