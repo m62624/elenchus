@@ -45,8 +45,37 @@ pub struct Stats {
     pub propagations: u64,
     /// Conflicts hit (= clauses learned).
     pub conflicts: u64,
-    /// Total literals across all learned clauses (the clause-learning volume).
+    /// Total literals across all learned clauses (the clause-learning volume),
+    /// counted after minimization when [`SolverConfig::ccmin`] is on.
     pub learned_literals: u64,
+}
+
+/// Search heuristics. `Default` is the **reference profile** — everything off,
+/// bit-identical to the solver's historical behavior.
+///
+/// Heuristics change the *path* of the search, so they can change **which** model
+/// or core is found (all results stay correct). Enable them only where the caller
+/// consumes SAT/UNSAT verdicts or model counts — those are semantically unique,
+/// heuristic-invariant. Callers whose reported output embeds model/core contents
+/// must stay on the reference profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SolverConfig {
+    /// Learned-clause minimization (MiniSat-style): drop a learned literal whose
+    /// reason clause is entirely subsumed by the rest of the learned clause —
+    /// shorter learned clauses propagate faster and prune more.
+    pub ccmin: bool,
+}
+
+impl SolverConfig {
+    /// Every heuristic that earned its keep on the deterministic work counters
+    /// (measured on pigeonhole and deletion-minimization stress workloads; e.g.
+    /// ccmin cut php(9,8) conflicts 12511 → 7413 and learned literals by 48%).
+    /// Luby restarts were implemented, measured, and **rejected**: without
+    /// clause deletion they only degraded these workloads (php(9,8) conflicts
+    /// +156%) and never fired on program-scale queries. The profile for
+    /// verdict/count-only callers; content-bearing callers use `Default` (the
+    /// reference profile).
+    pub const TURBO: SolverConfig = SolverConfig { ccmin: true };
 }
 
 /// A boolean variable, identified by a dense index.

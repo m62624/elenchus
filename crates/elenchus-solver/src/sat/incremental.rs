@@ -16,7 +16,7 @@
 //! fresh-solver path so their reported witnesses stay stable).
 
 use super::solver::Solver;
-use super::{Cnf, SatLit, Solved, Stats};
+use super::{Cnf, SatLit, Solved, SolverConfig, Stats};
 
 /// A persistent solver over one CNF, answering assumption queries incrementally.
 /// See the [module docs](self) for the contract and the determinism caveat.
@@ -26,10 +26,25 @@ pub struct Incremental {
 
 impl Incremental {
     /// Load `cnf` once; every later [`Incremental::solve`] reuses this database.
+    /// Uses the reference (heuristics-off) profile; see [`Incremental::with_config`].
     pub fn new(cnf: &Cnf) -> Self {
+        Self::with_config(cnf, SolverConfig::default())
+    }
+
+    /// Like [`Incremental::new`] with an explicit heuristics profile — see
+    /// [`SolverConfig`] for when a non-default profile is sound to use.
+    pub fn with_config(cnf: &Cnf, config: SolverConfig) -> Self {
         Incremental {
-            solver: Solver::new(cnf),
+            solver: Solver::with_config(cnf, config),
         }
+    }
+
+    /// Switch the heuristics profile; takes effect from the next
+    /// [`Incremental::solve`]. Sound at any point (learned clauses stay valid) —
+    /// used to run one content-bearing query on the reference profile and the
+    /// remaining verdict-only queries with heuristics on.
+    pub fn set_config(&mut self, config: SolverConfig) {
+        self.solver.set_config(config);
     }
 
     /// Solve under `assumptions` (each forced true). Re-entrant: call as many

@@ -34,7 +34,9 @@ pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
         .collect();
 
     // One shared incremental solver answers every satisfiability question below.
+    // All of them are verdict-only, so heuristics are on from the start.
     let mut cs = ConstructSolver::new(c.atoms.len(), &all);
+    cs.enable_turbo();
 
     // The hard program (drop every soft construct) must be consistent on its own,
     // else the facts/premises are to blame and we must not point at assumptions.
@@ -184,6 +186,15 @@ impl ConstructSolver {
         sat::SatLit::positive((self.base + i) as sat::Var)
     }
 
+    /// Turn search heuristics on for the queries that follow. Sound only once no
+    /// remaining query's *contents* reach the report — i.e. after the core
+    /// candidate (whose literals do) has been solved on the reference profile;
+    /// the deletion/flip queries consume bare SAT/UNSAT verdicts, which
+    /// heuristics cannot change.
+    fn enable_turbo(&mut self) {
+        self.inc.set_config(sat::SolverConfig::TURBO);
+    }
+
     /// Is the program satisfiable using only the constructs marked active?
     pub(crate) fn subset_is_sat(&mut self, active: &[bool]) -> bool {
         let asm: Vec<sat::SatLit> = active
@@ -302,6 +313,8 @@ pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
     // the flip checks; the candidate must come first (see its docs).
     let mut cs = ConstructSolver::new(c.atoms.len(), &all);
     let mut active = candidate_via_assumptions(&mut cs, all.len());
+    // The content-bearing candidate query is done; everything after is verdict-only.
+    cs.enable_turbo();
     for i in 0..all.len() {
         if active[i] {
             active[i] = false;
@@ -359,7 +372,8 @@ pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
     // implementation this replaces.
     let guard_base = cnf.num_vars;
     cnf.num_vars += 1 + c.hypotheses.len();
-    let mut inc = sat::Incremental::new(&cnf);
+    // Counts are heuristic-invariant, so the turbo profile is sound throughout.
+    let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
     // Count the models of (program ∧ assumptions) projected on `project`, up to 2.
     let count2 = |inc: &mut sat::Incremental, assume: &[sat::SatLit], guard: sat::Var| match inc
         .solve(assume)

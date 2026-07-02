@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{Cnf, SatLit, Stats, Var};
+use super::{Cnf, SatLit, SolverConfig, Stats, Var};
 
 /// Why a variable was assigned — needed for conflict analysis and backtracking.
 #[derive(Clone, Copy)]
@@ -56,11 +56,18 @@ pub(crate) struct Solver {
     // (dummy) level so that mapping holds. Empty for a plain solve.
     pub(crate) assumptions: Vec<SatLit>,
     stats: Stats, // deterministic work counters (never reset over the lifetime)
+    config: SolverConfig,
 }
 
 impl Solver {
-    /// Build a solver and load every clause of `cnf` under the empty assignment.
+    /// Build a solver and load every clause of `cnf` under the empty assignment,
+    /// with the reference (heuristics-off) profile.
     pub(crate) fn new(cnf: &Cnf) -> Self {
+        Self::with_config(cnf, SolverConfig::default())
+    }
+
+    /// Like [`Solver::new`] with an explicit heuristics profile.
+    pub(crate) fn with_config(cnf: &Cnf, config: SolverConfig) -> Self {
         let n = cnf.num_vars;
         let mut s = Solver {
             num_vars: n,
@@ -80,6 +87,7 @@ impl Solver {
             ok: true,
             assumptions: Vec::new(),
             stats: Stats::default(),
+            config,
         };
         for clause in &cnf.clauses {
             s.add_clause(clause);
@@ -338,6 +346,9 @@ impl Solver {
             };
         }
         learned[0] = p.unwrap().negate();
+        if self.config.ccmin {
+            self.minimize_learned(&mut learned);
+        }
 
         let backjump = self.assertion_level(&mut learned);
         self.var_inc *= 1.0 / 0.95; // VSIDS decay
@@ -348,6 +359,34 @@ impl Solver {
         self.touched = touched; // give the (now empty) buffer back for next time
         self.stats.learned_literals += learned.len() as u64;
         (learned, backjump)
+    }
+
+    /// MiniSat's "basic" learned-clause minimization ([`SolverConfig::ccmin`]):
+    /// drop `learned[j]` (j ≥ 1) when its reason clause is subsumed by the rest —
+    /// every antecedent is already in the learned clause (`seen`, which at this
+    /// point in [`Solver::analyze`] marks exactly the `learned[1..]` variables) or
+    /// fixed at level 0. Removed literals stay `seen` on purpose: a literal whose
+    /// reason rests on another *removed* literal is still redundant (the
+    /// implication graph is acyclic, so removals resolve out in reverse trail
+    /// order). The asserting literal `learned[0]` is never touched.
+    fn minimize_learned(&self, learned: &mut Vec<SatLit>) {
+        let mut w = 1;
+        for j in 1..learned.len() {
+            let v = learned[j].var() as usize;
+            let redundant = match self.reason[v] {
+                // The reason clause holds v's literal at index 0; antecedents follow.
+                Reason::Long(cr) => self.clauses[cr][1..].iter().all(|q| {
+                    let qv = q.var() as usize;
+                    self.seen[qv] || self.level[qv] == 0
+                }),
+                _ => false,
+            };
+            if !redundant {
+                learned[w] = learned[j];
+                w += 1;
+            }
+        }
+        learned.truncate(w);
     }
 
     /// Move the highest-level non-asserting literal to index 1 and return its
@@ -581,6 +620,11 @@ impl Solver {
     /// The cumulative work counters (never reset).
     pub(crate) fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    /// Switch the heuristics profile from the next solve on.
+    pub(crate) fn set_config(&mut self, config: SolverConfig) {
+        self.config = config;
     }
 }
 

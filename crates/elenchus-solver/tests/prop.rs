@@ -1077,8 +1077,10 @@ proptest! {
 
 // --- the incremental (re-entrant) solver -------------------------------------
 
-/// One incremental step: clauses to add first, then assumptions to solve under.
-type IncStep = (RawCnf, Vec<(u32, bool)>);
+/// One incremental step: clauses to add first, then assumptions to solve under,
+/// then the heuristics profile to solve with (re-set every step, so sessions mix
+/// reference and ccmin queries over one shared clause database).
+type IncStep = (RawCnf, Vec<(u32, bool)>, bool);
 
 /// A base instance plus a query script: each step optionally adds a few clauses,
 /// then solves under its own assumption set.
@@ -1090,6 +1092,7 @@ fn incremental_script() -> impl Strategy<Value = (usize, RawCnf, Vec<IncStep>)> 
         let step = (
             prop::collection::vec(clause, 0..=2),
             prop::collection::vec(lit, 0..=n),
+            any::<bool>(),
         );
         (Just(n), base, prop::collection::vec(step, 1..=6))
     })
@@ -1106,7 +1109,8 @@ proptest! {
     fn incremental_session_matches_bruteforce((n, base, steps) in incremental_script()) {
         let mut inc = sat::Incremental::new(&to_cnf(n, &base));
         let mut clauses = to_clauses(&base);
-        for (extra, asm) in &steps {
+        for (extra, asm, ccmin) in &steps {
+            inc.set_config(sat::SolverConfig { ccmin: *ccmin });
             for cl in to_clauses(extra) {
                 inc.add_clause(&cl);
                 clauses.push(cl);
