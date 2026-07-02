@@ -1448,3 +1448,81 @@ proptest! {
         }
     }
 }
+
+// --- TRY (abduction) equivalence with the clone-per-hypothesis reference -----
+
+use elenchus_compiler::Hypothesis;
+use elenchus_solver::TryOutcome;
+
+/// A generated TRY case: a [`CoreCase`] plus candidate literals to TRY.
+type TryCase = (usize, Vec<u8>, RawCnf, Vec<(u32, bool)>);
+
+fn try_instance() -> impl Strategy<Value = TryCase> {
+    core_instance().prop_flat_map(|(n, facts, raw)| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        (
+            Just(n),
+            Just(facts),
+            Just(raw),
+            prop::collection::vec(lit, 1..=4),
+        )
+    })
+}
+
+/// The pre-incremental `tried_hypotheses`: clone the CNF per hypothesis, assert
+/// the candidate as a unit clause, and count models from scratch each time.
+fn ref_tried(c: &Compiled) -> Vec<TryOutcome> {
+    // Mirror of the engine's backward CNF: premises + facts (no rules here), with
+    // the model count projected onto the atoms the clauses constrain.
+    let cnf = encode(c);
+    let mut constrained = vec![false; c.atoms.len()];
+    for clause in &c.clauses {
+        for l in &clause.lits {
+            constrained[l.atom as usize] = true;
+        }
+    }
+    let project: Vec<Var> = (0..c.atoms.len() as Var)
+        .filter(|&a| constrained[a as usize])
+        .collect();
+    let base_unique = sat::models(&cnf, &project, 2).len() == 1;
+    c.hypotheses
+        .iter()
+        .map(|h| {
+            let mut with = cnf.clone();
+            with.add_clause(vec![SatLit::new(h.lit.atom, !h.lit.negated)]);
+            match sat::models(&with, &project, 2).len() {
+                0 => TryOutcome::Conflicts,
+                1 if !base_unique => TryOutcome::Closes,
+                _ => TryOutcome::StillOpen,
+            }
+        })
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// The guarded-blocking incremental counting reports the exact trichotomy
+    /// (Closes / Conflicts / StillOpen) the clone-per-hypothesis implementation
+    /// it replaced would have, for every hypothesis.
+    #[test]
+    fn incremental_try_matches_clone_reference((n, facts, raw, tries) in try_instance()) {
+        let mut compiled = build_core_compiled(n, &facts, &raw);
+        compiled.hypotheses = tries
+            .iter()
+            .enumerate()
+            .map(|(i, &(atom, negated))| Hypothesis {
+                lit: Lit { atom, negated },
+                origin: Origin {
+                    source: "<prop>".into(),
+                    line: 200 + i as u32,
+                    premise: None,
+                    kind: "TRY",
+                },
+            })
+            .collect();
+        let report = solve(&compiled);
+        let got: Vec<TryOutcome> = report.tried.iter().map(|t| t.outcome).collect();
+        prop_assert_eq!(got, ref_tried(&compiled));
+    }
+}
