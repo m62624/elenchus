@@ -110,13 +110,17 @@ pub struct Clause {
 }
 
 /// A forward-chaining rule (from `RULE`): if all antecedent literals hold, derive
-/// the consequent literals.
+/// the consequent literals — *unless* an exception defeats it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
     /// Literals that must all hold for the rule to fire.
     pub antecedent: Vec<Lit>,
     /// Literals derived (asserted) when the antecedent holds.
     pub consequent: Vec<Lit>,
+    /// `UNLESS` exceptions (a defeasible default). The rule fires only when no
+    /// exception literal is *established* TRUE — an exception that is FALSE or
+    /// UNKNOWN lets the default stand. Empty = an ordinary indefeasible rule.
+    pub exceptions: Vec<Lit>,
     /// Where it came from (for the report).
     pub origin: Origin,
 }
@@ -160,6 +164,91 @@ pub struct Compiled {
     /// purely advisory. Filled by `compile_source_with` / `compile_with` after
     /// [`Compiler::resolve_ports`]; empty when no port was declared.
     pub placeholders: Vec<PlaceholderInfo>,
+    /// One record per `EXISTS` that named neither a `SET` nor a `WITNESS` (an
+    /// [`elenchus_parser::ExistsDomain::Open`]). Inert for the solver — it emits no
+    /// clause — but surfaced as a WARNING nudging the author to name a witness.
+    pub unwitnessed_exists: Vec<UnwitnessedExists>,
+    /// One record per `FACT … BECAUSE <ground>` — the justification (L2) layer. The
+    /// solver reads the ground atom's value: FALSE → CONFLICT ("your reason does not
+    /// hold"), UNKNOWN → WARNING ("your reason is unestablished"), TRUE → silent. It
+    /// emits **no clause** — the check is evaluative, not a constraint.
+    pub justifications: Vec<Justification>,
+    /// One record per `TRY <literal>` — the abduction (L5) layer. A hypothesis under
+    /// test: the LLM supplies a candidate the engine has *not* committed. The solver
+    /// runs one side-solve (the program plus this literal) and reports whether
+    /// asserting it would close the open model, conflict with it, or leave it open.
+    /// It emits **no clause and no fact** — it never enters the model or the verdict.
+    pub hypotheses: Vec<Hypothesis>,
+    /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
+    /// layer. The solver checks each attribution against the settled world model:
+    /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
+    /// falsehood), UNKNOWN → WARNING; a non-factive belief (`BELIEVES`) that is FALSE
+    /// → an informational note (exit 0, never raises the verdict); plus a per-agent
+    /// coherence check (knowing φ and ¬φ → CONFLICT). It emits **no clause and no fact**
+    /// — the agent is a report-side label, never a SAT atom.
+    pub attributions: Vec<Attribution>,
+}
+
+/// An advisory record: an `EXISTS` premise that named no candidate — neither a
+/// `SET` (`IN`) nor a `WITNESS`. It cannot be checked (there is nothing to point
+/// at), so it grounds to no clause and is reported as a WARNING. **Advisory to the
+/// SAT core, but it does raise the verdict to WARNING** (a premise that could not
+/// be checked), matching an implication blocked by an UNKNOWN atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnwitnessedExists {
+    /// Provenance of the `EXISTS` premise (source, line, name).
+    pub origin: Origin,
+    /// Human label of the unwitnessed condition (`domain.subject predicate object`,
+    /// with the binder still in subject position), shown as the blocked check.
+    pub condition: String,
+    /// The binder name, used to phrase the "name a witness" hint.
+    pub binder: String,
+}
+
+/// One `FACT … BECAUSE <ground>` justification: the belief atom, the ground it is
+/// claimed to rest on, and the provenance of the `BECAUSE`. The solver checks the
+/// ground's model value (FALSE → CONFLICT, UNKNOWN → WARNING, TRUE → silent). It is
+/// **evaluative, not a constraint** — it emits no clause, so an UNKNOWN ground is
+/// reported rather than silently forced true.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Justification {
+    /// The asserted atom (the belief), for the report message.
+    pub belief: AtomId,
+    /// The cited ground atom whose value the engine checks.
+    pub ground: AtomId,
+    /// Provenance of the `BECAUSE` (source, line, kind = `BECAUSE`).
+    pub origin: Origin,
+}
+
+/// One `TRY <literal>` hypothesis: the candidate atom (with its polarity) and the
+/// provenance of the `TRY`. The solver adds this single literal to the program and
+/// re-solves, judging the outcome — it is **evaluative, not a constraint**: it emits
+/// no clause and no fact, so it never enters the model or affects the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hypothesis {
+    /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+}
+
+/// One `KNOWS`/`BELIEVES <agent> <literal>` attribution: the agent (a report-side
+/// label, not an atom), the claimed literal, whether it is factive (`KNOWS`), and the
+/// provenance. The solver checks the literal's model value per agent — factive:
+/// FALSE → CONFLICT (you cannot know a falsehood), UNKNOWN → WARNING; non-factive:
+/// FALSE → an informational note (exit 0, a false belief), else silent — plus a
+/// per-agent coherence check (knowing φ and ¬φ → CONFLICT). It is **evaluative, not a
+/// constraint**: no clause, no fact, the agent never enters the SAT core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribution {
+    /// The agent the claim is attributed to (a bare label, not an atom).
+    pub agent: String,
+    /// The claimed literal (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// `true` for `KNOWS` (factive), `false` for `BELIEVES` (non-factive).
+    pub factive: bool,
+    /// Provenance of the `KNOWS`/`BELIEVES` (source, line, kind).
+    pub origin: Origin,
 }
 
 /// An advisory record: a file `IMPORT`s a domain it never references. Such an

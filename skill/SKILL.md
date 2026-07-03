@@ -51,8 +51,20 @@ until it is **CONSISTENT**.
 |--------|:----:|---------|----------------|
 | **CONSISTENT** | 0 | no contradiction; answer pinned down | done |
 | **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` — or, if that atom should follow automatically from an already-true `WHEN`, make it a `RULE` (which derives it) instead of a `PREMISE` |
-| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`pin it down: add …`) |
-| **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — fix one |
+| **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`fix: add …`) — or `TRY <atom>` first to have the engine check a candidate would pin it before you commit |
+| **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — the `CORE`/`RETRACT` names each culprit with a `drop` (and, for a fact, a verified `flip it to: …  (checked)`); apply ONE, re-check |
+| *(aborted)* | 3 | `--max-conflicts` safety valve fired — the check did **not** finish, no verdict | not a logic verdict; see the note below |
+
+
+> **`--max-conflicts` / `max_conflicts` (safety valve — do not use it on a normal
+> check).** Every legitimate program finishes in milliseconds with ~0 SAT
+> conflicts, so the right value is *unset* (unlimited). Reach for it only when
+> the user explicitly asks, or after **3** runs of the *same* program failed to
+> complete (hung until your own timeout) — then re-run once with
+> `--max-conflicts 100000` (MCP: `"max_conflicts": 100000`) to turn the hang
+> into a clean, deterministic `conflict budget exceeded` error (CLI exit 3) you
+> can report. Never treat that abort as CONFLICT: there is no verdict. If the
+> user merely asks what the flag is, explain it — don't apply it.
 
 **The target before you act on the reasoning is `CONSISTENT` (exit 0) — nothing
 else.** WARNING, UNDERDETERMINED and CONFLICT are *not* "done"; each is the engine
@@ -90,18 +102,26 @@ never allowed is declaring `CONFLICT`/UNSAT *because you got stuck* or to stop
 trying: UNSAT is a claim that demands the very same rigour `CONSISTENT` demands of
 completeness. No `CORE`/`why:` to stand on, no answer — keep going.
 
-## Keyword reference (the complete set)
+## Keyword reference — the COMPLETE vocabulary
 
-Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
+Keywords are **ALWAYS CAPS, ASCII**; everything else is your content. **This table
+is the entire language — every keyword elenchus has.** If a word or form is not in
+this table, **it does not exist**: no other keywords, no operators, no parentheses,
+no nesting, no arithmetic. An unknown form is a hard error, not a hidden feature —
+**never invent syntax.** When you need something absent, model it as boolean atoms
+(see "Nothing else exists"). If the version check passed, you can trust this
+completeness exactly.
 
 | Keyword | Where | One-line meaning |
 |---------|-------|------------------|
 | `DOMAIN` | statement (first, once) | declare this file's domain — the namespace its atoms live in (**required**) |
 | `FACT` | statement | assert an atom TRUE |
+| `FACT … BECAUSE …` | statement | assert an atom TRUE **and name its ground**; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) |
 | `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
 | `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
+| `RULE … UNLESS …` | `RULE` body (last) | a **defeasible** exception: the rule still derives its `THEN` unless the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only |
 | `CHECK` | statement | run the engine (optionally for one subject) |
 | `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
 | `IMPORT` | statement | pull in another `.vrf` source; reference its atoms as `<domain>.<atom>` |
@@ -111,6 +131,7 @@ Keywords are **ALWAYS CAPS, ASCII**. Everything else is your content.
 | `ONEOF` | `PREMISE` body | **exactly one** of the listed atoms is TRUE |
 | `ATLEAST` | `PREMISE` body | **at least one** of the listed atoms is TRUE |
 | `EXISTS … IN …` | `PREMISE` body | **at least one** element of a `SET` satisfies the condition (the ∃ dual of `FOR EACH`) |
+| `EXISTS … WITNESS …` | `PREMISE` body | prove ∃ by **naming the one element** that satisfies it — no `SET`, grounds to a single atom (the open-domain ∃) |
 | `WHEN` | `PREMISE`/`RULE` body | starts the antecedent of an implication |
 | `THEN` | `PREMISE`/`RULE` body | starts the consequent |
 | `AND` | `WHEN`/`THEN` group | conjunction of literals in that group |
@@ -131,49 +152,113 @@ space-separated identifiers `subject predicate [object]`, optionally prefixed wi
 a domain (`<domain>.subject predicate [object]`); a **literal** is an atom
 optionally prefixed with `NOT`.
 
-## Each keyword: syntax · why · mini-example
+## Each keyword — one card: **is · use when · form**
 
-### `DOMAIN` — declare the file's domain (required, first)
-- **Syntax:** `DOMAIN <name>` — exactly once, as the first statement of the file.
-- **Why:** the domain is part of every atom's identity. Atoms you write without a
-  prefix belong to **this** domain; the same triple in a different domain is a
-  **different atom** (so `physics.engine runs` ≠ `plan.engine runs`). This is what
-  keeps an imported library's `capital` from silently colliding with yours. A file
-  with no `DOMAIN` is an error.
+Every card's **form** is the *only* correct way to write that keyword; a form not
+shown does not parse. **not:** lists what the engine rejects right there.
+
+### `DOMAIN` — the file's namespace (required, first)
+- **is** — the namespace every atom belongs to, part of each atom's identity
+  (`physics.engine runs` ≠ `plan.engine runs`), so an import can't silently collide.
+- **use when** — always: the first line of every file, exactly once.
+- **form** — `DOMAIN <name>`  ·  **not:** omitted, repeated, or placed after any other statement.
 ```vrf
 DOMAIN plan
 FACT engine has_fuel          // identity: plan.engine has_fuel
 ```
 
-### `FACT` / `NOT` — confident facts
-- **Syntax:** `FACT <subject> <predicate> [<object>]` · `NOT <subject> <predicate> [<object>]`
-- **Why:** the only way to assert truth. `FACT` = TRUE, `NOT` = FALSE. An atom you
-  never mention is **UNKNOWN** (not false — the engine never guesses).
+### `FACT` / `NOT` — confident truth
+- **is** — assert an atom TRUE (`FACT`) or FALSE (`NOT`). An atom you never state is
+  **UNKNOWN** — the engine never guesses. The only way to assert truth.
+- **use when** — you know a thing is (or is not) the case.
+- **form** — `FACT <atom>` · `NOT <atom>`, where `<atom>` = `subject predicate [object]`
+  ·  **not:** a bare one-word atom unless it is a declared `VAR`.
 ```vrf
 FACT socrates is human
 NOT  socrates is robot
 ```
 
-### `ASSUME` — a soft, retractable hypothesis
-- **Syntax:** `ASSUME <subject> <predicate> [<object>]` · `ASSUME NOT <subject> <predicate> [<object>]`
-- **Why:** a **what-if**. While checking it behaves exactly like a `FACT`/`NOT` (it
-  fires rules and premises), but it is a *guess, not a commitment*. If your guesses
-  can't all hold together with the facts and premises, the engine **keeps the
-  facts/premises** and tells you **which assumptions to drop** (a `RETRACT` list) —
-  it never blames a real fact. Use it to explore "could this be true?" without
-  rewriting the program. **A `FACT` is never retracted; an `ASSUME` is.** Next move
-  on a `RETRACT`: drop or flip one listed `ASSUME`, then re-check.
+### `FACT … BECAUSE …` — assert a fact **and name its ground**
+- **is** — a `FACT` that names the ground it rests on; the engine checks that ground
+  (TRUE → silent · FALSE → CONFLICT with a trace · UNKNOWN → WARNING). Evaluative: it
+  adds no constraint, never forces the ground true (an unestablished ground is
+  *reported*).
+- **use when** — you want "how do you know?" checked. Opt-in; **chains compose** — a
+  ground may itself be a `FACT … BECAUSE …`, and the weakest link surfaces (a bare
+  asserted ground is accepted as a first principle).
+- **form** — `FACT <atom> BECAUSE <ground-atom>`  ·  **not:** more than one ground; a
+  ground on `NOT`/`ASSUME` (only `FACT` takes `BECAUSE`).
 ```vrf
-FACT  rel reviewed
-ASSUME rel in_prod            // try it on — what if this ships to prod?
+FACT db reachable                        // the ground
+FACT api healthy BECAUSE db reachable    // the claim, and the reason for it
+```
+
+### `ASSUME` — a soft, retractable hypothesis
+- **is** — a *guess* that acts exactly like a `FACT`/`NOT` while checking (fires rules
+  and premises), but on a clash the engine **keeps the facts/premises** and names which
+  `ASSUME`s to drop (a `RETRACT` list) — it never blames a real fact.
+- **use when** — exploring "what if?" without committing. **A `FACT` is never
+  retracted; an `ASSUME` is.** On a `RETRACT`, drop or flip one listed `ASSUME`, re-check.
+- **form** — `ASSUME <atom>` · `ASSUME NOT <atom>`  ·  **not:** used to state something
+  you actually know (that is a `FACT`).
+```vrf
+FACT   rel reviewed
+ASSUME rel in_prod            // what if this ships to prod?
 ASSUME NOT rel has_rollback
 ```
 
+### `TRY` — test a hypothesis **without committing it** (abduction)
+- **is** — a candidate the engine *checks but never adopts*: it reports whether
+  asserting the atom would **close** the open model, **conflict** with what is
+  established, or leave it **still open** — then discards it. The verdict, exit code
+  and model are **untouched** (advisory, like `DERIVED`).
+- **use when** — an `UNDERDETERMINED` gap (or any "what would pin this?"): propose the
+  missing atom and let the engine *check* it before you actually write the `FACT`. This
+  is the "add" side of the fix loop (`CORE`/`RETRACT` say what to *drop/flip*; `TRY`
+  says whether an *add* would work).
+- **not `ASSUME`** — an `ASSUME` **is committed**: it enters the model, fires rules, and
+  can flip the verdict (and be `RETRACT`ed). A `TRY` does none of that — it only asks a
+  question. Reach for `TRY` to probe, `ASSUME` to actually suppose.
+- **form** — `TRY <atom>` · `TRY NOT <atom>`
+```vrf
+RULE gate:
+    WHEN deploys is_ready
+    THEN deploys unblocked
+CHECK BIDIRECTIONAL           // UNDERDETERMINED: is_ready is free
+TRY deploys is_ready          // → closes the gap: the model is now pinned  (checked)
+```
+
+### `KNOWS` / `BELIEVES` — what an agent knows or believes (epistemic)
+- **is** — attribute a claim about the world to a *named agent*. `KNOWS` is **factive**
+  (knowledge implies truth): knowing an established-**FALSE** atom is a **CONFLICT** ("you
+  cannot know a falsehood"), knowing an **UNKNOWN** one is a **WARNING** (unconfirmed), and
+  one agent knowing both φ and ¬φ is a **CONFLICT**. `BELIEVES` is **non-factive**: a false
+  belief is an informational note (exit 0, never raises the verdict), **never** a
+  CONFLICT — a mind may be mistaken.
+- **use when** — the problem is about *who thinks what*, not just what is true: a false
+  assumption held by a service/person, mistaken vs. correct beliefs, "does what they know
+  match the facts?". `KNOWS` for a claim that *must* be true; `BELIEVES` to model a
+  possibly-wrong one.
+- **the agent is a label** — it never becomes an atom or a clause; the engine only checks
+  the claim against the settled world model (a side check, never touching the SAT core).
+  Not full modal logic: no nested `KNOWS`, no common knowledge (a future layer).
+- **not `KNOWS` vs `BELIEVES`** — knowing false is an error (CONFLICT); believing false is
+  allowed (a flagged note). Pick by whether a mistaken claim should fail or just be seen.
+- **form** — `KNOWS <Agent> [NOT] <atom>` · `BELIEVES <Agent> [NOT] <atom>`
+```vrf
+NOT door locked
+KNOWS alice door locked       // CONFLICT: alice cannot know door locked — it is FALSE
+BELIEVES bob door locked      // BELIEF: bob believes it — but it is FALSE (a false belief)
+```
+
 ### `PREMISE` — a checked first principle
-- **Syntax:** `PREMISE <name>:` then a body on the following lines (a list body or
-  a `WHEN…THEN` body). `<name>` is a label for the report only.
-- **Why:** premises are the constraints elenchus checks. A violated premise is a
-  CONFLICT. (See the body keywords below.)
+- **is** — a constraint the engine **checks**; a violated premise is a CONFLICT. It
+  only checks — it never establishes a value (that is a `RULE`).
+- **use when** — a rule must hold: mutual exclusion, "exactly one", a required gate,
+  an implication to verify.
+- **form** — `PREMISE <name>:` then one body (a list body **or** a `WHEN…THEN` body) on
+  the following lines; `<name>` is a report label.  ·  **not:** any body other than
+  the ones below.
 ```vrf
 PREMISE one_state:
     ONEOF
@@ -182,9 +267,11 @@ PREMISE one_state:
 ```
 
 ### `EXCLUSIVE` / `FORBIDS` — at most one
-- **Syntax:** the keyword on its own line, then **≥2 atoms**, one per line.
-- **Why:** mutual exclusion. For n>2 it means pairwise "no two together", not
-  "not all at once". `FORBIDS` is the same rule, nicer for a pair.
+- **is** — mutual exclusion: no two listed atoms are TRUE together (for n>2, pairwise
+  "no two", not "not all at once"). `FORBIDS` is the same rule, reads well for a pair.
+- **use when** — states/paths/flags that cannot co-occur.
+- **form** — the keyword on its own line, then **≥2 atoms**, one per line (a `PREMISE`
+  body).  ·  **not:** `NOT` on a list item; fewer than two atoms.
 ```vrf
 PREMISE one_path:
     EXCLUSIVE
@@ -192,12 +279,14 @@ PREMISE one_path:
         motor uses slow_path
 ```
 
-### `ONEOF` — exactly one (this is how you declare a variable)
-- **Syntax:** keyword line, then ≥2 atoms.
-- **Why:** at most one **and** at least one is TRUE. The workhorse for assignment
-  ("each person has exactly one role"). Think of it as **declaring a variable**
-  `alice is …` whose value is one of the listed objects — the engine's nearest
-  thing to "a variable with a fixed domain of values".
+### `ONEOF` — exactly one (declares a variable)
+- **is** — exactly one of the listed atoms is TRUE (at-most-one **and** at-least-one).
+  Think "a variable whose value is one of the listed objects".
+- **use when** — assignment ("each person has exactly one role"). **It also *closes*
+  the variable:** after `ONEOF`, a value you never listed (a typo like `alice is leed`)
+  is a **hard compile error** with `did you mean` — not a silent new UNKNOWN atom. The
+  strongest typo guard the language has; closing is opt-in, per variable.
+- **form** — keyword line, then **≥2 atoms** (a `PREMISE` body).  ·  **not:** `NOT` items.
 ```vrf
 PREMISE alice_role:
     ONEOF
@@ -205,21 +294,11 @@ PREMISE alice_role:
         alice is dev
         alice is qa
 ```
-- **`ONEOF` also *closes* the variable (typo guard).** Once you enumerate the
-  values of `alice is …`, those become the **only** legal values. Writing
-  `FACT alice is leed` (a misspelling — or any value you never listed) is now a
-  **hard compile error** (exit 2) with a `did you mean`, instead of silently
-  minting a new `alice is leed` atom that hangs in the air as UNKNOWN:
-  ```
-  alice.vrf:9: 'leed' is not a declared value of 'alice is' — ONEOF declares { dev, lead, qa } — did you mean `lead`?
-  ```
-  So: **enumerate a variable's values with `ONEOF` and the engine catches your
-  typos for you.** Subjects you never `ONEOF` stay open (any value is a fresh
-  boolean atom) — closing is opt-in, per variable.
 
 ### `ATLEAST` — at least one
-- **Syntax:** keyword line, then ≥2 atoms.
-- **Why:** a disjunction with no upper bound ("at least one reviewer").
+- **is** — a disjunction with no upper bound: at least one listed atom is TRUE.
+- **use when** — "at least one reviewer / backend / owner".
+- **form** — keyword line, then ≥2 atoms (a `PREMISE` body).  ·  **not:** `NOT` items.
 ```vrf
 PREMISE has_reviewer:
     ATLEAST
@@ -228,31 +307,45 @@ PREMISE has_reviewer:
 ```
 
 ### `EXISTS … IN …` — at least one element of a SET
-- **Syntax:** `EXISTS <binder> IN <set>` then **one** condition line using the binder.
-- **Why:** the same "at least one" as `ATLEAST`, but generated from a declared `SET`
-  instead of hand-listed — the ∃ dual of `FOR EACH … IN` (which is "for all"). Use it
-  to say "*some* element covers this"; if every instantiation is forced false, you get
-  a `CONFLICT` (a coverage gap caught mechanically). It is a `PREMISE` body only.
+- **is** — "some element of a declared `SET` satisfies the condition" (∃ generated
+  from a set, the dual of `FOR EACH … IN`). If every instance is forced false → CONFLICT
+  (a coverage gap caught mechanically).
+- **use when** — coverage over a listed set ("*some* handler takes it").
+- **form** — `EXISTS <binder> IN <set>` then **one** condition line using the binder (a
+  `PREMISE` body).  ·  **not:** more than one condition line.
 ```vrf
 SET handlers
     auth
     billing
 PREMISE someone_handles:
     EXISTS h IN handlers
-        h handles request    // at least one handler takes the request
+        h handles request
 ```
 
-### `WHEN … THEN …` — implication (with `AND` / `OR`)
-- **Syntax:** `WHEN <lit>` then zero or more `AND <lit>` **or** `OR <lit>` lines,
-  then `THEN <lit>` then zero or more `AND`/`OR` lines. Each literal is `[NOT] atom`.
-- **Why:** "if the antecedent holds, the consequent must hold". As a `PREMISE` a
-  violation is a CONFLICT. **One group may not mix `AND` and `OR`** (split it into
-  two premises).
-- **The four combinations:**
-  - `AND` antecedent / single `THEN`: `a ∧ b → c`
-  - `OR` antecedent: `(a ∨ b) → c` (fires if *either* holds)
-  - `OR` consequent: `a → (c ∨ d)` (at least one of c/d must hold)
-  - both: `(a ∨ b) → (c ∨ d)`
+### `EXISTS … WITNESS …` — prove ∃ by naming the one element
+- **is** — ∃ over an **open** domain: instead of a `SET`, name the single element that
+  works; the engine checks it holds (`EXISTS` over the singleton `{term}` — one atom;
+  forced false → CONFLICT).
+- **use when** — you can't list the whole domain but can point at one witness. (A
+  **universal** must always name a `SET`/relation; only ∃ may point at a lone witness —
+  that is what keeps it from ever blowing up.)
+- **form** — `EXISTS <binder> WITNESS <term>` then **one** condition line (a `PREMISE`
+  body).  ·  **not:** omitting both `IN` and `WITNESS` — an unwitnessed ∃ can't be
+  checked → **WARNING** ("name a witness"), not a conflict.
+```vrf
+FACT auth_service handles request
+PREMISE request_is_covered:
+    EXISTS h WITNESS auth_service    // "some handler covers it — namely this one"
+        h handles request
+```
+
+### `WHEN … THEN …` — implication (`AND` / `OR` group logic)
+- **is** — "if the antecedent holds, the consequent must hold". As a `PREMISE`, a
+  violation is a CONFLICT. Four shapes: `a∧b→c` · `(a∨b)→c` · `a→(c∨d)` · `(a∨b)→(c∨d)`.
+- **use when** — conditional requirements and gates.
+- **form** — `WHEN <lit>`, then zero+ `AND <lit>` **or** `OR <lit>`, then `THEN <lit>`,
+  then zero+ `AND`/`OR`. Each `<lit>` is `[NOT] atom`.  ·  **not:** mixing `AND` and
+  `OR` in one group (split into two premises); `AND`/`OR` or parentheses *inside* a literal.
 ```vrf
 PREMISE deploy_gate:
     WHEN svc built
@@ -265,39 +358,45 @@ PREMISE needs_a_backend:
     OR   api in_staging
 ```
 
-### `RULE` — derive new facts
-- **Syntax:** `RULE <name>:` then a `WHEN…THEN` body (a list body is **not**
-  allowed here).
-- **Why:** unlike `PREMISE` (which only checks), a `RULE` *asserts* its consequent
-  as a new TRUE/FALSE fact when the antecedent holds (forward chaining). `OR` in a
-  `RULE`'s `THEN` is **rejected** — a rule cannot derive "one of these"; use a
-  `PREMISE` for a disjunctive consequent. (`OR` in a rule's `WHEN` is fine.)
-```vrf
-RULE flyers_breathe:
-    WHEN bird can_fly
-    THEN bird needs_oxygen
-```
-- **To rule a possibility *out*, derive the negation with a `RULE` — a `PREMISE`
-  cannot.** A `PREMISE WHEN x THEN NOT y` only *checks* `y`; while `y` is UNKNOWN
-  the premise stays **blocked** (`WARNING`) and the engine never concludes
-  `y = FALSE`. So if eliminating one branch is what should let a downstream check
-  pass (and the model reach `CONSISTENT` instead of `WARNING`), **derive** that
-  negation with a `RULE` (its `THEN` may be a `NOT`):
+### `RULE` — derive a new fact (forward chaining)
+- **is** — an implication that *asserts* its `THEN` as a new fact when its `WHEN`
+  holds — unlike `PREMISE`, which only checks.
+- **use when** — a truth should follow automatically, **including ruling a branch out**
+  with `THEN NOT y`. A `PREMISE WHEN x THEN NOT y` cannot establish `y`: while `y` is
+  UNKNOWN it just stays blocked (WARNING). To *close* a branch (and reach CONSISTENT,
+  not WARNING), **derive** the negation with a `RULE`.
+- **form** — `RULE <name>:` then one `WHEN…THEN` body; `THEN` may be `NOT`.  ·  **not:**
+  `OR` in `THEN` (a rule can't derive a disjunction — use a `PREMISE`); a list body.
 ```vrf
 RULE not_repro_blocks_proof:    // if it can't be reproduced, it isn't proven
     WHEN NOT case reproducible
-    THEN NOT case proven        // derived FALSE — now the `proven` branch is closed
+    THEN NOT case proven        // derived FALSE — the `proven` branch is closed
 ```
 
-### `SET` + `FOR EACH … IN …` — write a premise once, apply it to every element
-- **Syntax:** `SET <name>` then one element per line; then on a `PREMISE`/`RULE`
-  header, `PREMISE <name> FOR EACH <binder> IN <set>:` followed by the usual body.
-- **Why:** instead of copying a premise per item, write it **once** with a binder
-  (`t`). The engine instantiates the whole body once per element, substituting the
-  binder. This is how you state "every X must …" without enumerating by hand.
-- **The one rule to remember:** a header carries **exactly one** `FOR EACH` — you
-  **cannot** nest them (a second `FOR EACH` will not parse). That is deliberate: it
-  guarantees the work stays small (one instance per element, never element×element).
+### `RULE … UNLESS …` — a default with exceptions (defeasible)
+- **is** — a `RULE` that still derives its `THEN` **by default**, but is *suppressed*
+  when an `UNLESS` exception is **established** TRUE. A FALSE or UNKNOWN exception does
+  **not** defeat it (assume-normal). Adding the exception fact *retracts* the derived
+  conclusion — the one non-monotonic construct.
+- **use when** — "X holds, except when Y" — a general rule with legitimate exceptions
+  ("birds fly, but not penguins"), so an exception no longer forces a false CONFLICT.
+- **form** — one or more `UNLESS <literal>` lines **after** the `THEN` (suppressed if
+  **any** is established TRUE).  ·  **not:** `UNLESS` on a `PREMISE` (RULE-only — a
+  premise is a hard check); mixing it into the `WHEN`/`THEN` groups.
+```vrf
+RULE fly:
+    WHEN x is bird
+    THEN x can_fly
+    UNLESS x is penguin      // a penguin is a bird, yet does not fly — no conflict
+```
+
+### `SET` + `FOR EACH … IN …` — write a premise once, apply per element
+- **is** — `SET` declares a finite list; `FOR EACH <binder> IN <set>` on a header
+  instantiates the whole body once per element, substituting the binder. "For all".
+- **use when** — "every X must …" without hand-copying a premise per item.
+- **form** — `SET <name>` then one element per line; then
+  `PREMISE <name> FOR EACH <binder> IN <set>:` + body.  ·  **not:** a second `FOR EACH`
+  on one header — nesting does not parse (keeps grounding linear, never element×element).
 ```vrf
 SET tasks
     deploy
@@ -308,13 +407,13 @@ PREMISE one_slot FOR EACH t IN tasks:
         t slot night
 ```
 
-### `FOR EACH <a> <relation> <b>` — quantify over declared `FACT` pairs
-- **Syntax:** `PREMISE <name> FOR EACH <a> <relation> <b>:` then the usual body.
-  The relation's pairs are **just facts** you write: `FACT a linked b`.
-- **Why:** the way to relate *two* things (graphs, adjacency, dependencies)
-  without enumerating. The body is instantiated once per matching `FACT`, binding
-  `a`→its subject and `b`→its object. You never write a second binder — the pair
-  comes from data, so it stays cheap.
+### `FOR EACH <a> <relation> <b>` — quantify over declared pairs
+- **is** — instantiate a body once per matching `FACT <a> <relation> <b>`, binding
+  `a`→subject, `b`→object. The pairs are just facts you write.
+- **use when** — relating **two** things (graphs, adjacency, dependencies) — the pair
+  comes from data, so you never write a second binder.
+- **form** — `PREMISE <name> FOR EACH <a> <relation> <b>:` + body; pairs from
+  `FACT a rel b`.  ·  **not:** two free binders / joining two relations.
 ```vrf
 FACT n1 linked n2
 FACT n2 linked n3
@@ -325,58 +424,43 @@ PREMISE diff FOR EACH x linked y:    // neighbours can't share a colour
 ```
 
 ### `CLOSE <relation> <kind>` — close a relation at compile time
-- **Syntax:** `CLOSE <relation> <kind>` (its own line), where `<kind>` is one of
-  `TRANSITIVE` / `SYMMETRIC` / `REFLEXIVE` / `EQUIVALENCE` / `SCC`.
-- **Why:** computes a closure over the relation's pairs at **compile time** (a graph
-  step, **no solver cost**), so a relation `FOR EACH` then ranges over the closed
-  relation. Each kind adds different pairs:
-
-  | Kind | Adds | Cycle |
-  |---|---|---|
-  | `TRANSITIVE` | `a→c` when `a→b`, `b→c` (reachability) | **error** (DAG check) |
-  | `SYMMETRIC` | `b→a` for every `a→b` (two-way, e.g. `conflicts_with`) | ok |
-  | `REFLEXIVE` | `x→x` for every node | ok |
-  | `EQUIVALENCE` | reflexive+symmetric+transitive — **groups into classes** (`same_team`) | ok |
-  | `SCC` | `a↔b` when each reaches the other — **isolates dependency cycles** | ok |
-
-  Only `TRANSITIVE` rejects a cycle (a node reaching itself); the others expect or
-  add self/back pairs by design. `CLOSE` *replaces* the relation's pairs with the
-  closed set.
+- **is** — a graph closure over the relation's `FACT` pairs at **compile time** (no
+  solver cost); a relation `FOR EACH` then ranges over the closed set. `CLOSE`
+  *replaces* the pairs.
+- **use when** — reachability or grouping over declared edges.
+- **form** — `CLOSE <relation> <kind>`, `<kind>` ∈
+  `TRANSITIVE | SYMMETRIC | REFLEXIVE | EQUIVALENCE | SCC`.  ·  **not:** a cycle under
+  `TRANSITIVE` (it doubles as a DAG check → error); the others allow cycles.
+  - `TRANSITIVE` `a→c` when `a→b,b→c` · `SYMMETRIC` `b→a` · `REFLEXIVE` `x→x` ·
+    `EQUIVALENCE` groups into classes · `SCC` isolates dependency cycles.
 ```vrf
 FACT web depends_on api
 FACT api depends_on db
-CLOSE depends_on TRANSITIVE           // now web depends_on db, transitively
-PREMISE safe FOR EACH x depends_on y:
-    WHEN y deprecated
-    THEN NOT x ships
-
-FACT a conflicts_with b
-CLOSE conflicts_with SYMMETRIC        // b conflicts_with a added automatically
+CLOSE depends_on TRANSITIVE           // web depends_on db, transitively
 ```
 
 ### `CHECK` / `BIDIRECTIONAL` — run it
-- **Syntax:** `CHECK` · `CHECK <subject>` · `CHECK [<subject>] BIDIRECTIONAL`.
-- **Why:** runs the engine. A bare `CHECK` checks everything; a subject restricts
-  the report. **`BIDIRECTIONAL`** adds the backward SAT pass: it reports
-  **UNDERDETERMINED** when more than one model fits, and catches a **CONFLICT**
-  where premises are jointly unsatisfiable even though no single one is visibly
-  violated (printing a `CORE`). Use it when you care "is the answer *unique*?".
+- **is** — runs the engine. Bare `CHECK` checks everything; `CHECK <subject>` restricts
+  the report. `BIDIRECTIONAL` adds the backward SAT pass — reports **UNDERDETERMINED**
+  (more than one model fits) and catches joint-unsat **CONFLICT**s that no single
+  premise visibly violates (prints a `CORE`).
+- **use when** — every program ends with a `CHECK`; add `BIDIRECTIONAL` when you care
+  whether the answer is *unique*.
+- **form** — `CHECK` · `CHECK <subject>` · `CHECK [<subject>] BIDIRECTIONAL`.
 ```vrf
 CHECK alice BIDIRECTIONAL
 ```
 
-### `IMPORT` — reuse another domain
-- **Syntax:** `IMPORT "<path>"` · `IMPORT "<path>" AS <alias>` (quoted path).
-- **Why:** pulls in another `.vrf` file (which declares its own `DOMAIN`). You then
-  reference its atoms **explicitly** as `<domain>.<atom>` — no silent merge. To make
-  an imported premise constrain a fact, write that fact **into the imported domain**:
-  if `physics.vrf` has `WHEN Motor over_200 THEN Motor over_100`, then your
-  `FACT physics.Motor over_200` triggers it. By default the local name is the
-  imported file's own domain; `AS <alias>` renames it (and disambiguates two imports
-  that declare the same domain). Naming is **file-local and non-transitive**: you can
-  reference only domains *you* import here — not what they, in turn, imported.
-  Premise *names* stay per-source labels. **`IMPORT` only resolves in file mode**
-  (not `--text`/stdin).
+### `IMPORT` / `AS` — reuse another domain
+- **is** — pulls in another `.vrf` (which declares its own `DOMAIN`); you reference its
+  atoms **explicitly** as `<domain>.<atom>` — no silent merge. To make an imported
+  premise constrain a fact, write the fact *into* that domain (`FACT physics.Motor
+  over_200`). `AS <alias>` renames the local handle (and disambiguates two imports of
+  the same domain).
+- **use when** — sharing a library of premises across files.
+- **form** — `IMPORT "<path>"` · `IMPORT "<path>" AS <alias>` (quoted).  ·  **not:**
+  resolves **only in file mode** (not `--text`/stdin); references are file-local and
+  non-transitive (only domains *you* import here).
 ```vrf
 DOMAIN demo
 IMPORT "physics.vrf"
@@ -384,55 +468,35 @@ FACT physics.Motor over_200   // a fact placed into the imported domain
 ```
 
 ### `VAR` / `PROVIDE` / `DEFAULT` — external ports (templating)
-- **Syntax:** `VAR <name> [DEFAULT true|false]` declares a port; `PROVIDE [<domain>.]<port|atom>: true|false`
-  binds one from data. The `<name>` is a **one-word proposition** — use it bare in any
-  body (`WHEN <name> …`), exactly like a normal atom.
-- **Why:** make a `.vrf` a **template**. The logic is fixed; the boolean inputs arrive
-  from outside. A resolved port behaves **exactly** like a `FACT <name>` / `NOT <name>`;
-  it adds no new meaning, only defers *when* the truth is decided.
-- **Mix freely:** ports are ordinary propositions — combine `VAR` with `FACT`/`NOT`/
-  `PREMISE`/`RULE` in the same file. So you write the logic **once** and re-run it per
-  task by changing only the supplied values (e.g. a deploy gate run for each release).
-- **How to supply the values** (same meaning on every surface):
-  - **CLI:** `--set "<name>:true <name2>:false"` (space-separated, repeatable) and/or
-    `--data values.vrf` (a file of `PROVIDE` lines).
-  - **MCP:** `"values": { "<name>": true }` and/or `"data": { "vals.vrf": "PROVIDE <name>: true\n" }`.
-  - **Inline:** put `PROVIDE <name>: true` lines right in the program.
-- **Resolution (`supplied > DEFAULT > unset`):** an external value wins; else the
-  `DEFAULT`; else the port stays **UNKNOWN** — *not* an error, just a WARNING if a
-  premise needs it. The report's **PLACEHOLDERS** section shows each port as Supplied /
-  DEFAULT / Unset (`--hide-params` hides it; JSON always keeps it).
-- **Qualify across domains:** when several imported domains declare the same port name,
-  prefix the key with the canonical `domain.` to pick one — `--set "self.has_vision:true
-  capabilities.has_vision:false"`, or `PROVIDE self.has_vision: true`. A bare key still
-  searches every domain; only a collision needs qualifying.
-- **Inject an atom (multi-word key):** a key with more than one word names an **atom**,
-  not a port — `PROVIDE engine has_fuel: true` (or a `values`/`data` key `"engine
-  has_fuel"`) asserts it exactly like `FACT engine has_fuel`. Use it to pick a `ONEOF`
-  variant from outside. The atom must already appear in the program (else it is a typo'd
-  unknown atom — exit 2).
-- **Hard errors (exit 2):** two sources disagreeing on one port (conflict); a bare
-  proposition used with no `VAR` (undeclared); an external value naming no port
-  (unknown), an atom no statement uses (unknown atom), or a bare name declared in two
-  domains (ambiguous — qualify it).
+- **is** — a `VAR <name>` is a one-word proposition whose truth is **supplied from
+  outside**, so a `.vrf` becomes a template; a resolved port behaves exactly like
+  `FACT <name>`/`NOT <name>`. `PROVIDE` binds a value from data; `DEFAULT` is the fallback.
+- **use when** — one fixed logic re-run per task with different boolean inputs (a deploy
+  gate per release). Mix ports freely with `FACT`/`PREMISE`/`RULE`; use `<name>` bare in
+  any body.
+- **form** — `VAR <name> [DEFAULT true|false]` · `PROVIDE [<domain>.]<port|atom>: true|false`.
+  ·  **not:** a bare one-word atom with no `VAR` (undeclared → error).
+- **resolution** — supplied **>** `DEFAULT` **>** UNKNOWN. Supply via CLI
+  `--set "<name>:true"` / `--data <file>`, MCP `values`/`data`, or inline `PROVIDE`. A
+  **multi-word** key (`engine has_fuel`) injects an **atom** like `FACT`. The
+  PLACEHOLDERS section reports each port's status. Qualify a clashing name across imports
+  as `domain.name`.
 ```vrf
 DOMAIN deploy
-VAR tests_green                 // ports …
+VAR tests_green
 VAR db_migrated DEFAULT false
-FACT change_window open         // … mixed with ordinary facts and a premise
 PREMISE gate:
     WHEN tests_green
     AND  db_migrated
-    AND  change_window open
     THEN ship a
 NOT ship a            // deny unless the gate forces it
 CHECK
-// CLI : elenchus deploy.vrf --set "tests_green:true db_migrated:true"   → CONFLICT (gate fires)
-// MCP : elenchus_check { "program": "…", "values": { "tests_green": true, "db_migrated": true } }
+// CLI: elenchus deploy.vrf --set "tests_green:true db_migrated:true"  → CONFLICT (gate fires)
 ```
 
-### `//` — comments
-- **Syntax:** `//` to end of line (own line or trailing).
+### `//` — comment
+- **is** — a line comment, to end of line (own line or trailing). The only comment form.
+- **form** — `// …`
 ```vrf
 FACT a b   // a trailing note
 ```
@@ -464,29 +528,25 @@ is referenced by no premise or rule — the usual sign a typo'd name failed to l
 up, so the constraint you meant never fires. Both are nudges: fix the spelling if a
 name should be one atom, wire up or delete a line that should not dangle.
 
-## What does NOT exist (model it as booleans)
+## Nothing else exists — model it as booleans
 
-If you reach for any of these, the parser will reject it or, worse, silently
-misread it. There is **no**:
+**The vocabulary is closed.** A construct not listed above is not in the language:
+the parser rejects it (a hard error, exit 2 — never a hidden feature). Once the
+version check passes you can rely on this completely — **do not invent syntax** to
+reach for something; encode it with the atoms and keywords you have. There is **no**:
 
-- **numbers or arithmetic** (`>=`, `+`, counts like "at most 3") → there are **no
-  numbers in the language at all**. Turn a threshold into a named atom:
-  `speed >= 100` becomes the atom `motor over_100`, and you reason about the
-  branch. Order them with a premise: `WHEN motor over_200 THEN motor over_100`.
-  "Exactly one / at least one / at most one" you *do* have (`ONEOF` / `ATLEAST` /
-  `EXCLUSIVE`); counts beyond one do not exist.
-- **operators or `OR`/`AND` *inside* a literal**, and **no parentheses** → group
-  logic across `WHEN`/`THEN` lines instead.
-- **mixing `AND` and `OR` in one group** → split into separate premises.
-- **`OR` in a `RULE`'s `THEN`** → use a `PREMISE` (a rule can't derive a disjunction).
-- **nested or unbounded quantifiers** → you have **one** `FOR EACH` per premise
-  header (∀ over a `SET` or a relation), plus `EXISTS … IN <set>` as a body (∃ over a
-  set); you **cannot** nest two quantifiers, there is no quantifier over anything but
-  a declared `SET`/relation, and **no join** of two relations. To relate two things,
-  route through one declared relation (`FACT a linked b` + `FOR EACH x linked y`),
-  never two free binders — that keeps grounding linear, by construction.
-- **probabilities**, **else/default branches**.
-- list bodies don't take `NOT` items; negate in `WHEN…THEN` bodies via `NOT <atom>`.
+- **numbers or arithmetic** (`>=`, `+`, "at most 3") — **none at all**. Turn a
+  threshold into a named atom (`speed >= 100` → the atom `motor over_100`) and order
+  them with a premise (`WHEN motor over_200 THEN motor over_100`). You have "exactly /
+  at least / at most one" (`ONEOF` / `ATLEAST` / `EXCLUSIVE`); counts beyond one do not.
+- **operators, `AND`/`OR`, or parentheses *inside* an atom or literal** — group logic
+  across `WHEN`/`THEN` lines instead.
+- **mixing `AND` and `OR` in one group**, or **`OR` in a `RULE`'s `THEN`**.
+- **nested or unbounded quantifiers** — **one** `FOR EACH` per header; a **universal
+  must name its domain** (`SET`/relation), only ∃ may leave it unnamed via one
+  `WITNESS`. No join of two relations, no two free binders (route through one declared
+  relation) — that keeps grounding linear, by construction.
+- **probabilities, else/default branches, or `NOT` inside a list body.**
 
 ## Reading the report
 
@@ -530,11 +590,12 @@ single premise is visibly violated), the smallest set jointly to blame:
 ```
   CONFLICT  - (UNSAT)  [<system>:0]
       the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
+  CORE  these 4 cannot all hold — drop ONE, then check again:
         a_to_b (PREMISE) [..]      a_to_not_b (PREMISE) [..]
         need_a_or_c (ATLEAST) [..] c_to_a (PREMISE) [..]
 ```
-Revisit exactly those four principles — one of them is wrong.
+Revisit exactly those four principles — one of them is wrong. Each item names its
+repair: `drop` it, or (for a `FACT`) a verified `flip it to: …  (checked)`.
 
 **`RETRACT`** — when your `FACT`s and `PREMISE`s are consistent but your `ASSUME`
 guesses can't all be true at once, the engine names the smallest set of
@@ -543,14 +604,44 @@ hypotheses to drop. The verdict is still `CONFLICT` (exit 2), but the fix is
 ```
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
+      Remove ONE of them, then check again:
       ASSUME rel in_prod   [program.vrf:6]
+        or flip it to: NOT rel in_prod   (checked)
       ASSUME NOT rel has_rollback   [program.vrf:7]
+        or flip it to: rel has_rollback   (checked)
       ASSUME NOT rel has_feature_flag   [program.vrf:8]
+        or flip it to: rel has_feature_flag   (checked)
 ```
 Drop (or flip) any one of those `ASSUME` lines and re-check. A `FACT`/`PREMISE`
 is never listed here — only your hypotheses (JSON: `retract`, each item tagged
 `"kind":"ASSUME"`).
+
+**`TRY`** — the "add" side of the fix loop: for each `TRY <atom>` you wrote, the
+engine's checked verdict on whether asserting that candidate would resolve the gap.
+Where `CORE`/`RETRACT` say what to *drop or flip*, `TRY` says whether an *add* would
+work — **without committing it** (advisory; the verdict above is unchanged):
+```
+  TRY       deploys is_ready
+      closes the gap: the model is now pinned   (checked)
+```
+The verdict is one of three, always `(checked)` (the engine actually re-solved it):
+`closes the gap` (asserting it pins the model → now write it as a real `FACT`),
+`conflicts` (it clashes with what is established → the wrong candidate), or
+`still open` (it doesn't pin the model by itself → more is needed). JSON: `tried`,
+each item `{"outcome":"closes|conflicts|still_open"}`.
+
+**`BELIEF`** — a `BELIEVES <agent> <atom>` whose claim the world establishes FALSE: a
+*false belief*. Belief is non-factive, so this is an **informational** note (exit 0, like
+`DEFEATED` — it never changes the verdict), **never** a CONFLICT — the world is
+consistent, the agent is simply wrong:
+```
+  BELIEF    bob believes plan.door locked — but it is FALSE (a false belief)   [plan.vrf:3]
+```
+A factive `KNOWS` is stricter: knowing a FALSE atom is a `CONFLICT` ("alice cannot know
+… — it is FALSE", with the `why:` trace of the atom's value); knowing an UNKNOWN one is a
+`WARNING` (assert it, or downgrade to `BELIEVES`); one agent knowing both φ and ¬φ is a
+`CONFLICT`. JSON: false beliefs are a `beliefs` array (`{"agent":…,"claim":…}`); `KNOWS`
+findings appear in `conflicts`/`warnings` like any other.
 
 **`HINT`** — advisory possible-typo nudge; **never changes the verdict**:
 ```
@@ -898,7 +989,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.12.0 -->
+<!-- skill-version: 0.13.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

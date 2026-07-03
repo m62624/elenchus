@@ -240,6 +240,10 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         unused_imports: Vec::new(),
         consumed: Vec::new(),
         placeholders: Vec::new(),
+        unwitnessed_exists: Vec::new(),
+        justifications: Vec::new(),
+        hypotheses: Vec::new(),
+        attributions: Vec::new(),
     }
 }
 
@@ -372,6 +376,7 @@ fn build_with_rules(
                     atom: cv,
                     negated: cneg,
                 }],
+                exceptions: Vec::new(),
                 origin: origin(),
             }
         })
@@ -1067,5 +1072,531 @@ proptest! {
         )
         .map_err(|e| TestCaseError::fail(format!("al: {e}")))?;
         prop_assert_eq!(verdict_shape(&a), verdict_shape(&b));
+    }
+}
+
+// --- the incremental (re-entrant) solver -------------------------------------
+
+/// One incremental step: clauses to add first, then assumptions to solve under,
+/// then the heuristics profile to solve with (re-set every step, so sessions mix
+/// reference and ccmin queries over one shared clause database).
+type IncStep = (RawCnf, Vec<(u32, bool)>, bool);
+
+/// A base instance plus a query script: each step optionally adds a few clauses,
+/// then solves under its own assumption set.
+fn incremental_script() -> impl Strategy<Value = (usize, RawCnf, Vec<IncStep>)> {
+    (1usize..=8).prop_flat_map(|n| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        let clause = prop::collection::vec(lit.clone(), 1..=4);
+        let base = prop::collection::vec(clause.clone(), 0..=12);
+        let step = (
+            prop::collection::vec(clause, 0..=2),
+            prop::collection::vec(lit, 0..=n),
+            any::<bool>(),
+        );
+        (Just(n), base, prop::collection::vec(step, 1..=6))
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(500))]
+
+    /// A whole incremental session — interleaved clause additions and assumption
+    /// queries on ONE solver — agrees with brute force at every step, returns
+    /// only valid models, and returns only sufficient cores. This is the
+    /// correctness contract that lets learned clauses persist across queries.
+    #[test]
+    fn incremental_session_matches_bruteforce((n, base, steps) in incremental_script()) {
+        let mut inc = sat::Incremental::new(&to_cnf(n, &base));
+        let mut clauses = to_clauses(&base);
+        for (extra, asm, ccmin) in &steps {
+            inc.set_config(sat::SolverConfig { ccmin: *ccmin });
+            for cl in to_clauses(extra) {
+                inc.add_clause(&cl);
+                clauses.push(cl);
+            }
+            let assumptions = to_assumptions(asm);
+            match inc.solve(&assumptions).unwrap() {
+                Solved::Sat(model) => {
+                    prop_assert!(brute_sat_assuming(n, &clauses, asm), "SAT but oracle says UNSAT");
+                    for clause in &clauses {
+                        prop_assert!(clause.iter().any(|&l| model[l.var() as usize] != l.is_negative()));
+                    }
+                    for &(v, p) in asm {
+                        prop_assert_eq!(model[v as usize], p);
+                    }
+                }
+                Solved::Unsat(core) => {
+                    prop_assert!(!brute_sat_assuming(n, &clauses, asm), "UNSAT but oracle says SAT");
+                    for l in &core {
+                        prop_assert!(assumptions.contains(l), "core lit {:?} not an assumption", l);
+                    }
+                    let core_pairs: Vec<(u32, bool)> =
+                        core.iter().map(|l| (l.var(), !l.is_negative())).collect();
+                    prop_assert!(!brute_sat_assuming(n, &clauses, &core_pairs), "core not sufficient");
+                }
+            }
+        }
+    }
+}
+
+// --- unsat-core / retract equivalence with the scratch reference -------------
+
+use elenchus_solver::FixKind;
+
+/// A generated core case: atom count, per-atom fact choice (0=unknown, 1=T, 2=F,
+/// 3=soft T, 4=soft F), and raw clauses (each becoming its own named premise).
+type CoreCase = (usize, Vec<u8>, RawCnf);
+
+/// Instances aimed at the unsat-core machinery: short clauses so pure-clause
+/// UNSAT (no forward-visible conflict) is common, plus soft facts for retract.
+fn core_instance() -> impl Strategy<Value = CoreCase> {
+    (2usize..=5).prop_flat_map(|n| {
+        let facts = prop::collection::vec(0u8..5, n);
+        let lit = (0u32..(n as u32), any::<bool>());
+        let clause = prop::collection::vec(lit, 1..=2);
+        (Just(n), facts, prop::collection::vec(clause, 0..=8))
+    })
+}
+
+/// Like [`build_compiled`] but with soft facts, one distinct named premise per
+/// clause (so constructs don't collapse by origin), and a BIDIRECTIONAL check.
+fn build_core_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Compiled {
+    let mut compiled = build_compiled(n, &vec![0; n], raw);
+    compiled.facts = fact_choice
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| {
+            let (value, soft) = match c {
+                1 => (Value::True, false),
+                2 => (Value::False, false),
+                3 => (Value::True, true),
+                4 => (Value::False, true),
+                _ => return None,
+            };
+            Some(Fact {
+                atom: i as AtomId,
+                value,
+                origin: Origin {
+                    source: "<prop>".into(),
+                    line: 1 + i as u32,
+                    premise: None,
+                    kind: if soft { "ASSUME" } else { "FACT" },
+                },
+                soft,
+            })
+        })
+        .collect();
+    for (j, clause) in compiled.clauses.iter_mut().enumerate() {
+        clause.origin = Origin {
+            source: "<prop>".into(),
+            line: 100 + j as u32,
+            premise: Some(format!("k{j}")),
+            kind: "EXCLUSIVE",
+        };
+    }
+    compiled.checks = vec![Check {
+        subject: None,
+        bidirectional: true,
+    }];
+    compiled
+}
+
+/// Mirror of the engine's atom label for the atoms [`build_compiled`] makes.
+fn core_label(c: &Compiled, a: AtomId) -> String {
+    let k = &c.atoms[a as usize];
+    format!(
+        "{}.{} {}",
+        k.domain,
+        k.subject,
+        k.predicate.as_ref().unwrap()
+    )
+}
+
+/// One removable construct of the scratch reference: its clauses, report label,
+/// origin line (the engine's sort key here — one source), and fact index if any.
+struct RefConstruct {
+    clauses: Vec<Vec<SatLit>>,
+    label: String,
+    line: u32,
+    fact: Option<usize>,
+}
+
+/// The construct split, exactly as the engine does it: facts 1:1 first (unit
+/// clauses), then premises grouped by origin (distinct here by construction).
+fn ref_constructs(c: &Compiled) -> Vec<RefConstruct> {
+    let mut out: Vec<RefConstruct> = c
+        .facts
+        .iter()
+        .enumerate()
+        .map(|(i, f)| RefConstruct {
+            clauses: vec![vec![match f.value {
+                Value::True => SatLit::positive(f.atom),
+                Value::False => SatLit::negative(f.atom),
+            }]],
+            label: core_label(c, f.atom),
+            line: f.origin.line,
+            fact: Some(i),
+        })
+        .collect();
+    for clause in &c.clauses {
+        out.push(RefConstruct {
+            clauses: vec![
+                clause
+                    .lits
+                    .iter()
+                    .map(|l| SatLit::new(l.atom, l.negated))
+                    .collect(),
+            ],
+            label: clause.origin.premise.clone().unwrap_or_default(),
+            line: clause.origin.line,
+            fact: None,
+        });
+    }
+    out
+}
+
+/// The pre-incremental subset query: a fresh solver over only the active clauses.
+fn ref_subset_is_sat(num_vars: usize, all: &[RefConstruct], active: &[bool]) -> bool {
+    let mut cnf = Cnf::new(num_vars);
+    for (k, &keep) in all.iter().zip(active) {
+        if keep {
+            for cl in &k.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// The pre-incremental candidate: fresh selector CNF, one `solve_assuming`.
+fn ref_candidate(num_vars: usize, all: &[RefConstruct]) -> Vec<bool> {
+    let mut cnf = Cnf::new(num_vars + all.len());
+    for (i, k) in all.iter().enumerate() {
+        let s_neg = SatLit::negative((num_vars + i) as Var);
+        for cl in &k.clauses {
+            let mut lits = vec![s_neg];
+            lits.extend_from_slice(cl);
+            cnf.add_clause(lits);
+        }
+    }
+    let assumptions: Vec<SatLit> = (0..all.len())
+        .map(|i| SatLit::positive((num_vars + i) as Var))
+        .collect();
+    let mut active = vec![false; all.len()];
+    match sat::solve_assuming(&cnf, &assumptions) {
+        Solved::Unsat(core) => {
+            for lit in core {
+                let v = lit.var() as usize;
+                if v >= num_vars {
+                    active[v - num_vars] = true;
+                }
+            }
+        }
+        Solved::Sat(_) => active.iter_mut().for_each(|a| *a = true),
+    }
+    active
+}
+
+/// The pre-incremental flip query: fresh solver, construct `i`'s unit reversed.
+fn ref_flip_is_sat(num_vars: usize, all: &[RefConstruct], active: &[bool], i: usize) -> bool {
+    if all[i].clauses.len() != 1 || all[i].clauses[0].len() != 1 {
+        return false;
+    }
+    let flipped = all[i].clauses[0][0].negate();
+    let mut cnf = Cnf::new(num_vars);
+    for (k, (cons, &keep)) in all.iter().zip(active).enumerate() {
+        if !keep {
+            continue;
+        }
+        if k == i {
+            cnf.add_clause(vec![flipped]);
+        } else {
+            for cl in &cons.clauses {
+                cnf.add_clause(cl.clone());
+            }
+        }
+    }
+    sat::solve(&cnf).is_some()
+}
+
+/// A retained construct's fixes: always Drop; Flip when the reference verifies it.
+/// Returns `(is_flip, target)` pairs matching the engine's `Fix` rendering.
+fn ref_fixes(
+    c: &Compiled,
+    all: &[RefConstruct],
+    active: &[bool],
+    i: usize,
+    drop_target: &str,
+) -> Vec<(bool, String)> {
+    let mut fixes = vec![(false, drop_target.to_string())];
+    if let Some(fi) = all[i].fact
+        && ref_flip_is_sat(c.atoms.len(), all, active, i)
+    {
+        let f = &c.facts[fi];
+        let target = if matches!(f.value, Value::True) {
+            format!("NOT {}", core_label(c, f.atom))
+        } else {
+            core_label(c, f.atom)
+        };
+        fixes.push((true, target));
+    }
+    fixes
+}
+
+/// One comparable core entry: origin line, label, and (is_flip, target) fixes.
+type FlatCore = Vec<(u32, String, Vec<(bool, String)>)>;
+
+/// The whole pre-incremental `minimal_unsat_core`, scratch solvers throughout.
+fn ref_minimal_core(c: &Compiled) -> FlatCore {
+    let all = ref_constructs(c);
+    let mut active = ref_candidate(c.atoms.len(), &all);
+    for i in 0..all.len() {
+        if active[i] {
+            active[i] = false;
+            if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true;
+            }
+        }
+    }
+    let mut core: FlatCore = all
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| active[i])
+        .map(|(i, k)| {
+            (
+                k.line,
+                k.label.clone(),
+                ref_fixes(c, &all, &active, i, &k.label),
+            )
+        })
+        .collect();
+    core.sort_by_key(|it| it.0);
+    core
+}
+
+/// The whole pre-incremental `retract_assumptions`, scratch solvers throughout.
+fn ref_retract(c: &Compiled) -> FlatCore {
+    if !c.facts.iter().any(|f| f.soft) {
+        return Vec::new();
+    }
+    let all = ref_constructs(c);
+    let is_soft: Vec<bool> = (0..all.len())
+        .map(|i| i < c.facts.len() && c.facts[i].soft)
+        .collect();
+    let hard_only: Vec<bool> = is_soft.iter().map(|&s| !s).collect();
+    if !ref_subset_is_sat(c.atoms.len(), &all, &hard_only) {
+        return Vec::new();
+    }
+    let mut active = vec![true; all.len()];
+    if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+        return Vec::new();
+    }
+    for i in 0..all.len() {
+        if active[i] && is_soft[i] {
+            active[i] = false;
+            if ref_subset_is_sat(c.atoms.len(), &all, &active) {
+                active[i] = true;
+            }
+        }
+    }
+    let mut core: FlatCore = (0..all.len())
+        .filter(|&i| active[i] && is_soft[i])
+        .map(|i| {
+            let f = &c.facts[i];
+            let label = if matches!(f.value, Value::False) {
+                format!("NOT {}", core_label(c, f.atom))
+            } else {
+                core_label(c, f.atom)
+            };
+            let fixes = ref_fixes(c, &all, &active, i, &label);
+            (f.origin.line, label, fixes)
+        })
+        .collect();
+    core.sort_by_key(|it| it.0);
+    core
+}
+
+/// Flatten the engine's `CoreItem`s to the reference's comparable shape.
+fn flatten_core(items: &[elenchus_solver::CoreItem]) -> FlatCore {
+    items
+        .iter()
+        .map(|it| {
+            (
+                it.origin.line,
+                it.label.clone(),
+                it.fixes
+                    .iter()
+                    .map(|f| (matches!(f.kind, FixKind::Flip), f.target.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// The incremental minimization (one shared selector solver) reports exactly
+    /// what the scratch-per-query implementation it replaced would have: same
+    /// unsat core, same retract set, same verified fixes, in the same order.
+    #[test]
+    fn incremental_minimization_matches_scratch_reference((n, facts, raw) in core_instance()) {
+        let compiled = build_core_compiled(n, &facts, &raw);
+        let report = solve(&compiled);
+        if !report.unsat_core.is_empty() {
+            prop_assert_eq!(flatten_core(&report.unsat_core), ref_minimal_core(&compiled));
+        }
+        if !report.retract.is_empty() {
+            prop_assert_eq!(flatten_core(&report.retract), ref_retract(&compiled));
+        }
+    }
+}
+
+// --- TRY (abduction) equivalence with the clone-per-hypothesis reference -----
+
+use elenchus_compiler::Hypothesis;
+use elenchus_solver::TryOutcome;
+
+/// A generated TRY case: a [`CoreCase`] plus candidate literals to TRY.
+type TryCase = (usize, Vec<u8>, RawCnf, Vec<(u32, bool)>);
+
+fn try_instance() -> impl Strategy<Value = TryCase> {
+    core_instance().prop_flat_map(|(n, facts, raw)| {
+        let lit = (0u32..(n as u32), any::<bool>());
+        (
+            Just(n),
+            Just(facts),
+            Just(raw),
+            prop::collection::vec(lit, 1..=4),
+        )
+    })
+}
+
+/// The pre-incremental `tried_hypotheses`: clone the CNF per hypothesis, assert
+/// the candidate as a unit clause, and count models from scratch each time.
+fn ref_tried(c: &Compiled) -> Vec<TryOutcome> {
+    // Mirror of the engine's backward CNF: premises + facts (no rules here), with
+    // the model count projected onto the atoms the clauses constrain.
+    let cnf = encode(c);
+    let mut constrained = vec![false; c.atoms.len()];
+    for clause in &c.clauses {
+        for l in &clause.lits {
+            constrained[l.atom as usize] = true;
+        }
+    }
+    let project: Vec<Var> = (0..c.atoms.len() as Var)
+        .filter(|&a| constrained[a as usize])
+        .collect();
+    let base_unique = sat::models(&cnf, &project, 2).len() == 1;
+    c.hypotheses
+        .iter()
+        .map(|h| {
+            let mut with = cnf.clone();
+            with.add_clause(vec![SatLit::new(h.lit.atom, !h.lit.negated)]);
+            match sat::models(&with, &project, 2).len() {
+                0 => TryOutcome::Conflicts,
+                1 if !base_unique => TryOutcome::Closes,
+                _ => TryOutcome::StillOpen,
+            }
+        })
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// The guarded-blocking incremental counting reports the exact trichotomy
+    /// (Closes / Conflicts / StillOpen) the clone-per-hypothesis implementation
+    /// it replaced would have, for every hypothesis.
+    #[test]
+    fn incremental_try_matches_clone_reference((n, facts, raw, tries) in try_instance()) {
+        let mut compiled = build_core_compiled(n, &facts, &raw);
+        compiled.hypotheses = tries
+            .iter()
+            .enumerate()
+            .map(|(i, &(atom, negated))| Hypothesis {
+                lit: Lit { atom, negated },
+                origin: Origin {
+                    source: "<prop>".into(),
+                    line: 200 + i as u32,
+                    premise: None,
+                    kind: "TRY",
+                },
+            })
+            .collect();
+        let report = solve(&compiled);
+        let got: Vec<TryOutcome> = report.tried.iter().map(|t| t.outcome).collect();
+        prop_assert_eq!(got, ref_tried(&compiled));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    /// A conflict budget can only withhold an answer, never change one: for any
+    /// formula, assumptions, and budget size, the budgeted solve either aborts
+    /// with `BudgetExhausted` or returns exactly the budget-free result.
+    #[test]
+    fn budget_never_changes_an_answer(
+        (n, raw, asm) in instance_with_assumptions(),
+        limit in 0u64..32,
+    ) {
+        let cnf = to_cnf(n, &raw);
+        let assumptions = to_assumptions(&asm);
+        let free = sat::solve_assuming(&cnf, &assumptions);
+        let budget = sat::Budget::new(limit);
+        // An Err(BudgetExhausted) outcome is a legal withheld answer.
+        if let Ok(answer) = sat::solve_assuming_budgeted(&cnf, &assumptions, Some(&budget)) {
+            prop_assert_eq!(answer, free);
+        }
+    }
+
+    /// Budgeted enumeration replays the same solver calls, so an unlimited (or
+    /// absent) budget reproduces `models` exactly, and any budget either
+    /// reproduces it or aborts as a whole — never a silently short list.
+    #[test]
+    fn budgeted_enumeration_matches_models(
+        (n, raw) in instance(),
+        limit in 0u64..32,
+    ) {
+        let cnf = to_cnf(n, &raw);
+        let project: Vec<Var> = (0..n as Var).collect();
+        let cap = 1usize << n;
+        let free = sat::models(&cnf, &project, cap);
+        prop_assert_eq!(sat::models_budgeted(&cnf, &project, cap, None), Ok(free.clone()));
+        let budget = sat::Budget::new(limit);
+        // An Err(BudgetExhausted) outcome is a legal withheld answer.
+        if let Ok(found) = sat::models_budgeted(&cnf, &project, cap, Some(&budget)) {
+            prop_assert_eq!(found, free);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(300))]
+
+    /// Pipeline law: a conflict budget never changes a report, only withholds
+    /// it — for random programs exercising the backward pass, core
+    /// minimization, and retract, the budgeted run either errors with the
+    /// configured limit or reproduces the budget-free report exactly.
+    #[test]
+    fn pipeline_budget_never_changes_the_report(
+        (n, facts, raw) in core_instance(),
+        limit in 0u64..64,
+    ) {
+        let compiled = build_core_compiled(n, &facts, &raw);
+        let free = solve(&compiled);
+        let budgeted = elenchus_solver::solve_opts(
+            &compiled,
+            &elenchus_solver::SolveOptions { max_conflicts: Some(limit) },
+        );
+        match budgeted {
+            Ok(report) => prop_assert_eq!(report, free),
+            Err(elenchus_solver::VerifyError::ConflictBudget { limit: echoed }) => {
+                prop_assert_eq!(echoed, limit);
+            }
+            Err(other) => prop_assert!(false, "unexpected error: {other}"),
+        }
     }
 }

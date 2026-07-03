@@ -2,7 +2,7 @@
 //! Same inputs as `output_variants.rs`, but asserting `Report::to_json()`:
 //! each is parsed back with `serde_json` (validity oracle) and snapshotted.
 
-use elenchus_solver::verify_source;
+use elenchus_solver::{MemoryResolver, verify_source, verify_with};
 
 /// (snapshot name, program) for each output variant.
 fn cases() -> Vec<(&'static str, &'static str)> {
@@ -141,6 +141,71 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "conflict_assume_vs_fact_retract",
             "FACT x a\nASSUME NOT x a\nCHECK x\n",
         ),
+        (
+            "conflict_exists_witness",
+            "NOT auth is ready\nPREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n",
+        ),
+        (
+            "warning_exists_unwitnessed",
+            "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n",
+        ),
+        (
+            "conflict_fact_because_false",
+            "NOT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n",
+        ),
+        (
+            "warning_fact_because_unknown",
+            "FACT api healthy BECAUSE db reachable\nCHECK api\n",
+        ),
+        (
+            "consistent_defeated_default",
+            "RULE fly:\n    WHEN pengu is bird\n    THEN pengu can_fly\n    UNLESS pengu is penguin\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+        ),
+        // Advisory report elements (never change the verdict) — one case each so the
+        // populated JSON shape of every array is snapshotted, not just its empty form.
+        ("orphans_lint", "FACT lonely atom\nCHECK lonely\n"),
+        (
+            "hints_similar_atoms",
+            "FACT server running\nFACT server runnng\nCHECK server\n",
+        ),
+        (
+            "placeholders_var_default",
+            "VAR flag DEFAULT true\nFACT x a\nCHECK x\n",
+        ),
+        (
+            "unsat_core_joint",
+            "PREMISE one:\n    ONEOF\n        x a\n        x b\nPREMISE ac:\n    WHEN x a\n    THEN x c\nPREMISE bc:\n    WHEN x b\n    THEN x c\nNOT x c\nCHECK x BIDIRECTIONAL\n",
+        ),
+        // TRY hypotheses (abduction / L5): one case per outcome so the populated
+        // `tried` array shape is snapshotted for each of closes / conflicts / still_open.
+        (
+            "try_closes",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
+        ),
+        (
+            "try_conflicts",
+            "FACT deploys is_ready\nRULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY NOT deploys is_ready\n",
+        ),
+        (
+            "try_still_open",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nRULE gate2:\n    WHEN backup done\n    THEN backup safe\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
+        ),
+        // KNOWS / BELIEVES (modal/epistemic, L6): factive knowledge that is FALSE →
+        // CONFLICT, UNKNOWN → WARNING; a per-agent incoherence → CONFLICT; a false
+        // belief → the populated `beliefs` array.
+        (
+            "knows_false_conflict",
+            "NOT door locked\nKNOWS alice door locked\n",
+        ),
+        ("knows_unknown_warning", "KNOWS alice door locked\n"),
+        (
+            "believes_false_belief",
+            "NOT door locked\nBELIEVES bob door locked\n",
+        ),
+        (
+            "knows_incoherent_conflict",
+            "KNOWS a x p\nKNOWS a NOT x p\n",
+        ),
     ]
 }
 
@@ -162,6 +227,8 @@ fn json_is_valid_and_stable_for_every_variant() {
             value.get("exit_code").and_then(|v| v.as_i64()).is_some(),
             "{name}: exit_code"
         );
+        // Every documented array key must always be present (an empty array when the
+        // report has no such element) — the complete set the JSON contract promises.
         for key in [
             "conflicts",
             "warnings",
@@ -169,6 +236,9 @@ fn json_is_valid_and_stable_for_every_variant() {
             "unsat_core",
             "retract",
             "hints",
+            "orphans",
+            "unused_imports",
+            "placeholders",
         ] {
             assert!(
                 value.get(key).and_then(|v| v.as_array()).is_some(),
@@ -183,4 +253,26 @@ fn json_is_valid_and_stable_for_every_variant() {
         // (b) it is stable.
         insta::assert_snapshot!(name, json);
     }
+}
+
+/// `unused_imports` needs a multi-file graph, so it uses the resolver API rather
+/// than the single-source `cases()` above. Same oracle: valid JSON + stable snapshot.
+#[test]
+fn json_unused_import_variant_is_valid_and_stable() {
+    let mut r = MemoryResolver::new();
+    r.add(
+        "root.vrf",
+        "DOMAIN root\nIMPORT \"other.vrf\"\nFACT x a\nCHECK x\n",
+    )
+    .add("other.vrf", "DOMAIN other\nFACT y b\n");
+    let report = verify_with("root.vrf", &r, &[]).unwrap();
+    let json = report.to_json();
+    let value: serde_json::Value =
+        serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"));
+    // The import is never referenced (no `other.<atom>` used), so it is flagged.
+    assert!(
+        !value["unused_imports"].as_array().unwrap().is_empty(),
+        "expected a non-empty unused_imports: {json}"
+    );
+    insta::assert_snapshot!("unused_import", json);
 }

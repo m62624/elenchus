@@ -1,0 +1,8 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"NOT door locked\\nBELIEVES bob door locked\\n\")"
+---
+RESULT: CONSISTENT
+  BELIEF    bob believes d.door locked — but it is FALSE (a false belief)   [v.vrf:3]
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 0 derived, 1 false beliefs
+EXIT_CODE: 0

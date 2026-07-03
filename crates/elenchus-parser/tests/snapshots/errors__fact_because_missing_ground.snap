@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(\"FACT api healthy BECAUSE\\n\")"
+---
+RESULT: 1 syntax error
+
+BECAUSE  (1 problem)
+  syntax  : FACT <atom> BECAUSE <atom>
+  example : FACT api healthy BECAUSE db reachable
+    line 1, col 25 - BECAUSE expects a ground atom: <Subject> <predicate> [<object>]
+      | FACT api healthy BECAUSE
+      |                         ^

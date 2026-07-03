@@ -131,6 +131,27 @@ pub enum CloseKind {
     Scc,
 }
 
+/// Where an `EXISTS` draws its single-or-many candidates from. A universal
+/// (`FOR EACH`) must always name a declared domain, but an existential may instead
+/// name one **witness** — the element the author is pointing at — so it needs no
+/// `SET`. This is the only "open domain" form in the language, and it is safe by
+/// construction: a witness grounds to exactly one atom (`∃` over the singleton
+/// `{witness}`), so there is nothing to enumerate and no blow-up to represent.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExistsDomain<'a> {
+    /// `IN <set>` — range over the elements of a declared [`Statement::Set`].
+    InSet(Located<'a, &'a str>),
+    /// `WITNESS <term>` — the single named element that must satisfy the
+    /// condition. Grounds to one atom; requires no `SET`.
+    Witness(Located<'a, &'a str>),
+    /// Neither `IN <set>` nor `WITNESS <term>` — an existential claim with no
+    /// candidate named. It grounds to nothing (no clause); the solver surfaces it
+    /// as a WARNING nudging the author to name a witness. This is the "you claimed
+    /// existence but pointed at no one" gap — never a blow-up, there is nothing to
+    /// enumerate.
+    Open,
+}
+
 /// The body of an `PREMISE` or `RULE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body<'a> {
@@ -141,20 +162,23 @@ pub enum Body<'a> {
         /// The atoms it ranges over (the parser guarantees at least two).
         atoms: Vec<Located<'a, Atom<'a>>>,
     },
-    /// `EXISTS <binder> IN <set>` then one condition line using the binder — at
-    /// least one element of the set satisfies the condition. Desugars to an
-    /// at-least-one over the per-element instantiations (the dual of a `FOR EACH`
-    /// over a set, which is an "all"). Premise-only: `∃` checks, it derives nothing.
+    /// `EXISTS <binder> IN <set>` (or `WITNESS <term>`) then one condition line
+    /// using the binder — at least one element of the domain satisfies the
+    /// condition. Desugars to an at-least-one over the per-element instantiations
+    /// (the dual of a `FOR EACH` over a set, which is an "all"); a `WITNESS`
+    /// grounds to the single named element. Premise-only: `∃` checks, it derives
+    /// nothing.
     Exists {
-        /// The bound variable substituted into `atom` once per set element.
+        /// The bound variable substituted into `atom` once per domain element.
         binder: Located<'a, &'a str>,
-        /// The declared `SET` the binder ranges over.
-        set: Located<'a, &'a str>,
+        /// Where the candidates come from: a declared `SET`, or one named witness.
+        domain: ExistsDomain<'a>,
         /// The condition, carrying the binder in some position.
         atom: Located<'a, Atom<'a>>,
     },
-    /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...]` — antecedent + consequent.
-    /// Within one group the continuation keyword is uniform (no mixing `AND`/`OR`).
+    /// `WHEN ... [AND|OR ...] THEN ... [AND|OR ...] [UNLESS ...]*` — antecedent +
+    /// consequent, plus zero or more defeasible **exceptions**. Within one group the
+    /// continuation keyword is uniform (no mixing `AND`/`OR`).
     Impl {
         /// `WHEN`/`AND`/`OR` conditions.
         antecedent: Vec<Located<'a, Literal<'a>>>,
@@ -164,6 +188,13 @@ pub enum Body<'a> {
         consequent: Vec<Located<'a, Literal<'a>>>,
         /// How the consequent literals combine.
         cons_conn: Conn,
+        /// `UNLESS <literal>` exceptions (one per line, repeatable). Meaningful only
+        /// on a `RULE` (a defeasible default): the rule still derives its consequent
+        /// **unless** any listed exception is *established* TRUE, in which case the
+        /// default is suppressed. Empty = an ordinary (indefeasible) implication. A
+        /// `PREMISE` (a hard constraint) must leave this empty — the compiler rejects
+        /// an exception there.
+        exceptions: Vec<Located<'a, Literal<'a>>>,
     },
 }
 
@@ -184,8 +215,15 @@ pub enum Statement<'a> {
         /// The local alias for the imported domain, if `AS <alias>` was given.
         alias: Option<Located<'a, &'a str>>,
     },
-    /// `FACT <atom>` — a TRUE assertion.
-    Fact(Located<'a, Atom<'a>>),
+    /// `FACT <atom> [BECAUSE <atom>]` — a TRUE assertion, optionally carrying the
+    /// ground it rests on. When `because` is present the engine checks that ground
+    /// holds (FALSE → CONFLICT, UNKNOWN → WARNING) — the justification (L2) layer.
+    Fact {
+        /// The asserted atom.
+        atom: Located<'a, Atom<'a>>,
+        /// The cited ground atom (`BECAUSE <atom>`), if any.
+        because: Option<Located<'a, Atom<'a>>>,
+    },
     /// `NOT <atom>` — a FALSE assertion.
     Negation(Located<'a, Atom<'a>>),
     /// `ASSUME [NOT] <atom>` — a *soft* (retractable) assertion. Same shape as a
@@ -193,6 +231,29 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
+    /// `TRY [NOT] <atom>` — a *hypothesis under test*, never committed. Unlike a
+    /// `FACT`/`ASSUME`, it does not enter the model or affect the verdict; the engine
+    /// runs one side-check and reports whether asserting it would **close** the open
+    /// model, **conflict** with what is established, or leave it **still open** — the
+    /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
+    /// checks it. The `Literal` carries the optional `NOT`.
+    Try(Located<'a, Literal<'a>>),
+    /// `KNOWS <agent> [NOT] <atom>` / `BELIEVES <agent> [NOT] <atom>` — attribute a
+    /// claim about the world to a *named agent* (the modal/epistemic L6 layer). The
+    /// agent is a bare identifier, a report-side label only: it never becomes an atom
+    /// or a clause. `factive` is `true` for `KNOWS` — knowledge implies truth (axiom
+    /// T), so knowing an established-FALSE atom is a CONFLICT and an UNKNOWN one a
+    /// WARNING; `BELIEVES` is non-factive, so a false belief is merely reported. The
+    /// engine checks each attribution against the settled world model — a side check,
+    /// never a hack on the SAT core. The `Literal` carries the optional `NOT`.
+    Knows {
+        /// The agent the claim is attributed to (a bare identifier, not an atom).
+        agent: Located<'a, &'a str>,
+        /// The claimed atom, with its optional leading `NOT`.
+        hypo: Located<'a, Literal<'a>>,
+        /// `true` for `KNOWS` (factive), `false` for `BELIEVES` (non-factive).
+        factive: bool,
+    },
     /// `SET <name>` then one element identifier per line — declare a finite set
     /// to quantify a `PREMISE`/`RULE` over via `FOR EACH <binder> IN <name>`.
     Set {

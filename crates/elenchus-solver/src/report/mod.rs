@@ -85,6 +85,22 @@ pub struct Derived {
     pub origin: Origin,
 }
 
+/// A defeasible `RULE` whose default was suppressed by an established `UNLESS`
+/// exception: the antecedent held, but an exception was TRUE, so the rule derived
+/// nothing. **Purely informational** — it never changes the verdict, the warning
+/// pool, or the exit code (a defeated default is not a conflict). It makes the
+/// non-monotonic step legible: "this default was overridden, and by what".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Defeated {
+    /// Provenance of the defeated `RULE` (source, line, name).
+    pub origin: Origin,
+    /// The consequent the rule would have derived, as a human label (`,`-joined if
+    /// the `THEN` had several literals).
+    pub consequent: String,
+    /// Human labels of the established `UNLESS` exceptions that suppressed it.
+    pub blocked_by: Vec<String>,
+}
+
 /// The result of solving, self-contained (atom ids already resolved to labels).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -96,6 +112,10 @@ pub struct Report {
     pub warnings: Vec<Warning>,
     /// Facts produced by forward-chaining `RULE`s.
     pub derived: Vec<Derived>,
+    /// Defeasible `RULE`s whose default was suppressed by an established `UNLESS`
+    /// exception. Never affects [`Report::status`] or [`Report::exit_code`] — purely
+    /// informational (a defeated default is not a conflict).
+    pub defeated: Vec<Defeated>,
     /// When `UNDERDETERMINED`, the label of an atom left free by the constraints
     /// (asserting it would pin the model down).
     pub underdetermined: Option<String>,
@@ -130,6 +150,69 @@ pub struct Report {
     /// Never affects [`Report::status`] or [`Report::exit_code`] — purely
     /// informational. (Carried through from compilation; see [`PlaceholderInfo`].)
     pub placeholders: Vec<PlaceholderInfo>,
+    /// One record per `TRY <literal>` hypothesis: whether asserting the supplied
+    /// candidate would **close** the open model, **conflict** with what is
+    /// established, or leave it **still open** — the abduction (L5) voice. The
+    /// hypothesis is never committed, so this **never affects [`Report::status`] or
+    /// [`Report::exit_code`]** — purely informational (like DERIVED/DEFEATED).
+    pub tried: Vec<Tried>,
+    /// One record per `BELIEVES <agent> <literal>` whose claim the settled world model
+    /// establishes FALSE — a *false belief* (the epistemic L6 layer). Belief is
+    /// non-factive (unlike `KNOWS`), so this is **never a CONFLICT**; it is a visible but
+    /// **informational** note (naming who believes what against the facts) that never
+    /// affects [`Report::status`] or [`Report::exit_code`] — like DERIVED/DEFEATED. A held
+    /// or merely unestablished belief is silent. (Factive `KNOWS` findings do not live
+    /// here — an impossible or unconfirmed *knowledge* claim is a CONFLICT / WARNING
+    /// respectively, in [`Report::conflicts`] / [`Report::warnings`], like a `BECAUSE`
+    /// justification.)
+    pub beliefs: Vec<FalseBelief>,
+}
+
+/// The engine's verdict on one `TRY <literal>` hypothesis — whether asserting the
+/// supplied candidate would resolve the program's open gap. Each is decided by a
+/// single side-solve (the program *plus* the candidate literal); the hypothesis is
+/// never committed to the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TryOutcome {
+    /// Adding the candidate makes the model unique — it closes the gap (the program
+    /// was underdetermined, and this pins it down).
+    Closes,
+    /// Adding the candidate makes the program unsatisfiable — it contradicts what is
+    /// already established.
+    Conflicts,
+    /// Adding the candidate keeps the program satisfiable but still not unique — it
+    /// does not, by itself, pin the model down.
+    StillOpen,
+}
+
+/// One `TRY <literal>` hypothesis and the engine's checked verdict on it. Purely
+/// advisory: the candidate is never committed, so it never changes the verdict or
+/// exit code — it only reports what asserting it *would* do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tried {
+    /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+    /// The ready-to-print candidate literal (e.g. `net.deploys is_ready` or
+    /// `NOT net.deploys is_ready`).
+    pub label: String,
+    /// The engine's checked verdict on asserting this candidate.
+    pub outcome: TryOutcome,
+}
+
+/// One `BELIEVES <agent> <literal>` whose claim the settled world model establishes
+/// FALSE — a false belief (the epistemic L6 layer). Because belief is non-factive
+/// (unlike `KNOWS`, where knowing a falsehood is a CONFLICT), this is not a
+/// contradiction in the world; it is surfaced as a visible but **informational** note
+/// (exit 0, like DEFEATED) naming who believes what against the facts. It never raises
+/// the verdict — neither to WARNING nor to CONFLICT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FalseBelief {
+    /// Provenance of the `BELIEVES` (source, line, kind = `BELIEVES`).
+    pub origin: Origin,
+    /// The agent holding the false belief.
+    pub agent: String,
+    /// The believed claim, ready to print (e.g. `door locked` or `NOT door locked`).
+    pub claim: String,
 }
 
 /// An advisory hint that two atom names look like the same atom typed two
@@ -163,13 +246,48 @@ pub struct OrphanFact {
     pub origin: Origin,
 }
 
-/// One construct named in an [`Report::unsat_core`].
+/// One construct named in an [`Report::unsat_core`] or [`Report::retract`], with the
+/// concrete repair actions that would clear the contradiction if applied to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreItem {
     /// Provenance of the construct (source, line, kind, premise name if any).
     pub origin: Origin,
     /// A human label: the premise/rule name, or the atom for a bare `FACT`/`NOT`.
     pub label: String,
+    /// Engine-verified minimal repairs for this construct: always a [`FixKind::Drop`]
+    /// (removing it restores consistency — that is what put it in the minimal set),
+    /// plus a [`FixKind::Flip`] **only when re-solving with the flipped fact actually
+    /// yields a consistent system**. Purely advisory — naming which single edit clears
+    /// the CONFLICT, without changing the verdict or exit code.
+    pub fixes: Vec<Fix>,
+}
+
+/// One concrete, engine-checked repair the reader can apply, then re-run — the
+/// engine's answer to "CONFLICT, but *what do I change?*". Purely advisory: applying
+/// it is the caller's choice, and its presence never affects [`Report::status`] or
+/// [`Report::exit_code`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fix {
+    /// What to do to the target.
+    pub kind: FixKind,
+    /// The ready-to-print target: the construct to drop, or the literal a flip would
+    /// assert instead (e.g. `NOT rel has_rollback`).
+    pub target: String,
+}
+
+/// The kind of a [`Fix`]. Only these two can repair a CONFLICT: a jointly-unsatisfiable
+/// clause set stays unsatisfiable under *more* clauses, so **adding** a fact can never
+/// clear a conflict (that is monotonicity, not a heuristic) — the only levers are
+/// removing a written construct or flipping a written fact's polarity. Proposing a
+/// *new* missing premise is a different layer (abduction), where the LLM supplies the
+/// candidate and the engine checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixKind {
+    /// Delete the written construct (`FACT` / `ASSUME` / `PREMISE` / `RULE`).
+    Drop,
+    /// Reverse a written fact's polarity (`FACT x` ↔ `NOT x`). Every `Flip` in a
+    /// [`CoreItem::fixes`] list is engine-verified: re-solving with it is consistent.
+    Flip,
 }
 
 /// Render atom `a` as the human string `domain.subject predicate [object]`. The

@@ -288,7 +288,10 @@ pub(crate) fn resolve_graph<R: Resolver>(
         };
         out.push((hash.clone(), ctx));
     }
-    unused.sort();
+    // `UnusedImport` derives `Ord` over every field, so two entries that compare
+    // equal are fully identical — an unstable sort can never show a different
+    // order than a stable one here.
+    unused.sort_unstable();
 
     // Now move content/path out of `discovered` (no large clones) and pair with
     // the contexts built above.

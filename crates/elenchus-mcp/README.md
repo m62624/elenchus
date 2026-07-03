@@ -5,8 +5,9 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-the [elenchus](https://github.com/m62624/elenchus) consistency checker to AI agents.
+Part of [elenchus](https://github.com/m62624/elenchus): a
+[Model Context Protocol](https://modelcontextprotocol.io) server that exposes its
+consistency checker to AI agents.
 
 Transport: **stdio, newline-delimited JSON-RPC 2.0** (one message per line).
 Hand-rolled with `serde_json` — no MCP SDK dependency.
@@ -24,19 +25,25 @@ is setup cost:
   when your harness natively supports MCP and you'd rather not (or can't) run a
   shell. Same output, more to configure.
 
-The **skill** ([`skill/SKILL.md`](../../skill/SKILL.md)) is adapted for both — it
+The **skill** ([`skill/SKILL.md`](https://github.com/m62624/elenchus/blob/main/skill/SKILL.md)) is adapted for both — it
 works identically whether the agent calls `elenchus-cli` via the CLI or via the MCP tool.
 
 ## Tool
 
 `elenchus_check` — check a `.vrf` program for logical consistency.
 
+Entry is **either** an inline `program` **or** a filesystem `path` (exactly one).
+
 | Argument | Type | |
 |----------|------|--|
-| `program` | string (required) | the `.vrf` program: `FACT`/`NOT`/`ASSUME`, `PREMISE`/`RULE`, `CHECK` |
-| `format` | `"human"` \| `"json"` (optional) | output format, default `"json"` |
-| `max_classes` | integer (optional) | on a syntax error, show at most this many error classes — one per keyword (`0` or omitted = all) |
-| `max_per_class` | integer (optional) | on a syntax error, show at most this many places within each class (`0` or omitted = all) |
+| `program` | string | an inline `.vrf` program (opens with `DOMAIN`; `FACT`/`NOT`/`ASSUME`, `PREMISE`/`RULE`, `CHECK`, …) |
+| `path` | string | a filesystem path the server reads instead (local server; resolves `IMPORT`s from disk) |
+| `files` | object | in-memory `{ "path": "<.vrf text>" }` map that `program`'s `IMPORT`s resolve against |
+| `values` | object | `{ "port": true\|false }` bindings for `VAR` ports |
+| `data` | object | `{ "name": "<PROVIDE text>" }` bindings for data-driven ports |
+| `format` | `"human"` \| `"json"` | output format, default `"json"` |
+| `max_classes` | integer | on a syntax error, show at most this many error classes — one per keyword (`0` or omitted = all) |
+| `max_per_class` | integer | on a syntax error, show at most this many places within each class (`0` or omitted = all) |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.
 Treat anything other than CONSISTENT as *not done*: add the missing facts or
@@ -60,10 +67,12 @@ Example session (each line is one JSON-RPC message):
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-← {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"elenchus","version":"0.6.0"}}}
-→ {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"FACT x a\nNOT x a\nCHECK x\n"}}}
+← {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"elenchus","version":"x.y.z"}}}
+→ {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN d\nFACT x a\nNOT x a\nCHECK x\n"}}}
 ← {"id":2,"jsonrpc":"2.0","result":{"content":[{"text":"{\"status\":\"CONFLICT\", …}","type":"text"}],"isError":false}}
 ```
+
+(`serverInfo.version` is the **engine** version, not the npm/crate line.)
 
 ## License
 

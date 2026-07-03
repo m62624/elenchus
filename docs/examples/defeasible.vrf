@@ -1,0 +1,32 @@
+DOMAIN birds
+
+// "A rule with an exception" — a RULE derives its THEN by default, but an UNLESS
+// names a defeater the model may point at. The rule still fires *unless* that
+// exception is established TRUE; a FALSE or UNKNOWN exception leaves the default
+// standing (assume-normal). This is the defeasible layer: the model supplies the
+// exception, the engine only checks whether it holds — no search, no blow-up.
+//
+//   exception TRUE     -> the default is retracted (rule suppressed)
+//   exception FALSE    -> the default fires
+//   exception UNKNOWN  -> the default fires (nothing established defeats it)
+//
+// It is genuinely non-monotonic: adding `FACT pengu is penguin` *retracts* the
+// otherwise-derived `pengu can_fly`.
+
+SET creatures
+    tweety
+    pengu
+
+// Birds fly by default — but not penguins. One rule, quantified per creature.
+RULE fly FOR EACH x IN creatures:
+    WHEN x is bird
+    THEN x can_fly
+    UNLESS x is penguin
+
+FACT tweety is bird                            // an ordinary bird
+FACT pengu is bird                             // also a bird ...
+FACT pengu is penguin                          // ... but a penguin: the exception holds
+
+NOT pengu can_fly                              // consistent: the default was defeated
+
+CHECK

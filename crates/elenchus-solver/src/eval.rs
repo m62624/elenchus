@@ -2,11 +2,14 @@
 //! every `Impossible` clause, and collect the conflicts / warnings / derived facts.
 use crate::cnf::build_cnf;
 use crate::report::CoreItem;
-use crate::report::{Conflict, Derived, Report, Status, TraceReason, TraceStep, Warning, label};
+use crate::report::{
+    Conflict, Defeated, Derived, FalseBelief, Report, Status, TraceReason, TraceStep, Warning,
+    label,
+};
 use crate::sat;
 use crate::unsat::{key, minimal_unsat_core};
 use crate::v3::{V3, v3_to_value};
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -98,12 +101,22 @@ pub(crate) struct Eval<'a> {
     conflicts: Vec<RawConflict>,
     warnings: Vec<Warning>,
     derived: Vec<Derived>,
+    /// Informational notes: a defeasible `RULE` whose default was suppressed by an
+    /// established `UNLESS` exception. Never affects the verdict.
+    defeated: Vec<Defeated>,
+    /// `BELIEVES <agent> <literal>` claims the world establishes FALSE — false beliefs
+    /// (L6). Non-factive, so never a CONFLICT; purely informational (exit 0, like
+    /// DEFEATED) — a visible BELIEF note that never changes the verdict.
+    false_beliefs: Vec<FalseBelief>,
     /// Minimal set of constructs to blame when the backward pass finds UNSAT.
     unsat_core: Vec<CoreItem>,
+    /// The run-wide conflict pool, shared with every other solver of this run.
+    /// `None` (the default) means the backward pass can never abort.
+    budget: Option<sat::Budget>,
 }
 
 impl<'a> Eval<'a> {
-    pub(crate) fn new(c: &'a Compiled) -> Self {
+    pub(crate) fn new(c: &'a Compiled, budget: Option<sat::Budget>) -> Self {
         Eval {
             c,
             model: vec![V3::Unknown; c.atoms.len()],
@@ -111,7 +124,10 @@ impl<'a> Eval<'a> {
             conflicts: Vec::new(),
             warnings: Vec::new(),
             derived: Vec::new(),
+            defeated: Vec::new(),
+            false_beliefs: Vec::new(),
             unsat_core: Vec::new(),
+            budget,
         }
     }
 
@@ -170,6 +186,15 @@ impl<'a> Eval<'a> {
                 if conjunction(&self.model, &r.antecedent) != V3::True {
                     continue; // rule does not fire (FALSE, or blocked by UNKNOWN)
                 }
+                // A defeasible RULE is suppressed when any UNLESS exception is
+                // *established* TRUE. FALSE or UNKNOWN exceptions do not defeat it
+                // (assume-normal) — only a settled exception retracts the default.
+                if r.exceptions
+                    .iter()
+                    .any(|ex| lit_value(&self.model, ex) == V3::True)
+                {
+                    continue;
+                }
                 for cl in &r.consequent {
                     let target = if cl.negated { V3::False } else { V3::True };
                     match self.model[cl.atom as usize] {
@@ -213,6 +238,40 @@ impl<'a> Eval<'a> {
             if !changed {
                 break;
             }
+        }
+    }
+
+    /// Record each defeasible `RULE` whose default was suppressed by an established
+    /// exception: its antecedent holds, yet an `UNLESS` literal is TRUE, so it derived
+    /// nothing. Read from the *settled* model (run after [`Eval::saturate_rules`]), so
+    /// each defeat is noted once. Purely informational — it never changes the verdict
+    /// (a defeated default is not a conflict), mirroring `derived`.
+    pub(crate) fn flag_defeated_defaults(&mut self) {
+        let c = self.c;
+        for r in &c.rules {
+            if r.exceptions.is_empty() || conjunction(&self.model, &r.antecedent) != V3::True {
+                continue;
+            }
+            let blocked_by: Vec<String> = r
+                .exceptions
+                .iter()
+                .filter(|ex| lit_value(&self.model, ex) == V3::True)
+                .map(|ex| self.label(ex.atom))
+                .collect();
+            if blocked_by.is_empty() {
+                continue; // fired normally, nothing suppressed
+            }
+            let consequent = r
+                .consequent
+                .iter()
+                .map(|cl| self.label(cl.atom))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.defeated.push(Defeated {
+                origin: r.origin.clone(),
+                consequent,
+                blocked_by,
+            });
         }
     }
 
@@ -281,12 +340,14 @@ impl<'a> Eval<'a> {
     /// current values: a post-order walk of the reason graph so each atom's
     /// supports appear before it (facts first, the conflict atoms last), with
     /// every atom emitted once. Atoms with no recorded reason (UNKNOWN) are
-    /// skipped — a forced atom always has one.
-    pub(crate) fn build_trace(&self, causes: &[AtomId]) -> Vec<TraceStep> {
-        let mut visited = vec![false; self.c.atoms.len()];
+    /// skipped — a forced atom always has one. `visited` is a caller-owned scratch
+    /// buffer (reset to all-false on entry) so [`Eval::finish`] can reuse one
+    /// allocation across every conflict's trace instead of allocating fresh per call.
+    pub(crate) fn build_trace(&self, causes: &[AtomId], visited: &mut [bool]) -> Vec<TraceStep> {
+        visited.fill(false);
         let mut out = Vec::new();
         for &a in causes {
-            self.trace_dfs(a, &mut visited, &mut out);
+            self.trace_dfs(a, visited, &mut out);
         }
         out
     }
@@ -326,15 +387,15 @@ impl<'a> Eval<'a> {
     /// pass may have missed). Two or more models means an alternative exists; we
     /// return the UNDERDETERMINED witness — the first constrained atom the two
     /// models disagree on.
-    pub(crate) fn backward_pass(&mut self) -> Option<String> {
+    pub(crate) fn backward_pass(&mut self) -> Result<Option<String>, sat::BudgetExhausted> {
         if !self.c.checks.iter().any(|ch| ch.bidirectional) {
-            return None;
+            return Ok(None);
         }
         let (cnf, project) = build_cnf(self.c);
-        let found = sat::models(&cnf, &project, 2);
-        match found.len() {
+        let found = sat::models_budgeted(&cnf, &project, 2, self.budget.as_ref())?;
+        Ok(match found.len() {
             0 if self.conflicts.is_empty() => {
-                self.unsat_core = minimal_unsat_core(self.c);
+                self.unsat_core = minimal_unsat_core(self.c, self.budget.as_ref())?;
                 self.conflicts.push(RawConflict {
                     origin: Origin {
                         source: String::from("<system>"),
@@ -358,14 +419,175 @@ impl<'a> Eval<'a> {
                     .or_else(|| Some(String::from("a free atom")))
             }
             _ => None,
+        })
+    }
+
+    /// Turn each unwitnessed `EXISTS` (an `ExistsDomain::Open` the compiler flagged)
+    /// into a WARNING: the existential named no candidate, so it could not be
+    /// checked. Must run *before* [`Eval::finish`] computes the verdict, so it can
+    /// raise CONSISTENT → WARNING — a premise that could not be checked, exactly
+    /// like an implication blocked by an UNKNOWN atom.
+    pub(crate) fn flag_unwitnessed_exists(&mut self) {
+        for u in &self.c.unwitnessed_exists {
+            self.warnings.push(Warning {
+                origin: u.origin.clone(),
+                blocked_by: alloc::vec![u.condition.clone()],
+                hint: Some(alloc::format!(
+                    "name a witness: EXISTS {b} WITNESS <term>  (or a set: EXISTS {b} IN <set>)",
+                    b = u.binder
+                )),
+            });
         }
     }
 
+    /// Check each `FACT … BECAUSE <ground>` justification against the settled forward
+    /// model — the L2 "how do you know?" layer. The ground's value decides the
+    /// verdict: FALSE means the stated reason does not hold (**CONFLICT**), UNKNOWN
+    /// means it is unestablished (**WARNING**), TRUE means the justification holds
+    /// (silent). `BECAUSE` emits no clause (the check is evaluative, so an UNKNOWN
+    /// ground is *reported* rather than forced true), hence this must run *before*
+    /// [`Eval::finish`] so it can raise the verdict — like [`Eval::flag_unwitnessed_exists`].
+    pub(crate) fn check_justifications(&mut self) {
+        let c = self.c;
+        for j in &c.justifications {
+            match self.model[j.ground as usize] {
+                V3::True => {}
+                V3::False => self.conflicts.push(RawConflict {
+                    origin: j.origin.clone(),
+                    atoms: vec![alloc::format!(
+                        "{} — its stated ground {} is FALSE",
+                        self.label(j.belief),
+                        self.label(j.ground)
+                    )],
+                    // Explain *why* the ground is false (its asserting FACT/NOT/rule).
+                    cause: vec![j.ground],
+                }),
+                V3::Unknown => self.warnings.push(Warning {
+                    origin: j.origin.clone(),
+                    blocked_by: vec![self.label(j.ground)],
+                    hint: Some(alloc::format!(
+                        "establish the ground: FACT {g}  (or derive it with a RULE)",
+                        g = self.label(j.ground)
+                    )),
+                }),
+            }
+        }
+    }
+
+    /// Check each `KNOWS`/`BELIEVES <agent> <literal>` attribution against the settled
+    /// forward model — the L6 modal/epistemic layer. Knowledge is factive (axiom T:
+    /// `K φ → φ`), so a `KNOWS` whose claim the world establishes FALSE is impossible
+    /// (**CONFLICT**), and one the world leaves UNKNOWN is unconfirmed (**WARNING**); a
+    /// held (TRUE) claim is silent. Belief is non-factive, so a `BELIEVES` whose claim
+    /// is FALSE is only a *false belief* note (informational, exit 0 like DEFEATED —
+    /// never a CONFLICT and never raises the verdict); an unestablished or held belief
+    /// is silent. Finally, a single agent that claims to
+    /// **know both φ and ¬φ** is incoherent (**CONFLICT**) — flagged only where the
+    /// world leaves the atom UNKNOWN, since a pinned atom already surfaces the
+    /// impossible side as a factivity conflict above. Emits **no clause** — like
+    /// [`Eval::check_justifications`] this runs before [`Eval::finish`] so it can raise
+    /// the verdict, but it never forces an atom's value.
+    pub(crate) fn check_attributions(&mut self) {
+        // Incoherent knowers first: a single agent that KNOWS both φ and ¬φ is a
+        // CONFLICT on its own. The returned pairs let the per-claim loop suppress the
+        // now-redundant "unconfirmed" WARNINGs those same claims would otherwise raise.
+        let incoherent = self.flag_incoherent_knowers();
+        let c = self.c;
+        for a in &c.attributions {
+            let name = self.label(a.lit.atom);
+            let claim = if a.lit.negated {
+                alloc::format!("NOT {name}")
+            } else {
+                name.clone()
+            };
+            match (a.factive, lit_value(&self.model, &a.lit)) {
+                // KNOWS a truth, or a held / merely-unestablished belief → silent.
+                (_, V3::True) | (false, V3::Unknown) => {}
+                // KNOWS a falsehood: impossible — you cannot know what is not so.
+                (true, V3::False) => self.conflicts.push(RawConflict {
+                    origin: a.origin.clone(),
+                    atoms: vec![alloc::format!(
+                        "{} cannot know {claim} — it is FALSE",
+                        a.agent
+                    )],
+                    cause: vec![a.lit.atom],
+                }),
+                // KNOWS something the world has not established: unconfirmed knowledge —
+                // unless this very claim is already named in a know-both incoherence.
+                (true, V3::Unknown) => {
+                    if !incoherent.contains(&(a.agent.clone(), a.lit.atom)) {
+                        self.warnings.push(Warning {
+                            origin: a.origin.clone(),
+                            blocked_by: vec![name],
+                            hint: Some(alloc::format!(
+                                "{} claims to know {claim}, but it is not established — assert it (FACT/RULE) or use BELIEVES",
+                                a.agent
+                            )),
+                        });
+                    }
+                }
+                // BELIEVES a falsehood: allowed (belief is non-factive), but flagged.
+                (false, V3::False) => self.false_beliefs.push(FalseBelief {
+                    origin: a.origin.clone(),
+                    agent: a.agent.clone(),
+                    claim,
+                }),
+            }
+        }
+    }
+
+    /// Flag any single agent that claims to **know both φ and ¬φ** (axiom T makes both
+    /// true, a contradiction). Only reported where the world leaves the atom UNKNOWN —
+    /// a pinned atom already surfaces the impossible side via factivity in
+    /// [`Eval::check_attributions`], so this adds exactly the world-silent case. Returns
+    /// the `(agent, atom)` pairs it flagged, so the caller can drop the redundant
+    /// per-claim "unconfirmed" warnings for them.
+    fn flag_incoherent_knowers(&mut self) -> BTreeSet<(String, AtomId)> {
+        // (agent, atom) → the origins of the positive [0] and negative [1] KNOWS claims.
+        let mut polar: BTreeMap<(&str, AtomId), [Option<&Origin>; 2]> = BTreeMap::new();
+        for a in &self.c.attributions {
+            if !a.factive {
+                continue;
+            }
+            let slot = polar
+                .entry((a.agent.as_str(), a.lit.atom))
+                .or_insert([None, None]);
+            slot[usize::from(a.lit.negated)].get_or_insert(&a.origin);
+        }
+        // Materialize the flagged (agent, atom) pairs and their conflict origins first,
+        // so the borrow of `self.c` (via `polar`) ends before we mutate `self`.
+        let flagged: Vec<(String, AtomId, Origin)> = polar
+            .iter()
+            .filter_map(|((agent, atom), origins)| match origins {
+                [Some(_), Some(neg)] if self.model[*atom as usize] == V3::Unknown => {
+                    Some((String::from(*agent), *atom, (*neg).clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut out = BTreeSet::new();
+        for (agent, atom, origin) in flagged {
+            let name = self.label(atom);
+            self.conflicts.push(RawConflict {
+                origin,
+                atoms: vec![alloc::format!(
+                    "{agent} cannot know both {name} and NOT {name}"
+                )],
+                cause: Vec::new(),
+            });
+            out.insert((agent, atom));
+        }
+        out
+    }
+
     /// Run the backward pass, sort deterministically, and assemble the report.
-    pub(crate) fn finish(mut self) -> Report {
-        let underdetermined = self.backward_pass();
+    /// Fails only when a conflict budget was installed and ran out.
+    pub(crate) fn finish(mut self) -> Result<Report, sat::BudgetExhausted> {
+        let underdetermined = self.backward_pass()?;
         self.conflicts.sort_by_key(|c| key(&c.origin));
         self.warnings.sort_by_key(|w| key(&w.origin));
+        self.defeated.sort_by_key(|d| key(&d.origin));
+        self.false_beliefs.sort_by_key(|b| key(&b.origin));
         let status = if !self.conflicts.is_empty() {
             Status::Conflict
         } else if underdetermined.is_some() {
@@ -375,22 +597,30 @@ impl<'a> Eval<'a> {
         } else {
             Status::Consistent
         };
+        // A false belief (`BELIEVES` a falsehood) is **not** folded into `status`: the
+        // world stays consistent, an agent is simply wrong. Like DEFEATED it is an
+        // informational note (exit 0) — it prints a visible BELIEF line but never raises
+        // the verdict. WARNING keeps its single meaning: a check blocked by an UNKNOWN
+        // atom (which is what an *unconfirmed KNOWS* is, and it does stay a WARNING).
         // Materialize each raw conflict into its public form, attaching the
         // derivation chain (reasons are final once the forward pass is done).
+        // One scratch buffer, reused (reset) across every conflict's trace.
+        let mut visited = vec![false; self.c.atoms.len()];
         let conflicts: Vec<Conflict> = self
             .conflicts
             .iter()
             .map(|rc| Conflict {
                 origin: rc.origin.clone(),
                 atoms: rc.atoms.clone(),
-                trace: self.build_trace(&rc.cause),
+                trace: self.build_trace(&rc.cause, &mut visited),
             })
             .collect();
-        Report {
+        Ok(Report {
             status,
             conflicts,
             warnings: self.warnings,
             derived: self.derived,
+            defeated: self.defeated,
             underdetermined,
             unsat_core: self.unsat_core,
             retract: Vec::new(), // filled by `solve` when assumptions are to blame
@@ -398,6 +628,8 @@ impl<'a> Eval<'a> {
             orphans: Vec::new(), // filled by `solve` (advisory, post-verdict)
             unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
             placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
-        }
+            tried: Vec::new(),   // filled by `solve` (advisory, post-verdict)
+            beliefs: self.false_beliefs,
+        })
     }
 }

@@ -28,7 +28,7 @@
 //! // One statement per line; the result is a flat list of `Statement`s.
 //! let program = parse("FACT socrates is human\nCHECK socrates\n").unwrap();
 //! assert_eq!(program.statements.len(), 2);
-//! assert!(matches!(program.statements[0], Statement::Fact(_)));
+//! assert!(matches!(program.statements[0], Statement::Fact { .. }));
 //! ```
 #![no_std]
 // Every public item is documented; CI (`clippy -D warnings`) keeps it that way.
@@ -42,7 +42,8 @@ mod grammar;
 pub mod keywords;
 
 pub use ast::{
-    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+    Atom, Body, CloseKind, Conn, ExistsDomain, ListOp, Literal, Located, Program, Quant, Span,
+    Statement,
 };
 pub use diag::{Diagnostic, Diagnostics};
 pub use grammar::parse;
@@ -96,7 +97,7 @@ mod tests {
         );
         assert_eq!(p.statements.len(), 2);
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.subject, "Creature_A");
                 assert_eq!(a.data.predicate, Some("has"));
                 assert_eq!(a.data.object, Some("flying"));
@@ -115,7 +116,7 @@ mod tests {
     fn fact_without_object() {
         let p = prog("FACT Motor over_100\n");
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.subject, "Motor");
                 assert_eq!(a.data.predicate, Some("over_100"));
                 assert_eq!(a.data.object, None);
@@ -130,7 +131,7 @@ mod tests {
         // predicate and object both None. Legality (declared VAR) is the compiler's.
         let p = prog("FACT db_ready\n");
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.subject, "db_ready");
                 assert_eq!(a.data.predicate, None);
                 assert_eq!(a.data.object, None);
@@ -252,7 +253,7 @@ mod tests {
         // `physics.Motor over_200` → domain prefix split from the subject.
         let p = prog("FACT physics.Motor over_200\n");
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.domain, Some("physics"));
                 assert_eq!(a.data.subject, "Motor");
                 assert_eq!(a.data.predicate, Some("over_200"));
@@ -265,7 +266,7 @@ mod tests {
     fn bare_atom_has_no_domain() {
         let p = prog("FACT engine has_fuel\n");
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.domain, None);
                 assert_eq!(a.data.subject, "engine");
             }
@@ -375,6 +376,7 @@ mod tests {
                         ante_conn,
                         consequent,
                         cons_conn,
+                        ..
                     },
                 ..
             } => {
@@ -553,7 +555,7 @@ mod tests {
         "#,
         );
         match &p.statements[0] {
-            Statement::Fact(a) => {
+            Statement::Fact { atom: a, .. } => {
                 assert_eq!(a.data.subject, "кот");
                 assert_eq!(a.data.predicate, Some("пушистый2"));
                 assert_eq!(a.data.object, None);
@@ -754,7 +756,7 @@ FACT c d
         );
         assert!(matches!(p.statements[0], Statement::Import { .. }));
         assert!(matches!(p.statements[1], Statement::Import { .. }));
-        assert!(matches!(p.statements[2], Statement::Fact(_)));
+        assert!(matches!(p.statements[2], Statement::Fact { .. }));
     }
 
     #[test]

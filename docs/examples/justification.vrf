@@ -1,0 +1,18 @@
+DOMAIN deploy
+
+// "How do you know?" — a claim may name the ground it rests on with BECAUSE, and
+// the engine checks that ground actually holds. This is the justification layer:
+// the model supplies the reason, the engine only verifies it.
+//
+//   ground TRUE    -> the justification stands (silent)
+//   ground FALSE   -> your stated reason does not hold      (CONFLICT)
+//   ground UNKNOWN -> your stated reason is unestablished   (WARNING)
+//
+// BECAUSE names a single ground atom (like a WITNESS names a single element); it
+// adds no constraint and can never blow up — it is one value lookup.
+
+FACT db reachable                              // the ground: established evidence
+
+FACT api healthy BECAUSE db reachable          // the claim, and why we believe it
+
+CHECK api

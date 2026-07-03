@@ -2,7 +2,7 @@
 //! bodies, and collect the domain prefixes a statement uses.
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
-use elenchus_parser::{Atom, Body, Literal, Located, Statement};
+use elenchus_parser::{Atom, Body, ExistsDomain, Literal, Located, Statement};
 
 /// A list of binder substitutions `(name, value)` applied during grounding: one
 /// entry for an `IN <set>` quantifier, two for a `<a> <rel> <b>` relation.
@@ -22,6 +22,16 @@ pub(crate) fn subst_atom<'s>(a: &Atom<'s>, subs: &Subs<'s>) -> Atom<'s> {
         subject: subst_ident(a.subject, subs),
         predicate: a.predicate.map(|p| subst_ident(p, subs)),
         object: a.object.map(|o| subst_ident(o, subs)),
+    }
+}
+
+/// Replace the binders in a located identifier (a set name or a witness term),
+/// preserving its span. Lets a `FOR EACH` binder flow into an `EXISTS` domain, e.g.
+/// `FOR EACH x IN s: EXISTS h WITNESS x` grounds the witness to each element.
+pub(crate) fn subst_located<'s>(l: &Located<'s, &'s str>, subs: &Subs<'s>) -> Located<'s, &'s str> {
+    Located {
+        data: subst_ident(l.data, subs),
+        span: l.span,
     }
 }
 
@@ -60,15 +70,28 @@ pub(crate) fn subst_body<'s>(body: &Body<'s>, subs: &Subs<'s>) -> Body<'s> {
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         } => Body::Impl {
             antecedent: antecedent.iter().map(|l| subst_lit(l, subs)).collect(),
             ante_conn: *ante_conn,
             consequent: consequent.iter().map(|l| subst_lit(l, subs)).collect(),
             cons_conn: *cons_conn,
+            // Exceptions carry the binder too (`UNLESS x penguin` under `FOR EACH x`).
+            exceptions: exceptions.iter().map(|l| subst_lit(l, subs)).collect(),
         },
-        Body::Exists { binder, set, atom } => Body::Exists {
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        } => Body::Exists {
             binder: binder.clone(),
-            set: set.clone(),
+            // Substitute into the domain too, so a witness/set named by the header
+            // binder (`EXISTS h WITNESS x` under `FOR EACH x`) grounds per element.
+            domain: match domain {
+                ExistsDomain::InSet(s) => ExistsDomain::InSet(subst_located(s, subs)),
+                ExistsDomain::Witness(w) => ExistsDomain::Witness(subst_located(w, subs)),
+                ExistsDomain::Open => ExistsDomain::Open,
+            },
             atom: Located {
                 data: subst_atom(&atom.data, subs),
                 span: atom.span,
@@ -84,17 +107,29 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
         out.insert(a.domain.map(|d| d.to_string()));
     };
     match stmt {
-        Statement::Fact(a) | Statement::Negation(a) => add(&a.data),
-        Statement::Assume(l) => add(&l.data.atom),
+        Statement::Fact { atom, because } => {
+            add(&atom.data);
+            // A `BECAUSE physics.y` ground references its domain too, so an import
+            // used only by a justification is not mis-flagged as unused.
+            if let Some(g) = because {
+                add(&g.data);
+            }
+        }
+        Statement::Negation(a) => add(&a.data),
+        Statement::Assume(l) | Statement::Try(l) => add(&l.data.atom),
+        // The agent is a bare label (no domain); only the claimed atom carries one.
+        Statement::Knows { hypo, .. } => add(&hypo.data.atom),
         Statement::Premise { body, .. } | Statement::Rule { body, .. } => match body {
             Body::List { atoms, .. } => atoms.iter().for_each(|a| add(&a.data)),
             Body::Impl {
                 antecedent,
                 consequent,
+                exceptions,
                 ..
             } => antecedent
                 .iter()
                 .chain(consequent)
+                .chain(exceptions)
                 .for_each(|l| add(&l.data.atom)),
             Body::Exists { atom, .. } => add(&atom.data),
         },

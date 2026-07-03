@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":null,"kind":"KNOWS","source":"v.vrf","line":2,"blocked_by":["d.door locked"],"hint":"alice claims to know d.door locked, but it is not established — assert it (FACT/RULE) or use BELIEVES"}],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"beliefs":[]}

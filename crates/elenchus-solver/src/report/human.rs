@@ -1,10 +1,21 @@
 //! The human-readable report rendering (the `Display for Report` path).
 use super::json::status_name;
-use super::{Report, Status, TraceReason, TraceStep};
+use super::{CoreItem, FixKind, Report, Status, TraceReason, TraceStep, TryOutcome};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use elenchus_compiler::{Origin, PlaceholderStatus, Value, kw};
+
+/// The verified `flip` alternative for a core / retract item, as a nested line —
+/// present only when the engine confirmed that asserting the opposite value restores
+/// consistency (so `(checked)` is never a promise the engine did not test). `None`
+/// when the only repair is `drop`.
+fn flip_line(it: &CoreItem) -> Option<String> {
+    it.fixes
+        .iter()
+        .find(|fx| fx.kind == FixKind::Flip)
+        .map(|fx| alloc::format!("or flip it to: {}   (checked)", fx.target))
+}
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -117,7 +128,7 @@ impl Report {
                 ITEM,
                 "But these ASSUME guesses cannot all be true together."
             )?;
-            emit!(out, ITEM, "Remove or flip ONE of them, then check again:")?;
+            emit!(out, ITEM, "Remove ONE of them, then check again:")?;
             for it in &self.retract {
                 emit!(
                     out,
@@ -127,6 +138,9 @@ impl Report {
                     it.origin.source,
                     it.origin.line
                 )?;
+                if let Some(flip) = flip_line(it) {
+                    emit!(out, NESTED, "{flip}")?;
+                }
             }
         } else {
             for c in &self.conflicts {
@@ -145,7 +159,7 @@ impl Report {
                 emit!(
                     out,
                     SECTION,
-                    "CORE  smallest jointly-unsatisfiable set ({}):",
+                    "CORE  these {} cannot all hold — drop ONE, then check again:",
                     self.unsat_core.len()
                 )?;
                 for it in &self.unsat_core {
@@ -159,6 +173,9 @@ impl Report {
                         it.origin.source,
                         it.origin.line
                     )?;
+                    if let Some(flip) = flip_line(it) {
+                        emit!(out, NESTED, "{flip}")?;
+                    }
                 }
             }
         }
@@ -178,9 +195,40 @@ impl Report {
                 emit!(out, ITEM, "fix: {hint}")?;
             }
         }
+        // The epistemic (L6) false-belief voice: an agent `BELIEVES` a claim the world
+        // establishes FALSE. Belief is non-factive, so this is an informational note (exit
+        // 0, like DEFEATED) — never a CONFLICT (that is reserved for `KNOWS` — you cannot
+        // *know* a falsehood) and it never raises the verdict.
+        for b in &self.beliefs {
+            emit!(
+                out,
+                SECTION,
+                "BELIEF    {} believes {} — but it is FALSE (a false belief)   [{}:{}]",
+                b.agent,
+                b.claim,
+                b.origin.source,
+                b.origin.line
+            )?;
+        }
         if let Some(atom) = &self.underdetermined {
             emit!(out, SECTION, "UNDERDETERMINED  an alternative model exists")?;
-            emit!(out, ITEM, "pin it down: add  FACT {atom}  or  NOT {atom}")?;
+            emit!(
+                out,
+                ITEM,
+                "fix: add FACT {atom} (or NOT {atom}) to pin the model"
+            )?;
+        }
+        // The abduction (L5) voice: each `TRY <literal>` hypothesis, with the engine's
+        // checked verdict on whether asserting it would close the open gap. Advisory —
+        // the candidate was never committed, so this never changed the result above.
+        for t in &self.tried {
+            emit!(out, SECTION, "TRY       {}", t.label)?;
+            let verdict = match t.outcome {
+                TryOutcome::Closes => "closes the gap: the model is now pinned",
+                TryOutcome::Conflicts => "conflicts: it clashes with what is already established",
+                TryOutcome::StillOpen => "still open: it does not pin the model",
+            };
+            emit!(out, ITEM, "{verdict}   (checked)")?;
         }
         for d in &self.derived {
             let v = match d.value {
@@ -194,6 +242,16 @@ impl Report {
                 d.atom,
                 v,
                 premise_tag(&d.origin)
+            )?;
+        }
+        for d in &self.defeated {
+            emit!(
+                out,
+                SECTION,
+                "DEFEATED  {}   default {} suppressed by {}",
+                premise_tag(&d.origin),
+                d.consequent,
+                d.blocked_by.join(", ")
             )?;
         }
         for h in &self.hints {
@@ -269,14 +327,32 @@ impl Report {
         }
 
         let underdetermined = usize::from(self.status == Status::Underdetermined);
+        // Append the defeated count only when non-zero, so programs without any
+        // defeasible defeat keep their exact summary line.
+        let defeated = if self.defeated.is_empty() {
+            String::new()
+        } else {
+            alloc::format!(", {} defeated", self.defeated.len())
+        };
+        // A false belief is informational (exit 0), so it is not a `warnings` entry; name
+        // its count here (only when non-zero), appended like `defeated`, so the visible
+        // BELIEF lines are accounted for while programs with no false belief keep their
+        // exact summary line.
+        let beliefs = if self.beliefs.is_empty() {
+            String::new()
+        } else {
+            alloc::format!(", {} false beliefs", self.beliefs.len())
+        };
         emit!(
             out,
             ROOT,
-            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived",
+            "SUMMARY: {} conflicts, {} underdetermined, {} warnings, {} derived{}{}",
             self.conflicts.len(),
             underdetermined,
             self.warnings.len(),
-            self.derived.len()
+            self.derived.len(),
+            defeated,
+            beliefs
         )?;
         out.tail(ROOT, format_args!("EXIT_CODE: {}", self.exit_code()))
     }

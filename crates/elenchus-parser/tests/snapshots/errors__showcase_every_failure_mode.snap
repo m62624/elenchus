@@ -1,6 +1,5 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
-assertion_line: 243
 expression: "err(include_str!(\"fixtures/showcase.vrf\"))"
 ---
 RESULT: 17 syntax errors
@@ -96,6 +95,9 @@ statement  (2 problems)
       FACT [<domain>.]<Subject> <predicate> [<object>]
       NOT <Subject> <predicate> [<object>]
       ASSUME [NOT] <Subject> <predicate> [<object>]
+      TRY [NOT] <Subject> <predicate> [<object>]
+      KNOWS <Agent> [NOT] <Subject> <predicate> [<object>]
+      BELIEVES <Agent> [NOT] <Subject> <predicate> [<object>]
       PREMISE <name>:  then a list body or a WHEN ... THEN implication
       RULE <name>:  then a WHEN ... THEN implication
       CHECK [<subject>] [BIDIRECTIONAL]
@@ -104,9 +106,9 @@ statement  (2 problems)
       VAR <name> [DEFAULT true|false]
       PROVIDE [<domain>.]<port|atom>: true|false
       IMPORT "<path>" [AS <alias>]
-    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
+    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
       | %%% this line starts no keyword
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
+    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
       | 123 numbers cannot start a statement
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

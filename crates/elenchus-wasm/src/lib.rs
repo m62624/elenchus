@@ -9,8 +9,8 @@
 //! bridged to a JavaScript `read(path) -> string` callback.
 
 use elenchus_solver::{
-    CompileError, PortBinding, Report, Resolver, normalize_import_path, read_data_bindings,
-    verify_source_with, verify_with,
+    CompileError, PortBinding, Report, Resolver, SolveOptions, VerifyError, normalize_import_path,
+    read_data_bindings, verify_opts, verify_source_opts,
 };
 use wasm_bindgen::prelude::*;
 
@@ -38,10 +38,11 @@ fn limit(n: Option<u32>) -> Option<usize> {
 
 /// Render a result the way `elenchus-mcp` does: a `Report` becomes JSON (or the
 /// human report when `format == "human"`); a parse error becomes the grouped
-/// diagnostic block (capped by the two limits); any other compile error becomes
-/// its message.
+/// diagnostic block (capped by the two limits); any other error — including a
+/// `max_conflicts` budget abort, which explicitly carries **no verdict** —
+/// becomes its message (wasm has no error channel besides the returned string).
 fn render(
-    result: Result<Report, CompileError>,
+    result: Result<Report, VerifyError>,
     format: Option<String>,
     max_classes: Option<u32>,
     max_per_class: Option<u32>,
@@ -54,8 +55,19 @@ fn render(
                 report.to_json()
             }
         }
-        Err(CompileError::Parse(diag)) => diag.render(limit(max_classes), limit(max_per_class)),
+        Err(VerifyError::Compile(CompileError::Parse(diag))) => {
+            diag.render(limit(max_classes), limit(max_per_class))
+        }
         Err(other) => other.to_string(),
+    }
+}
+
+/// The wasm spelling of [`SolveOptions`]: absent = unlimited (the normal case).
+/// See the CLI `--max-conflicts` help — a safety valve for pathological inputs,
+/// not something to set on an everyday check.
+fn solve_options(max_conflicts: Option<u32>) -> SolveOptions {
+    SolveOptions {
+        max_conflicts: max_conflicts.map(u64::from),
     }
 }
 
@@ -119,6 +131,8 @@ fn collect_inputs(
 /// Check a single `.vrf` program (inline text; `IMPORT` is not resolved — use
 /// [`check_with_resolver`] for multi-file programs). Mirrors `elenchus_check`.
 /// `values` supplies `VAR` port values as a `Record<string, boolean>`.
+/// `max_conflicts` is the safety valve (normally omit; see [`solve_options`]) —
+/// on abort the returned string is the error message, not a verdict.
 #[wasm_bindgen]
 pub fn check(
     program: &str,
@@ -127,15 +141,16 @@ pub fn check(
     max_per_class: Option<u32>,
     values: Option<js_sys::Object>,
     data: Option<js_sys::Object>,
+    max_conflicts: Option<u32>,
 ) -> String {
     match collect_inputs(values, data) {
         Ok(inputs) => render(
-            verify_source_with("<wasm>", program, &inputs),
+            verify_source_opts("<wasm>", program, &inputs, &solve_options(max_conflicts)),
             format,
             max_classes,
             max_per_class,
         ),
-        Err(e) => render(Err(e), format, max_classes, max_per_class),
+        Err(e) => render(Err(e.into()), format, max_classes, max_per_class),
     }
 }
 
@@ -144,6 +159,9 @@ pub fn check(
 /// (synchronous; throw to signal "not found"). `root` is the entry path, passed
 /// to `read` first. This is how Node `fs` (or any virtual store) backs `IMPORT`
 /// inside wasm, where there is no filesystem.
+// Positional wasm-bindgen FFI mirroring `check` + `root`/`read`; an options
+// object would break every existing JS caller, so the arity is deliberate.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn check_with_resolver(
     root: &str,
@@ -153,16 +171,17 @@ pub fn check_with_resolver(
     max_per_class: Option<u32>,
     values: Option<js_sys::Object>,
     data: Option<js_sys::Object>,
+    max_conflicts: Option<u32>,
 ) -> String {
     let resolver = JsResolver { read: read.clone() };
     match collect_inputs(values, data) {
         Ok(inputs) => render(
-            verify_with(root, &resolver, &inputs),
+            verify_opts(root, &resolver, &inputs, &solve_options(max_conflicts)),
             format,
             max_classes,
             max_per_class,
         ),
-        Err(e) => render(Err(e), format, max_classes, max_per_class),
+        Err(e) => render(Err(e.into()), format, max_classes, max_per_class),
     }
 }
 
@@ -249,6 +268,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(
             out.contains("CONFLICT"),
@@ -262,10 +282,19 @@ mod tests {
 
     #[test]
     fn check_human_format_differs_from_json() {
-        let json = check("DOMAIN d\nFACT x a\nCHECK x", None, None, None, None, None);
+        let json = check(
+            "DOMAIN d\nFACT x a\nCHECK x",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         let human = check(
             "DOMAIN d\nFACT x a\nCHECK x",
             Some("human".to_string()),
+            None,
             None,
             None,
             None,
@@ -304,7 +333,15 @@ mod tests {
     fn check_syntax_error_is_not_a_json_verdict() {
         // A malformed program goes through the diagnostics renderer / error
         // message path, never the JSON report path.
-        let out = check("this is not a valid program", None, None, None, None, None);
+        let out = check(
+            "this is not a valid program",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(
             !out.contains("exit_code"),
             "a syntax/compile error must not look like a JSON verdict: {out}"
@@ -317,6 +354,33 @@ mod tests {
         assert_eq!(limit(None), None);
         assert_eq!(limit(Some(0)), None);
         assert_eq!(limit(Some(3)), Some(3));
+    }
+
+    #[test]
+    fn max_conflicts_abort_is_an_error_string_not_a_verdict() {
+        // A small pigeonhole (3 pigeons, 2 holes) — UNSAT that needs real search,
+        // so a zero budget aborts before any verdict exists.
+        let php = "DOMAIN php\n\
+            PREMISE pigeon0:\n    ATLEAST\n        p0 in h0\n        p0 in h1\n\
+            PREMISE pigeon1:\n    ATLEAST\n        p1 in h0\n        p1 in h1\n\
+            PREMISE pigeon2:\n    ATLEAST\n        p2 in h0\n        p2 in h1\n\
+            PREMISE hole0:\n    EXCLUSIVE\n        p0 in h0\n        p1 in h0\n        p2 in h0\n\
+            PREMISE hole1:\n    EXCLUSIVE\n        p0 in h1\n        p1 in h1\n        p2 in h1\n\
+            CHECK p0 BIDIRECTIONAL\n";
+        let aborted = check(php, None, None, None, None, None, Some(0));
+        assert!(
+            aborted.contains("conflict budget exceeded"),
+            "expected the budget error message, got: {aborted}"
+        );
+        assert!(
+            !aborted.contains("exit_code"),
+            "an abort must not look like a JSON verdict: {aborted}"
+        );
+        // Omitted (or generous) budget: the normal verdict, byte for byte.
+        let free = check(php, None, None, None, None, None, None);
+        let generous = check(php, None, None, None, None, None, Some(1_000_000));
+        assert_eq!(free, generous);
+        assert!(free.contains("exit_code"));
     }
 
     #[test]

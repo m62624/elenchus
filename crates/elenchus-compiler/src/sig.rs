@@ -6,7 +6,7 @@ use crate::ir::{AtomKey, Origin, Value};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
-use elenchus_parser::{Body, Conn, ListOp, Literal, Quant, kw};
+use elenchus_parser::{Body, Conn, ExistsDomain, ListOp, Literal, Quant, kw};
 
 /// A literal keyed by atom identity (pre-interning counterpart of [`Lit`]).
 #[derive(Clone)]
@@ -23,6 +23,32 @@ pub(crate) struct RawFact {
     pub(crate) soft: bool,
 }
 
+/// A `FACT … BECAUSE` justification keyed by atom identity (pre-interning
+/// counterpart of [`crate::ir::Justification`]).
+pub(crate) struct RawJustification {
+    pub(crate) belief: AtomKey,
+    pub(crate) ground: AtomKey,
+    pub(crate) origin: Origin,
+}
+
+/// A `TRY` hypothesis keyed by atom identity (pre-interning counterpart of
+/// [`crate::ir::Hypothesis`]).
+pub(crate) struct RawHypothesis {
+    pub(crate) key: AtomKey,
+    pub(crate) negated: bool,
+    pub(crate) origin: Origin,
+}
+
+/// A `KNOWS`/`BELIEVES` attribution keyed by atom identity (pre-interning
+/// counterpart of [`crate::ir::Attribution`]).
+pub(crate) struct RawAttribution {
+    pub(crate) agent: String,
+    pub(crate) key: AtomKey,
+    pub(crate) negated: bool,
+    pub(crate) factive: bool,
+    pub(crate) origin: Origin,
+}
+
 /// A clause keyed by atom identity (pre-interning counterpart of [`Clause`]).
 pub(crate) struct RawClause {
     pub(crate) lits: Vec<RawLit>,
@@ -33,6 +59,8 @@ pub(crate) struct RawClause {
 pub(crate) struct RawRule {
     pub(crate) antecedent: Vec<RawLit>,
     pub(crate) consequent: Vec<RawLit>,
+    /// `UNLESS` exceptions — the rule is defeasible when non-empty.
+    pub(crate) exceptions: Vec<RawLit>,
     pub(crate) origin: Origin,
 }
 
@@ -89,13 +117,21 @@ pub(crate) fn key_sig(k: &AtomKey) -> String {
     )
 }
 
+/// Sort signature-string parts in place. Every caller's list is a `key|negated`
+/// (or key-only) string where equal `Ord` values are byte-identical, so an
+/// unstable sort (no stable sort's temp buffer) can never reorder anything
+/// observably differently from a stable one.
+fn sort_sig_parts(parts: &mut [String]) {
+    parts.sort_unstable();
+}
+
 /// Canonical, order-independent signature of a clause's literals (for dedup).
 pub(crate) fn clause_sig(lits: &[RawLit]) -> String {
     let mut parts: Vec<String> = lits
         .iter()
         .map(|l| alloc::format!("{}|{}", key_sig(&l.key), l.negated as u8))
         .collect();
-    parts.sort();
+    sort_sig_parts(&mut parts);
     parts.dedup();
     parts.join(";")
 }
@@ -122,7 +158,7 @@ pub(crate) fn canonical_body(
                 .iter()
                 .map(|a| Ok(key_sig(&ctx.key(&a.data)?)))
                 .collect::<Result<_, CompileError>>()?;
-            keys.sort();
+            sort_sig_parts(&mut keys);
             s.push_str(&keys.join(";"));
         }
         Body::Impl {
@@ -130,6 +166,7 @@ pub(crate) fn canonical_body(
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         } => {
             let conn = |c: &Conn| if *c == Conn::Or { "OR" } else { "AND" };
             s.push_str("IMPL|ANTE|");
@@ -140,9 +177,29 @@ pub(crate) fn canonical_body(
             s.push_str(conn(cons_conn));
             s.push('|');
             s.push_str(&lit_sigs(consequent, ctx)?);
+            // Exceptions are part of a rule's identity: two same-named rules that
+            // differ only in an UNLESS must not dedup-collapse.
+            s.push_str("|EXC|");
+            s.push_str(&lit_sigs(exceptions, ctx)?);
         }
-        Body::Exists { binder, set, atom } => {
-            let _ = write!(s, "EXISTS|{}|{}|", binder.data, set.data);
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        } => {
+            match domain {
+                // Frozen: the `IN <set>` signature must stay byte-identical (it is
+                // a content-address / dedup key). A witness gets its own form.
+                ExistsDomain::InSet(set) => {
+                    let _ = write!(s, "EXISTS|{}|{}|", binder.data, set.data);
+                }
+                ExistsDomain::Witness(w) => {
+                    let _ = write!(s, "EXISTS|{}|WITNESS {}|", binder.data, w.data);
+                }
+                ExistsDomain::Open => {
+                    let _ = write!(s, "EXISTS|{}|OPEN|", binder.data);
+                }
+            }
             s.push_str(&key_sig(&ctx.key(&atom.data)?));
         }
     }
@@ -165,6 +222,6 @@ pub(crate) fn lit_sigs(
             ))
         })
         .collect::<Result<_, CompileError>>()?;
-    parts.sort();
+    sort_sig_parts(&mut parts);
     Ok(parts.join(";"))
 }

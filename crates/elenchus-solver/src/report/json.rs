@@ -1,5 +1,5 @@
 //! JSON serialization of a [`Report`] (stable, machine-readable output).
-use super::{Report, Status, TraceReason, TraceStep};
+use super::{Fix, FixKind, Report, Status, TraceReason, TraceStep, TryOutcome};
 use alloc::string::String;
 use elenchus_compiler::{Origin, PlaceholderStatus, Value};
 
@@ -17,7 +17,22 @@ impl Report {
     /// Hand-written so the crate stays dependency-free and `no_std`.
     pub fn to_json(&self) -> String {
         use core::fmt::Write as _;
-        let mut s = String::new();
+        // A rough capacity estimate (fixed skeleton + ~64 bytes per report entry)
+        // avoids repeated reallocation as the string grows; it is only a hint —
+        // the exact byte count is unaffected either way.
+        let entries = self.conflicts.len()
+            + self.warnings.len()
+            + self.derived.len()
+            + self.defeated.len()
+            + self.unsat_core.len()
+            + self.retract.len()
+            + self.hints.len()
+            + self.orphans.len()
+            + self.unused_imports.len()
+            + self.placeholders.len()
+            + self.tried.len()
+            + self.beliefs.len();
+        let mut s = String::with_capacity(256 + entries * 64);
         let _ = write!(s, "{{\"status\":");
         status_name(self.status).write_json(&mut s);
         let _ = write!(s, ",\"exit_code\":{}", self.exit_code());
@@ -66,6 +81,19 @@ impl Report {
             let _ = write!(s, ",\"value\":{}", matches!(d.value, Value::True));
             s.push('}');
         }
+        s.push_str("],\"defeated\":[");
+        for (i, d) in self.defeated.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push('{');
+            json_origin_fields(&d.origin, &mut s);
+            s.push_str(",\"consequent\":");
+            d.consequent.write_json(&mut s);
+            s.push_str(",\"blocked_by\":");
+            d.blocked_by.write_json(&mut s);
+            s.push('}');
+        }
         s.push_str("],\"underdetermined\":");
         match &self.underdetermined {
             Some(atom) => atom.write_json(&mut s),
@@ -79,6 +107,7 @@ impl Report {
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
             it.label.write_json(&mut s);
+            json_fixes(&it.fixes, &mut s);
             s.push('}');
         }
         s.push_str("],\"retract\":[");
@@ -89,6 +118,7 @@ impl Report {
             json_origin(&it.origin, &mut s);
             s.push_str(",\"label\":");
             it.label.write_json(&mut s);
+            json_fixes(&it.fixes, &mut s);
             s.push('}');
         }
         s.push_str("],\"hints\":[");
@@ -157,6 +187,35 @@ impl Report {
                 Some(o) => o.write_json(&mut s),
                 None => s.push_str("null"),
             }
+            s.push('}');
+        }
+        s.push_str("],\"tried\":[");
+        for (i, t) in self.tried.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&t.origin, &mut s);
+            s.push_str(",\"label\":");
+            t.label.write_json(&mut s);
+            let outcome = match t.outcome {
+                TryOutcome::Closes => "closes",
+                TryOutcome::Conflicts => "conflicts",
+                TryOutcome::StillOpen => "still_open",
+            };
+            s.push_str(",\"outcome\":");
+            outcome.write_json(&mut s);
+            s.push('}');
+        }
+        s.push_str("],\"beliefs\":[");
+        for (i, b) in self.beliefs.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&b.origin, &mut s);
+            s.push_str(",\"agent\":");
+            b.agent.write_json(&mut s);
+            s.push_str(",\"claim\":");
+            b.claim.write_json(&mut s);
             s.push('}');
         }
         s.push_str("]}");
@@ -229,6 +288,28 @@ impl ToJson for TraceStep {
         }
         out.push('}');
     }
+}
+
+/// `,"fixes":[{"action":"drop|flip","target":..},..]` — the engine-verified repairs
+/// for one core / retract item (a `flip` entry is present only when re-solving with
+/// the flip is consistent, so tools can trust it without re-checking).
+fn json_fixes(fixes: &[Fix], out: &mut String) {
+    out.push_str(",\"fixes\":[");
+    for (i, fx) in fixes.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let action = match fx.kind {
+            FixKind::Drop => "drop",
+            FixKind::Flip => "flip",
+        };
+        out.push_str("{\"action\":");
+        action.write_json(out);
+        out.push_str(",\"target\":");
+        fx.target.write_json(out);
+        out.push('}');
+    }
+    out.push(']');
 }
 
 pub(crate) fn status_name(s: Status) -> &'static str {

@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"NOT db reachable\\nFACT api healthy BECAUSE db reachable\\nCHECK api\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  - (BECAUSE)  [v.vrf:3]
+      d.api healthy — its stated ground d.db reachable is FALSE
+      why:
+        d.db reachable = FALSE   [NOT v.vrf:2]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

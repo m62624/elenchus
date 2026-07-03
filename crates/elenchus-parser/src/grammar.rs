@@ -17,13 +17,14 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
     character::complete::{char, line_ending, satisfy, space0, space1},
-    combinator::{eof, opt, recognize, value},
+    combinator::{eof, map, opt, recognize, value},
     multi::many0,
     sequence::{delimited, preceded, terminated},
 };
 
 use crate::ast::{
-    Atom, Body, CloseKind, Conn, ListOp, Literal, Located, Program, Quant, Span, Statement,
+    Atom, Body, CloseKind, Conn, ExistsDomain, ListOp, Literal, Located, Program, Quant, Span,
+    Statement,
 };
 use crate::diag::{Diagnostic, Diagnostics};
 use crate::keywords::{is_reserved, is_top_level, keyword_in, kw};
@@ -276,19 +277,13 @@ fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
     let (input, binder) = promote(
         identifier(input),
         at,
-        "EXISTS expects a binder: EXISTS <binder> IN <set>",
+        "EXISTS expects a binder: EXISTS <binder> WITNESS <term>",
     )?;
-    let (input, _) = promote(
-        (space1, tag(kw::IN), space1).parse(input),
-        input,
-        "EXISTS expects `IN <set>`: EXISTS <binder> IN <set>",
-    )?;
-    let at = input;
-    let (input, set) = promote(identifier(input), at, "EXISTS expects a set name after IN")?;
+    let (input, domain) = exists_domain(input)?;
     let (input, _) = promote(
         eol(input),
         input,
-        "unexpected text after 'EXISTS <binder> IN <set>'",
+        "EXISTS: after the binder use `WITNESS <term>`, `IN <set>`, or end the line (an unwitnessed existential)",
     )?;
     let at = input;
     let (input, atom) = promote(
@@ -296,7 +291,47 @@ fn exists_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         at,
         "EXISTS needs a condition line using the binder",
     )?;
-    Ok((input, Body::Exists { binder, set, atom }))
+    Ok((
+        input,
+        Body::Exists {
+            binder,
+            domain,
+            atom,
+        },
+    ))
+}
+
+/// The domain of an `EXISTS`: `WITNESS <term>` (one named element, no `SET` — the
+/// open-domain existential), `IN <set>` (a declared set), or nothing at all
+/// ([`ExistsDomain::Open`] — an existential that named no candidate). A universal
+/// has no such choice; only `∃` may name a lone witness or none, and a witness
+/// grounds to a single atom, so no form can enumerate an unnamed domain.
+///
+/// Never fails: a missing/unrecognised domain is left as `Open` **without
+/// consuming**, so the caller's `eol` check decides between a clean unwitnessed
+/// header (line ends here) and stray text (a committed error).
+fn exists_domain<'a>(input: Span<'a>) -> PResult<'a, ExistsDomain<'a>> {
+    match exists_named_domain(input) {
+        Ok((rest, domain)) => Ok((rest, domain)),
+        Err(_) => Ok((input, ExistsDomain::Open)),
+    }
+}
+
+/// `WITNESS <term>` or `IN <set>` — the two *named* existential domains. A
+/// recoverable `Error` when neither matches, so [`exists_domain`] can fall back to
+/// `Open`.
+fn exists_named_domain<'a>(input: Span<'a>) -> PResult<'a, ExistsDomain<'a>> {
+    alt((
+        map(
+            preceded((space1, tag(kw::WITNESS), space1), identifier),
+            ExistsDomain::Witness,
+        ),
+        map(
+            preceded((space1, tag(kw::IN), space1), identifier),
+            ExistsDomain::InSet,
+        ),
+    ))
+    .parse(input)
 }
 
 /// A continuation `AND <literal>` / `OR <literal>` line inside a `WHEN`/`THEN`
@@ -320,6 +355,28 @@ fn cont_line<'a>(input: Span<'a>) -> PResult<'a, (Conn, Located<'a, Literal<'a>>
         "unexpected text after the AND/OR literal",
     )?;
     Ok((input, (conn, lit)))
+}
+
+/// An `UNLESS <literal>` exception line closing a defeasible `RULE` body. Returns
+/// the exception literal. A line that is not `UNLESS` yields a recoverable `Error`
+/// so `many0` stops cleanly (e.g. at EOF or the next statement).
+fn unless_line<'a>(input: Span<'a>) -> PResult<'a, Located<'a, Literal<'a>>> {
+    let (input, _) = space0(input)?;
+    // Not an UNLESS line → Error so many0 stops cleanly. Once UNLESS matches we are
+    // committed and use promote, so a missing literal surfaces under the UNLESS card.
+    let (input, _) = tag(kw::UNLESS).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        preceded(space1, literal).parse(input),
+        at,
+        "UNLESS expects a literal: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the UNLESS literal",
+    )?;
+    Ok((input, lit))
 }
 
 /// Reduce a group's continuation lines to a single [`Conn`], rejecting a mix of
@@ -398,6 +455,11 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
         }
     };
 
+    // Zero or more `UNLESS <literal>` exception lines close a defeasible RULE body.
+    // A non-UNLESS line ends the many0 cleanly (recoverable Error). Exceptions are
+    // only meaningful on a RULE; the compiler rejects them on a PREMISE.
+    let (input, exceptions) = many0(unless_line).parse(input)?;
+
     let mut antecedent = vec![when];
     antecedent.extend(ante_rest.into_iter().map(|(_, l)| l));
     let mut consequent = vec![then];
@@ -409,6 +471,7 @@ fn impl_body<'a>(input: Span<'a>) -> PResult<'a, Body<'a>> {
             ante_conn,
             consequent,
             cons_conn,
+            exceptions,
         },
     ))
 }
@@ -457,7 +520,9 @@ fn stmt_domain<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Domain(name)))
 }
 
-/// `FACT <atom>` — a TRUE assertion.
+/// `FACT <atom> [BECAUSE <atom>]` — a TRUE assertion, optionally naming the ground
+/// it rests on. `BECAUSE` is committed: once it is seen, a missing ground atom is a
+/// specific error (grouped under BECAUSE), not a generic "unexpected text".
 fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::FACT), space1).parse(input)?;
     let at = input;
@@ -466,8 +531,23 @@ fn stmt_fact<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         at,
         "FACT expects an atom: <Subject> <predicate> [<object>]",
     )?;
+    // Optional justification tail. `atom` already stops before `BECAUSE` (a reserved
+    // word, so it is never eaten as an object), leaving it here to be recognized.
+    let (input, saw_because) = opt(preceded(space1, tag(kw::BECAUSE))).parse(input)?;
+    let (input, because) = match saw_because {
+        Some(_) => {
+            let bat = input;
+            let (input, ground) = promote(
+                preceded(space1, atom).parse(input),
+                bat,
+                "BECAUSE expects a ground atom: <Subject> <predicate> [<object>]",
+            )?;
+            (input, Some(ground))
+        }
+        None => (input, None),
+    };
     let (input, _) = promote(eol(input), input, "unexpected text after the FACT atom")?;
-    Ok((input, Statement::Fact(a)))
+    Ok((input, Statement::Fact { atom: a, because }))
 }
 
 /// `ASSUME [NOT] <atom>` — a soft (retractable) assertion. Accepts a leading
@@ -482,6 +562,80 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     )?;
     let (input, _) = promote(eol(input), input, "unexpected text after the ASSUME atom")?;
     Ok((input, Statement::Assume(lit)))
+}
+
+/// `TRY [NOT] <atom>` — a hypothesis under test (the abduction voice). Same surface
+/// as `ASSUME` (an optional leading `NOT`, then an atom), but the compiler never
+/// commits it to the model: the engine only reports whether asserting it would close
+/// the open gap.
+fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::TRY), space1).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "TRY expects an atom: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the TRY atom")?;
+    Ok((input, Statement::Try(lit)))
+}
+
+/// `KNOWS <agent> [NOT] <atom>` — attribute factive knowledge to a named agent (the
+/// epistemic L6 voice). The agent is a bare identifier; the rest is an ordinary
+/// literal. Knowledge is factive, so the engine later checks the atom against the
+/// settled world model (FALSE → CONFLICT, UNKNOWN → WARNING).
+fn stmt_knows<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::KNOWS), space1).parse(input)?;
+    epistemic(input, true, kw::KNOWS)
+}
+
+/// `BELIEVES <agent> [NOT] <atom>` — attribute a *non-factive* belief. Same surface
+/// as `KNOWS`, but a false belief is only reported (advisory), never a CONFLICT.
+fn stmt_believes<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::BELIEVES), space1).parse(input)?;
+    epistemic(input, false, kw::BELIEVES)
+}
+
+/// Shared tail of `KNOWS`/`BELIEVES`: a bare `<agent>` identifier, then `[NOT] <atom>`,
+/// then end of line. `factive` distinguishes the two keywords; `kw` names it in the
+/// error messages. Once the leading keyword matched, a missing agent or atom is a
+/// hard [`promote`]d failure rather than a silent backtrack.
+fn epistemic<'a>(input: Span<'a>, factive: bool, kw: &str) -> PResult<'a, Statement<'a>> {
+    let at = input;
+    let (input, agent) = promote(
+        identifier(input),
+        at,
+        &alloc::format!(
+            "{kw} expects an agent name, then an atom: <Agent> [NOT] <Subject> <predicate> [<object>]"
+        ),
+    )?;
+    let at = input;
+    let (input, _) = promote(
+        space1(input),
+        at,
+        &alloc::format!("name an atom after the {kw} agent"),
+    )?;
+    let at = input;
+    let (input, hypo) = promote(
+        literal(input),
+        at,
+        &alloc::format!(
+            "{kw} expects an atom after the agent: [NOT] <Subject> <predicate> [<object>]"
+        ),
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        &alloc::format!("unexpected text after the {kw} atom"),
+    )?;
+    Ok((
+        input,
+        Statement::Knows {
+            agent,
+            hypo,
+            factive,
+        },
+    ))
 }
 
 /// `NOT <atom>` — a FALSE assertion. Tried last among statements so a body-level
@@ -764,6 +918,9 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_provide,
         stmt_fact,
         stmt_assume,
+        stmt_try,
+        stmt_knows,
+        stmt_believes,
         stmt_premise,
         stmt_rule,
         stmt_check,

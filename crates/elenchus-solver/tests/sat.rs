@@ -125,3 +125,252 @@ fn larger_random_like_sat_is_solved() {
         );
     }
 }
+
+// --- the incremental (re-entrant) solver -------------------------------------
+
+#[test]
+fn incremental_reentrant_queries_share_one_database() {
+    // A chain (a → b), (b → c): assuming a forces the whole chain.
+    let mut c = Cnf::new(3);
+    c.add_clause(vec![SatLit::negative(0), SatLit::positive(1)]);
+    c.add_clause(vec![SatLit::negative(1), SatLit::positive(2)]);
+    let mut inc = Incremental::new(&c);
+    match inc.solve(&[SatLit::positive(0)]).unwrap() {
+        Solved::Sat(m) => assert!(m[0] && m[1] && m[2]),
+        Solved::Unsat(_) => panic!("chain under `a` is SAT"),
+    }
+    // Assuming a ∧ ¬c contradicts the chain; the core names only assumptions.
+    let asm = [SatLit::positive(0), SatLit::negative(2)];
+    match inc.solve(&asm).unwrap() {
+        Solved::Unsat(core) => {
+            assert!(!core.is_empty());
+            assert!(core.iter().all(|l| asm.contains(l)));
+        }
+        Solved::Sat(_) => panic!("a ∧ ¬c violates the chain"),
+    }
+    // The solver stays usable after an UNSAT query.
+    assert!(matches!(
+        inc.solve(&[SatLit::negative(2)]).unwrap(),
+        Solved::Sat(_)
+    ));
+}
+
+#[test]
+fn incremental_added_clauses_persist_across_queries() {
+    let mut c = Cnf::new(2);
+    c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let mut inc = Incremental::new(&c);
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Sat(_)));
+    inc.add_clause(&[SatLit::negative(0)]);
+    inc.add_clause(&[SatLit::negative(1)]);
+    // (a∨b) ∧ ¬a ∧ ¬b is now UNSAT regardless of assumptions — and stays so.
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
+    assert!(matches!(
+        inc.solve(&[SatLit::positive(0)]).unwrap(),
+        Solved::Unsat(_)
+    ));
+}
+
+#[test]
+fn incremental_stats_count_work_and_never_reset() {
+    // The four-combos formula forces decisions, propagation, and conflicts.
+    let mut c = Cnf::new(2);
+    let (a, b) = (0u32, 1u32);
+    c.add_clause(vec![SatLit::positive(a), SatLit::positive(b)]);
+    c.add_clause(vec![SatLit::negative(a), SatLit::positive(b)]);
+    c.add_clause(vec![SatLit::positive(a), SatLit::negative(b)]);
+    c.add_clause(vec![SatLit::negative(a), SatLit::negative(b)]);
+    let mut inc = Incremental::new(&c);
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
+    let first = inc.stats().clone();
+    assert!(first.decisions >= 1);
+    assert!(first.propagations >= 1);
+    assert!(first.conflicts >= 1);
+    assert!(first.learned_literals >= 1);
+    // Counters are cumulative: a second query can only grow them.
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
+    let second = inc.stats().clone();
+    assert!(second.decisions >= first.decisions);
+    assert!(second.propagations >= first.propagations);
+    assert!(second.conflicts >= first.conflicts);
+    assert!(second.learned_literals >= first.learned_literals);
+}
+
+#[test]
+fn incremental_reuse_beats_scratch_on_work_counters() {
+    // The honest, hardware-independent speed test: a deletion-minimization-shaped
+    // query sequence costs strictly fewer conflicts on one shared database than on
+    // fresh solvers, because learned clauses persist. Deterministic — exact on CI.
+    //
+    // The formula mirrors the real unsat-core workload: m independent UNSAT pairs
+    // (all four combos of a_j, b_j excluded), every clause guarded by its own
+    // selector variable s_k, queries assuming selector subsets.
+    let pairs = 3usize;
+    let base = 2 * pairs; // a_j = 2j, b_j = 2j+1
+    let selectors = 4 * pairs; // one per clause
+    let mut c = Cnf::new(base + selectors);
+    let mut sel = Vec::new();
+    for j in 0..pairs as u32 {
+        let (a, b) = (2 * j, 2 * j + 1);
+        for (i, combo) in [
+            [SatLit::positive(a), SatLit::positive(b)],
+            [SatLit::negative(a), SatLit::positive(b)],
+            [SatLit::positive(a), SatLit::negative(b)],
+            [SatLit::negative(a), SatLit::negative(b)],
+        ]
+        .iter()
+        .enumerate()
+        {
+            let s = (base + 4 * j as usize + i) as u32;
+            sel.push(SatLit::positive(s));
+            c.add_clause(vec![SatLit::negative(s), combo[0], combo[1]]);
+        }
+    }
+    // Query 0: every clause active (UNSAT). Queries 1..: drop one clause each —
+    // the other pairs stay complete, so every query is UNSAT too.
+    let mut queries = vec![sel.clone()];
+    for i in 0..sel.len() {
+        let mut q = sel.clone();
+        q.remove(i);
+        queries.push(q);
+    }
+
+    let mut shared = Incremental::new(&c);
+    for q in &queries {
+        assert!(matches!(shared.solve(q).unwrap(), Solved::Unsat(_)));
+    }
+    let shared_conflicts = shared.stats().conflicts;
+
+    let mut scratch_conflicts = 0;
+    for q in &queries {
+        let mut fresh = Incremental::new(&c);
+        assert!(matches!(fresh.solve(q).unwrap(), Solved::Unsat(_)));
+        scratch_conflicts += fresh.stats().conflicts;
+    }
+    assert!(
+        shared_conflicts < scratch_conflicts,
+        "shared database must hit fewer conflicts: {shared_conflicts} vs {scratch_conflicts}"
+    );
+}
+
+// --- conflict budget ---------------------------------------------------------
+
+/// Pigeonhole PHP(p, h) — small but guaranteed to conflict (UNSAT for p > h).
+fn budget_php(p: usize, h: usize) -> Cnf {
+    let v = |i: usize, j: usize| (i * h + j) as Var;
+    let mut c = Cnf::new(p * h);
+    for i in 0..p {
+        c.add_clause((0..h).map(|j| SatLit::positive(v(i, j))).collect());
+    }
+    for j in 0..h {
+        for a in 0..p {
+            for b in (a + 1)..p {
+                c.add_clause(vec![SatLit::negative(v(a, j)), SatLit::negative(v(b, j))]);
+            }
+        }
+    }
+    c
+}
+
+/// A budget of n admits exactly n analyzed conflicts: the budget equal to the
+/// solve's true conflict count finishes with the identical answer (and an empty
+/// pool), one conflict less aborts. This pins the boundary semantics.
+#[test]
+fn budget_boundary_admits_exactly_n_conflicts() {
+    let cnf = budget_php(4, 3);
+
+    let mut inc = Incremental::new(&cnf);
+    let unbudgeted = inc.solve(&[]).unwrap();
+    assert!(matches!(unbudgeted, Solved::Unsat(_)));
+    let needed = inc.stats().conflicts;
+    assert!(needed > 0, "php(4,3) must conflict");
+
+    let exact = Budget::new(needed);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&exact)),
+        Ok(unbudgeted),
+        "an exact budget must not change the answer"
+    );
+    assert_eq!(exact.remaining(), 0);
+
+    let short = Budget::new(needed - 1);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&short)),
+        Err(BudgetExhausted)
+    );
+    assert_eq!(short.remaining(), 0);
+}
+
+/// A zero budget still answers anything that needs no conflict analysis.
+#[test]
+fn zero_budget_still_answers_conflict_free_solves() {
+    let mut easy = Cnf::new(2);
+    easy.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let zero = Budget::new(0);
+    assert!(matches!(
+        solve_assuming_budgeted(&easy, &[], Some(&zero)),
+        Ok(Solved::Sat(_))
+    ));
+
+    assert_eq!(
+        solve_assuming_budgeted(&budget_php(4, 3), &[], Some(&zero)),
+        Err(BudgetExhausted)
+    );
+}
+
+/// Clones of one handle draw from a single pool: a budget sized for one solve
+/// funds the first call and starves an identical second one — the global
+/// (whole-run) semantics, not per-solve.
+#[test]
+fn budget_pool_is_shared_across_solves() {
+    let cnf = budget_php(4, 3);
+    let mut inc = Incremental::new(&cnf);
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
+    let needed = inc.stats().conflicts;
+
+    let pool = Budget::new(needed);
+    assert!(solve_assuming_budgeted(&cnf, &[], Some(&pool)).is_ok());
+    assert_eq!(pool.remaining(), 0);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&pool)),
+        Err(BudgetExhausted),
+        "the second solve must find the shared pool already empty"
+    );
+}
+
+/// Budgeted enumeration issues the same solver calls in the same order, so with
+/// any sufficient budget it returns exactly what `models` returns; running out
+/// mid-enumeration aborts the whole call rather than returning a short list.
+#[test]
+fn models_budgeted_matches_models_or_aborts() {
+    // x ∨ y: three models, and enumeration provably conflicts after the first
+    // (the blocking clause clashes with the saved phase).
+    let mut cnf = Cnf::new(2);
+    cnf.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let project = [0 as Var, 1 as Var];
+
+    let reference = models(&cnf, &project, 8);
+    assert_eq!(reference.len(), 3);
+
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, None),
+        Ok(reference.clone())
+    );
+    let generous = Budget::new(1_000);
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, Some(&generous)),
+        Ok(reference)
+    );
+
+    let zero = Budget::new(0);
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, Some(&zero)),
+        Err(BudgetExhausted)
+    );
+}
+
+/// The abort marker renders a stable message (hosts embed it in error text).
+#[test]
+fn budget_exhausted_displays_a_stable_message() {
+    assert_eq!(format!("{BudgetExhausted}"), "conflict budget exhausted");
+}

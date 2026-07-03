@@ -293,6 +293,40 @@ RULE  ...  WHEN A THEN B   — DERIVES.  A=TRUE → ADDS fact B
 
 One **checks**, the other **produces** a new fact. This distinction is important to keep in mind.
 
+### `RULE … UNLESS …` — defeasible defaults (the exception layer)
+
+A plain `RULE` is *indefeasible*: `A ⇒ B`, no escape. Real rules have **defaults with
+exceptions** — "birds fly, but a penguin doesn't". An `UNLESS` line names an exception
+the model points at; the rule still derives its `THEN` **unless** that exception is
+*established* TRUE:
+
+```
+RULE fly:  WHEN x is bird  THEN x can_fly  UNLESS x is penguin
+```
+
+| exception `x is penguin` | antecedent `x is bird` | result |
+|---|---|---|
+| FALSE  | TRUE | rule fires — the default holds (`x can_fly` derived) |
+| UNKNOWN | TRUE | rule fires — nothing *established* defeats it (**assume-normal**) |
+| TRUE   | TRUE | rule **suppressed** — the default is retracted (nothing derived) |
+
+Only a *settled* exception defeats the default; a FALSE or merely-UNKNOWN exception
+leaves it standing. This makes the layer genuinely **non-monotonic**: adding
+`FACT pengu is penguin` *retracts* an otherwise-derived `pengu can_fly`. Exceptions
+are **repeatable** (`UNLESS` per line) and the rule is suppressed if **any** is
+established TRUE. `UNLESS` is **RULE-only** — a `PREMISE` (a hard constraint) with an
+`UNLESS` is a compile error.
+
+Semantics without blow-up (Law 5): in the forward pass this is one `O(1)` model-value
+lookup per exception that *gates* firing — the model supplies the exception, the engine
+only checks it, never searching for one. In the backward (`BIDIRECTIONAL`) pass the
+exception enters the rule's clause as an escape disjunct — `WHEN a THEN b UNLESS e`
+== `¬a ∨ e ∨ b` — which coincides with the forward reading on any complete model. When
+an established exception actually suppresses a firing default, the report notes it as an
+informational **`DEFEATED`** line (naming the rule, the withheld consequent, and the
+exception that defeated it); the verdict is unaffected — a defeated default is never a
+conflict.
+
 ## `ASSUME` — soft, retractable hypotheses
 
 `FACT`/`NOT` are commitments; `ASSUME` is a **hypothesis**. Syntactically it is a
@@ -315,8 +349,9 @@ soft = ASSUME                             (hypotheses)
   The engine computes the **minimal set of `ASSUME`s to retract** — an irreducible
   group that cannot all hold *together with every fact and premise* — by
   deletion-minimization over the soft constructs only (hard constructs stay
-  pinned, so a `FACT`/`PREMISE` is **never** named). Dropping (or flipping) any one
-  restores consistency.
+  pinned, so a `FACT`/`PREMISE` is **never** named). Dropping any one restores
+  consistency; each item also carries a **verified `flip`** — the opposite value,
+  re-solved to confirm it is consistent before it is offered (never a bare promise).
 
 The verdict stays **`CONFLICT`** (exit code 2) — a contradiction is a
 contradiction — but the report carries a `retract` list instead of (and
@@ -326,16 +361,20 @@ superseding) the raw conflict pool, and names only hypotheses:
 RESULT: CONFLICT
   RETRACT  your FACTs and PREMISEs are fine.
       But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
+      Remove ONE of them, then check again:
       ASSUME rel in_prod   [program.vrf:6]
+        or flip it to: NOT rel in_prod   (checked)
       ASSUME NOT rel has_rollback   [program.vrf:7]
+        or flip it to: rel has_rollback   (checked)
       ASSUME NOT rel has_feature_flag   [program.vrf:8]
+        or flip it to: rel has_feature_flag   (checked)
 EXIT_CODE: 2
 ```
 
-In JSON this is the `retract` array; every item is tagged `"kind":"ASSUME"`, so a
-caller can distinguish "drop a hypothesis" from "a commitment is wrong"
-programmatically without a new status or exit code. Like a direct conflict, an
+In JSON this is the `retract` array; every item is tagged `"kind":"ASSUME"` and
+carries a `fixes` array (`{"action":"drop"|"flip","target":…}`), so a caller can
+distinguish "drop a hypothesis" from "a commitment is wrong" — and read the exact
+edit — programmatically without a new status or exit code. Like a direct conflict, an
 assumption clash that only emerges under case-splitting needs `BIDIRECTIONAL`;
 clashes visible in the forward pass (the common case) are caught without it.
 
@@ -346,21 +385,28 @@ engine *propose* the missing hypothesis itself.
 ## DSL: keywords
 
 **A purely boolean system.** The core is 5 concepts (`FACT`, `NOT`, `PREMISE`,
-`RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses, plus a few
-words for the body of constraints and rules, plus `DOMAIN`/`IMPORT`/`AS` for
-namespacing and reuse.
+`RULE`, `CHECK`), plus `ASSUME` for *soft* (retractable) hypotheses and `TRY` for
+*uncommitted* what-if checks, plus `KNOWS`/`BELIEVES` for *epistemic* claims about
+what an agent knows or believes, plus a few words for the body of constraints and
+rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 
 | Word | Meaning | Kind |
 |---|---|---|
 | `DOMAIN` | declares the file's domain — the identity namespace of its atoms (required, first) | namespace |
 | `FACT` | a TRUE assertion | premise (unchecked) |
+| `FACT … BECAUSE …` | a TRUE assertion that names its ground; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) | premise + justification |
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
+| `TRY` | test a hypothesis **without committing it** (`[NOT]` atom): the engine reports whether asserting it would close the open model, conflict, or leave it open — never enters the model or the verdict (abduction, L5) | hypothesis (advisory) |
+| `KNOWS` | attribute **factive** knowledge to an agent (`<Agent> [NOT]` atom): knowledge implies truth, so knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING; knowing both φ and ¬φ is a CONFLICT (epistemic, L6) | attribution (checked) |
+| `BELIEVES` | attribute a **non-factive** belief to an agent (`<Agent> [NOT]` atom): a false belief is reported as an informational note (exit 0, never raises the verdict) but never a CONFLICT — belief may be mistaken (epistemic, L6) | attribution (advisory) |
 | `PREMISE` | a first principle — **checked** | constraint |
-| `RULE` | an inference rule — **produces a fact** | rule, forward chaining |
+| `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
+| `RULE … UNLESS …` | a defeasible exception on a `RULE`: it still derives its `THEN` **unless** the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only | rule + exception |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
 | `EXISTS … IN …` | at least one element of a `SET` satisfies the condition (a `PREMISE` body; the ∃ dual of `FOR EACH`) | quantification |
+| `EXISTS … WITNESS …` | prove the existential by naming the one element that satisfies it — no `SET`; grounds to a single atom (the open-domain ∃) | quantification |
 | `SET` | declare a finite set of elements to quantify over | quantification |
 | `FOR EACH … IN …` / `FOR EACH … <rel> …` | quantifier on a `PREMISE`/`RULE` header (over a `SET` or a relation's `FACT` pairs) | quantification |
 | `CLOSE … TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` | close a relation at compile time under the named kind (`TRANSITIVE` requires a DAG: cycle = error) | quantification |
@@ -461,6 +507,11 @@ PREMISE covered:
     EXISTS h IN handlers
         h handles request
 
+// Prove ∃ over an OPEN domain by naming the one element (the witness) — no SET.
+PREMISE request_is_covered:
+    EXISTS h WITNESS auth_service
+        h handles request
+
 // Close a relation at compile time under a kind (a->b, b->c => a->c for TRANSITIVE)
 CLOSE <relation> TRANSITIVE
 ```
@@ -473,6 +524,48 @@ desugars to exactly one `ATLEAST` clause whose atoms are generated from the set
 instead of hand-listed: `O(|set|)` to ground, one clause, the solver sees nothing
 new. Catches "no element covers this case" (a coverage gap) as a `CONFLICT` when
 every instantiation is forced false.
+
+**`EXISTS … WITNESS <term>` — the open-domain existential.** When the domain is not
+a declared `SET` — you cannot enumerate every possible element — an existential
+cannot be checked by search. So the author *names the one element that satisfies it*
+(the **witness**) and the engine checks that witness holds. It is exactly `EXISTS`
+over the singleton `{term}`: it grounds to **one** atom, one at-least-one clause
+(`O(1)`), forcing that atom TRUE — if anything else forces it FALSE, `CONFLICT`
+("your witness does not hold"). This is the only "open domain" form in the language,
+and it is safe *by construction*: a witness has nothing to enumerate. The asymmetry
+is deliberate — a universal (`FOR EACH`) must always name its domain with a `SET`;
+only the existential may point at a lone witness (see "one-binder rule").
+
+An `EXISTS` that names **neither** a `SET` nor a `WITNESS` (`EXISTS h` then the
+condition) is an existential claim with no candidate — nothing to check. It grounds
+to no clause and is reported as a **WARNING** ("name a witness"), never a `CONFLICT`
+and never a search. So the existential may leave its domain unnamed, but then it must
+name a witness or it is flagged as an unfinished premise — the "you claimed existence
+but pointed at no one" gap.
+
+**`FACT … BECAUSE <ground>` — the justification ("how do you know?").** A `FACT` may
+name the ground it rests on, and the engine checks that ground actually holds. It is
+an *evaluative* check, not a constraint: `BECAUSE` emits **no clause** and interns the
+ground so the solver can read its settled value. The ground's value decides the outcome:
+
+- ground **TRUE** → the justification stands (silent);
+- ground **FALSE** → the stated reason does not hold → **CONFLICT** (with a trace of
+  why the ground is false), the epistemic analogue of a broken proof;
+- ground **UNKNOWN** → the reason is unestablished → **WARNING** ("establish the ground").
+
+Because it is evaluative it can never blow up — one value lookup per justified fact —
+and an UNKNOWN ground is *reported* rather than silently forced true (which is why it
+is not a clause). A plain `FACT` with no `BECAUSE` is unchanged; supplying a ground is
+opt-in.
+
+A ground may itself be a justified `FACT … BECAUSE …`, so **the chain composes**: each
+link is checked independently, and the *weakest link* anywhere in the chain surfaces —
+an unestablished ground raises a WARNING at that link, a false one a CONFLICT. The
+author writes exactly as much of the chain as they want (each link stays `O(1)`), so
+justification is as shallow or as deep as the reasoning requires. What is *not* forced
+is that every ground must be justified: a bare asserted ground is accepted as a first
+principle. That keeps it opt-in and free of noise — the model justifies only what it
+chooses to, and the engine checks each step it is given.
 
 **The `CLOSE` family.** Each kind is a compile-time graph operation over a
 relation's `FACT` pairs (zero solver cost — the solver only ever sees the resulting
@@ -528,6 +621,12 @@ differently: **what cannot be written cannot happen.**
   pairs are pinned by data.
 - *No free joins.* You cannot write `R ⋈ S` over two relations (a product); a
   derived relation can only come from one relation's own pairs (`CLOSE`).
+- *No unnamed universal.* A `FOR EACH` must always name its domain (`IN <set>` or a
+  relation's pairs); there is no grammar production for `FOR EACH x` over an unnamed
+  domain — that would be the blow-up (closing/searching an open domain). The
+  existential is the *only* quantifier that may leave its domain unnamed, and only by
+  naming a single **witness** (`EXISTS h WITNESS <term>`), which grounds to one atom.
+  So neither quantifier can ever enumerate an unnamed domain.
 - *No numbers.* "Exactly / at least / at most one" exist (`ONEOF`/`ATLEAST`/
   `EXCLUSIVE`, and `EXISTS` over a set); counting beyond one does not. Arithmetic
   over unbounded integers is SMT, strictly more than this engine offers.
@@ -547,13 +646,16 @@ a relation, `b` = clauses one body instance emits.
 | `DOMAIN` | `O(1)` — namespacing only | — |
 | `IMPORT` / `AS` | `O(1)` per edge; import-cycle check `O(imports)` | — (flat merge into the atom universe) |
 | `FACT` / `NOT` | `O(1)` | one unit literal |
+| `FACT … BECAUSE <ground>` | `O(1)` — interns the ground; **no clause** | one model-value lookup (evaluative, not a constraint) |
 | `ASSUME` | `O(1)` | one retractable assumption |
 | `EXCLUSIVE` / `FORBIDS` | `C(n,2)` pairwise clauses | those clauses |
 | `ONEOF` | `C(n,2) + 1` clauses (+ closed-world value set) | those clauses |
 | `ATLEAST` | one clause over `n` atoms | one clause |
 | `EXISTS … IN <set>` | one clause over `|set|` atoms | one clause |
+| `EXISTS … WITNESS <term>` | `O(1)` — one clause over the single witness atom | one clause |
 | `WHEN … AND/OR … THEN …` (`PREMISE`) | one clause per (antecedent × consequent) group | those clauses |
 | `RULE` (`WHEN … THEN`) | one rule per antecedent literal | a forward-chaining saturate step |
+| `RULE … UNLESS <exc>` | `O(1)` per exception — a model-value lookup that gates firing; adds one escape literal to the rule's clause | bounded by the exceptions *written* |
 | `SET` | `O(|elements|)` recorded | — |
 | `FOR EACH … IN <set>` | `×|set|` body instances → `O(|set|·b)` | those clauses |
 | `FOR EACH … <rel> …` | `×|pairs|` body instances → `O(|pairs|·b)` | those clauses |
@@ -787,7 +889,7 @@ element_line = identifier , NEWLINE ;
 close       = "CLOSE" , name , closure_kind , NEWLINE ;
 closure_kind = "TRANSITIVE" | "SYMMETRIC" | "REFLEXIVE" | "EQUIVALENCE" | "SCC" ;
             (* only TRANSITIVE requires a DAG; the others allow cycles *)
-fact        = "FACT" , atom , NEWLINE ;
+fact        = "FACT" , atom , [ "BECAUSE" , atom ] , NEWLINE ;  (* optional ground: the justification the engine checks *)
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
 var         = "VAR" , name , [ "DEFAULT" , bool ] , NEWLINE ;  (* external boolean port *)
@@ -807,11 +909,14 @@ exists_body = "EXISTS" , name , "IN" , name , NEWLINE , atom_line ;
             (* ∃: at least one element of the SET satisfies the condition line *)
 atom_line   = atom , NEWLINE ;
 
-impl_body   = when_line , { cont_line } , then_line , { cont_line } ;
+impl_body   = when_line , { cont_line } , then_line , { cont_line } , { unless_line } ;
 when_line   = "WHEN" , literal , NEWLINE ;
 then_line   = "THEN" , literal , NEWLINE ;
 cont_line   = ( "AND" | "OR" ) , literal , NEWLINE ;
             (* one group (antecedent or consequent) may not mix AND and OR *)
+unless_line = "UNLESS" , literal , NEWLINE ;
+            (* a defeasible exception; RULE-only (a PREMISE with one is a compile
+               error) — repeatable, the rule is suppressed if ANY is established TRUE *)
 
 atom        = [ domain_ref , "." ] , subject , [ predicate , [ object ] ] ;
             (* a bare subject alone is a single-word proposition — a VAR port *)
@@ -1117,17 +1222,81 @@ an irreducible set, reported as `unsat_core`:
 ```
 CONFLICT  - (UNSAT)  [<system>:0]
     the premises and facts are jointly unsatisfiable
-  CORE  smallest jointly-unsatisfiable set (4):
+  CORE  these 4 cannot all hold — drop ONE, then check again:
         one_ab (ONEOF)   [..:1]
         a_implies_c (PREMISE) [..:5]
         b_implies_c (PREMISE) [..:8]
         x c (NOT)        [..:11]
+        or flip it to: x c   (checked)
 ```
 
 This costs O(n) SAT calls over the constructs — fine at our scale, and needs no
 proof logging (which the in-crate SAT core deliberately omits). A premise that
 desugared into several clauses is grouped back by origin, so the core blames whole
 premises, not clause shards.
+
+**The repair voice (what to change).** Every jointly-unsatisfiable finding — a
+`CORE` or a `retract` — carries the *minimal edit* that clears it, in one grammar:
+each item is a **`drop`** (removing it restores consistency — that is what put it in
+the minimal set), and a `FACT`/`ASSUME` additionally gets a **verified `flip`** (the
+opposite value, re-solved to confirm consistency before it is shown — `(checked)` is
+never a promise the engine did not test). A premise/rule has no single polarity, so
+its only repair is `drop`. In JSON each item's `fixes` array carries these as
+`{"action":"drop"|"flip","target":…}`.
+
+These two — `drop` and `flip` — are the *complete* toolbox for a CONFLICT, and this
+is a theorem, not a heuristic: an unsatisfiable clause set stays unsatisfiable under
+*more* clauses (monotonicity), so **adding** a fact can never clear a conflict. The
+only levers are removing a written construct or flipping a written fact. Proposing a
+*new* missing premise that would restore consistency is a different layer
+(abduction): there the model supplies a candidate and the engine checks it — the
+engine never searches for one itself.
+
+**`TRY` — the abduction voice (the "add" side).** That different layer is `TRY
+[NOT] <atom>`: the model supplies a candidate the engine has **not** committed, and
+the engine runs one bounded side-solve (the program plus that single literal) to
+report which of three holds — **`closes`** (the program was underdetermined and the
+candidate makes the model unique), **`conflicts`** (the candidate makes the program
+unsatisfiable — it clashes with what is established), or **`still open`** (it stays
+satisfiable but not unique — the candidate does not pin it by itself). Each verdict is
+`(checked)` — the side-solve actually ran. It is the mirror of the repair voice: `CORE`
+/`retract` name what to *drop or flip*, `TRY` reports whether an *add* would work.
+Crucially it is **advisory** — the candidate never enters the model, so `TRY` never
+changes the verdict, exit code, model, or reasoning order (like `DERIVED`/`DEFEATED`).
+Cost is one re-solve per `TRY` line: the engine checks the supplied candidate, it never
+enumerates candidates of its own. On an already-unsatisfiable program every `TRY` reads
+as `conflicts` (adding a clause cannot clear a conflict — that is the repair voice's
+job). In JSON: a `tried` array, each item `{"outcome":"closes"|"conflicts"|"still_open"}`.
+
+**`KNOWS` / `BELIEVES` — the epistemic voice (who knows what, L6).** These attribute a
+claim about the world to a *named agent*: `KNOWS <agent> [NOT] <atom>` and
+`BELIEVES <agent> [NOT] <atom>`. The agent is a bare label — it never becomes an atom or
+a clause; the engine checks each attribution against the **settled world model**, so this
+is a side checker, not a hack on the SAT core. The layer captures the *checkable* core of
+epistemic logic — **not** full possible-worlds/S5 (that would enumerate worlds, which the
+cost discipline forbids). What it checks:
+
+- **Knowledge is factive (axiom T, `K φ → φ`).** A `KNOWS` whose claim the world
+  establishes **FALSE** is impossible — a **CONFLICT** ("you cannot know a falsehood"),
+  reported like a `BECAUSE` justification, with the derivation trace of why the atom is
+  false. A `KNOWS` the world leaves **UNKNOWN** is unconfirmed — a **WARNING** (assert it,
+  or downgrade to `BELIEVES`). A held (TRUE) claim is silent.
+- **A knower must be coherent.** One agent that `KNOWS` both φ and ¬φ is a **CONFLICT**
+  (axiom T makes both true) — flagged where the world leaves the atom UNKNOWN (a pinned
+  atom already surfaces the impossible side via factivity).
+- **Belief is non-factive.** A `BELIEVES` whose claim is **FALSE** is a *false belief*: a
+  visible but **informational** note ("bob believes X — but it is FALSE"), exit 0 like
+  `DEFEATED` — it never raises the verdict and is **never a CONFLICT**. The world is
+  consistent; the agent is simply wrong. An unestablished or held belief is silent.
+
+Cost is one model-value lookup per attribution (plus an `O(k)` per-agent coherence pass) —
+the engine checks what the model supplies, it never enumerates epistemic alternatives.
+Removing a `KNOWS`/`BELIEVES` line never changes any other finding. In JSON, a false
+belief is a `beliefs` array item `{"agent":…,"claim":…}`; factive `KNOWS` findings live in
+`conflicts`/`warnings` like any other. Deliberately out of scope (a future layer): common
+knowledge, nested modalities `K_a K_b φ`, introspection (S4/S5 axioms), and any deductive
+closure of knowledge — each needs enumeration or search, which the LLM supplies, not the
+engine.
 
 ## Invariants and edge cases
 

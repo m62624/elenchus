@@ -2,7 +2,7 @@
 //! `.vrf` text, parse it back, and assert the AST matches what we generated.
 //! Any rendering the grammar accepts but the parser mis-reads is a bug.
 
-use elenchus_parser::{Body, CloseKind, ListOp, Statement, parse};
+use elenchus_parser::{Body, CloseKind, ExistsDomain, ListOp, Statement, parse};
 use proptest::prelude::*;
 
 /// `(subject, predicate, object)`. `predicate == None` is a **bare atom** (a
@@ -13,7 +13,11 @@ type Lit3 = (bool, Atom3);
 
 #[derive(Clone, Debug)]
 enum Stmt {
-    Fact(Atom3),
+    Fact {
+        atom: Atom3,
+        /// `Some` → render a `BECAUSE <ground>` justification tail.
+        because: Option<Atom3>,
+    },
     Not(Atom3),
     Import(String),
     Var {
@@ -34,6 +38,8 @@ enum Stmt {
         name: String,
         ante: Vec<Lit3>,
         cons: Vec<Lit3>,
+        /// `UNLESS` exceptions (only ever generated for a RULE).
+        exc: Vec<Lit3>,
     },
     Check {
         subj: Option<String>,
@@ -47,6 +53,8 @@ enum Stmt {
         name: String,
         binder: String,
         set: String,
+        /// `true` → render `WITNESS <set>`; `false` → render `IN <set>`.
+        witness: bool,
         atom: Atom3,
     },
 }
@@ -75,7 +83,13 @@ fn render(stmts: &[Stmt]) -> String {
     let mut s = String::new();
     for st in stmts {
         match st {
-            Stmt::Fact(a) => s.push_str(&format!("FACT {}\n", render_atom(a))),
+            Stmt::Fact { atom, because } => {
+                s.push_str(&format!("FACT {}", render_atom(atom)));
+                if let Some(g) = because {
+                    s.push_str(&format!(" BECAUSE {}", render_atom(g)));
+                }
+                s.push('\n');
+            }
             Stmt::Not(a) => s.push_str(&format!("NOT {}\n", render_atom(a))),
             Stmt::Import(p) => s.push_str(&format!("IMPORT \"{p}\"\n")),
             Stmt::Var { name, default } => {
@@ -103,6 +117,7 @@ fn render(stmts: &[Stmt]) -> String {
                 name,
                 ante,
                 cons,
+                exc,
             } => {
                 let kw = if *rule { "RULE" } else { "PREMISE" };
                 s.push_str(&format!("{kw} {name}:\n"));
@@ -113,6 +128,9 @@ fn render(stmts: &[Stmt]) -> String {
                 s.push_str(&format!("    THEN {}\n", render_lit(&cons[0])));
                 for l in &cons[1..] {
                     s.push_str(&format!("    AND {}\n", render_lit(l)));
+                }
+                for l in exc {
+                    s.push_str(&format!("    UNLESS {}\n", render_lit(l)));
                 }
             }
             Stmt::Check { subj, bidir } => {
@@ -130,10 +148,16 @@ fn render(stmts: &[Stmt]) -> String {
                 name,
                 binder,
                 set,
+                witness,
                 atom,
             } => {
+                let dom = if *witness {
+                    format!("WITNESS {set}")
+                } else {
+                    format!("IN {set}")
+                };
                 s.push_str(&format!(
-                    "PREMISE {name}:\n    EXISTS {binder} IN {set}\n        {}\n",
+                    "PREMISE {name}:\n    EXISTS {binder} {dom}\n        {}\n",
                     render_atom(atom)
                 ));
             }
@@ -180,7 +204,23 @@ fn close_kind_eq(p: CloseKind, s: &str) -> bool {
 
 fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
     match (p, s) {
-        (Statement::Fact(a), Stmt::Fact(b)) => atom_eq(&a.data, b),
+        (
+            Statement::Fact {
+                atom: a,
+                because: pb,
+            },
+            Stmt::Fact {
+                atom: b,
+                because: sb,
+            },
+        ) => {
+            atom_eq(&a.data, b)
+                && match (pb, sb) {
+                    (Some(pg), Some(sg)) => atom_eq(&pg.data, sg),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
         (Statement::Negation(a), Stmt::Not(b)) => atom_eq(&a.data, b),
         (Statement::Import { path: a, .. }, Stmt::Import(b)) => a.data == b,
         (
@@ -217,6 +257,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        exceptions,
                         ..
                     },
                 ..
@@ -226,6 +267,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 name: n,
                 ante,
                 cons,
+                exc,
             },
         )
         | (
@@ -235,6 +277,7 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                     Body::Impl {
                         antecedent,
                         consequent,
+                        exceptions,
                         ..
                     },
                 ..
@@ -244,8 +287,14 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
                 name: n,
                 ante,
                 cons,
+                exc,
             },
-        ) => name.data == n && lits_eq(antecedent, ante) && lits_eq(consequent, cons),
+        ) => {
+            name.data == n
+                && lits_eq(antecedent, ante)
+                && lits_eq(consequent, cons)
+                && lits_eq(exceptions, exc)
+        }
         (
             Statement::Check {
                 subject,
@@ -263,16 +312,29 @@ fn stmt_eq(p: &Statement, s: &Stmt) -> bool {
         (
             Statement::Premise {
                 name,
-                body: Body::Exists { binder, set, atom },
+                body:
+                    Body::Exists {
+                        binder,
+                        domain,
+                        atom,
+                    },
                 ..
             },
             Stmt::ExistsPremise {
                 name: n,
                 binder: b,
                 set: st,
+                witness: w,
                 atom: a,
             },
-        ) => name.data == n && binder.data == b && set.data == st && atom_eq(&atom.data, a),
+        ) => {
+            let dom_eq = match domain {
+                ExistsDomain::InSet(s) => !*w && s.data == st,
+                ExistsDomain::Witness(t) => *w && t.data == st,
+                ExistsDomain::Open => false, // proptest never generates the open form
+            };
+            name.data == n && binder.data == b && dom_eq && atom_eq(&atom.data, a)
+        }
         _ => false,
     }
 }
@@ -303,7 +365,7 @@ fn lit() -> impl Strategy<Value = Lit3> {
 
 fn stmt() -> impl Strategy<Value = Stmt> {
     prop_oneof![
-        atom().prop_map(Stmt::Fact),
+        (atom(), prop::option::of(atom())).prop_map(|(atom, because)| Stmt::Fact { atom, because }),
         atom().prop_map(Stmt::Not),
         "[a-z][a-z0-9_.]{0,8}".prop_map(Stmt::Import),
         (ident(), prop::option::of(any::<bool>()))
@@ -320,12 +382,15 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             ident(),
             prop::collection::vec(lit(), 1..4),
             prop::collection::vec(lit(), 1..4),
+            prop::collection::vec(lit(), 0..3),
         )
-            .prop_map(|(rule, name, ante, cons)| Stmt::Impl {
+            .prop_map(|(rule, name, ante, cons, exc)| Stmt::Impl {
                 rule,
                 name,
                 ante,
                 cons,
+                // UNLESS is RULE-only; never attach exceptions to a PREMISE.
+                exc: if rule { exc } else { Vec::new() },
             }),
         (prop::option::of(ident()), any::<bool>())
             .prop_map(|(subj, bidir)| Stmt::Check { subj, bidir }),
@@ -340,14 +405,15 @@ fn stmt() -> impl Strategy<Value = Stmt> {
             ]),
         )
             .prop_map(|(relation, kind)| Stmt::Close { relation, kind }),
-        (ident(), ident(), ident(), atom()).prop_map(|(name, binder, set, atom)| {
-            Stmt::ExistsPremise {
+        (ident(), ident(), ident(), any::<bool>(), atom()).prop_map(
+            |(name, binder, set, witness, atom)| Stmt::ExistsPremise {
                 name,
                 binder,
                 set,
+                witness,
                 atom,
-            }
-        }),
+            },
+        ),
     ]
 }
 

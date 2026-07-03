@@ -1,0 +1,15 @@
+---
+source: crates/elenchus-parser/tests/errors.rs
+expression: "err(r#\"\n        RULE r:\n            WHEN x a\n            THEN x b\n            UNLESS\n        \"#)"
+---
+RESULT: 1 syntax error
+
+UNLESS  (1 problem)
+  syntax  : RULE … THEN <literal> UNLESS <literal>  (one UNLESS per line, repeatable)
+  example : RULE fly:
+                WHEN x is bird
+                THEN x can_fly
+                UNLESS x is penguin
+    line 5, col 19 - UNLESS expects a literal: [NOT] <Subject> <predicate> [<object>]
+      |             UNLESS
+      |                   ^

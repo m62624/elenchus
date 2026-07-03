@@ -17,12 +17,16 @@ pub mod kw {
     pub const FACT: &str = "FACT";
     pub const NOT: &str = "NOT";
     pub const ASSUME: &str = "ASSUME";
+    pub const TRY: &str = "TRY";
+    pub const KNOWS: &str = "KNOWS";
+    pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
     pub const RULE: &str = "RULE";
     pub const CHECK: &str = "CHECK";
     pub const BIDIRECTIONAL: &str = "BIDIRECTIONAL";
     pub const WHEN: &str = "WHEN";
     pub const THEN: &str = "THEN";
+    pub const UNLESS: &str = "UNLESS";
     pub const AND: &str = "AND";
     pub const OR: &str = "OR";
     pub const EXCLUSIVE: &str = "EXCLUSIVE";
@@ -40,6 +44,8 @@ pub mod kw {
     pub const EQUIVALENCE: &str = "EQUIVALENCE";
     pub const SCC: &str = "SCC";
     pub const EXISTS: &str = "EXISTS";
+    pub const WITNESS: &str = "WITNESS";
+    pub const BECAUSE: &str = "BECAUSE";
     pub const VAR: &str = "VAR";
     pub const DEFAULT: &str = "DEFAULT";
     pub const PROVIDE: &str = "PROVIDE";
@@ -117,6 +123,33 @@ pub const KEYWORDS: &[Keyword] = &[
             "ASSUME [NOT] <Subject> <predicate> [<object>]",
             "a soft, retractable hypothesis (the solver may ask you to drop it)",
             "ASSUME release is_ready",
+        ),
+    },
+    Keyword {
+        text: kw::TRY,
+        top_level: true,
+        card: card(
+            "TRY [NOT] <Subject> <predicate> [<object>]",
+            "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
+            "TRY release is_ready",
+        ),
+    },
+    Keyword {
+        text: kw::KNOWS,
+        top_level: true,
+        card: card(
+            "KNOWS <Agent> [NOT] <Subject> <predicate> [<object>]",
+            "attribute factive knowledge to an agent: knowledge must be true, so knowing an established-FALSE atom is a CONFLICT (the epistemic L6 voice)",
+            "KNOWS alice door is_locked",
+        ),
+    },
+    Keyword {
+        text: kw::BELIEVES,
+        top_level: true,
+        card: card(
+            "BELIEVES <Agent> [NOT] <Subject> <predicate> [<object>]",
+            "attribute a non-factive belief to an agent: a false belief is reported, not a conflict (advisory — never changes the verdict)",
+            "BELIEVES bob door is_locked",
         ),
     },
     Keyword {
@@ -246,6 +279,15 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::UNLESS,
+        top_level: false,
+        card: card(
+            "RULE … THEN <literal> UNLESS <literal>  (one UNLESS per line, repeatable)",
+            "a defeasible exception on a RULE: the rule derives its THEN by default, but is suppressed when an UNLESS literal is established TRUE (FALSE/UNKNOWN lets the default stand)",
+            "RULE fly:\n    WHEN x is bird\n    THEN x can_fly\n    UNLESS x is penguin",
+        ),
+    },
+    Keyword {
         text: kw::AND,
         top_level: false,
         card: card(
@@ -303,9 +345,27 @@ pub const KEYWORDS: &[Keyword] = &[
         text: kw::EXISTS,
         top_level: false,
         card: card(
-            "EXISTS <binder> IN <set>  then one condition line using the binder",
-            "at least one element of the SET satisfies the condition (the existential over a set; the dual of FOR EACH)",
+            "EXISTS <binder> IN <set> (or WITNESS <term>)  then one condition line using the binder",
+            "at least one element satisfies the condition (the existential; the dual of FOR EACH)",
             "EXISTS h IN handlers\n    h handles request",
+        ),
+    },
+    Keyword {
+        text: kw::WITNESS,
+        top_level: false,
+        card: card(
+            "EXISTS <binder> WITNESS <term>  then one condition line using the binder",
+            "prove EXISTS by naming the one element that satisfies it — needs no SET; grounds to a single atom",
+            "EXISTS h WITNESS auth_service\n    h is ready",
+        ),
+    },
+    Keyword {
+        text: kw::BECAUSE,
+        top_level: false,
+        card: card(
+            "FACT <atom> BECAUSE <atom>",
+            "name the ground a FACT rests on; the engine checks it holds (ground FALSE -> CONFLICT, UNKNOWN -> WARNING)",
+            "FACT api healthy BECAUSE db reachable",
         ),
     },
     Keyword {

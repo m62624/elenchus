@@ -67,6 +67,17 @@ contain only `PROVIDE <port>: true|false` lines. Use this only on a locally-run 
 filesystem access; a remote server cannot see your files, so prefer inline `data` for portability. \
 Merged with `values`/`data`; a port set to two different values is an error.";
 
+/// `elenchus_check` — description of the optional `max_conflicts` argument (the
+/// MCP counterpart of the CLI `--max-conflicts` safety valve). Written to keep a
+/// model from reaching for it by default: normal programs never need it.
+pub const CHECK_ARG_MAX_CONFLICTS: &str = "Safety valve — DO NOT set this on a normal check. Aborts \
+the check with an error (no verdict) if it needs more than this many SAT conflicts; omitted = \
+unlimited, which is right for real programs (they finish in milliseconds with ~0 conflicts). \
+Set it only if the user explicitly asks, or after about 3 runs of the same program failed to \
+complete (hung/timed out) — then 100000 is a sane cap: far above any legitimate program, yet it \
+stops a pathological one in seconds. If asked what it is: a deterministic work limit — the same \
+program and cap abort identically on any machine.";
+
 /// `elenchus_version` tool description — the MCP analog of `elenchus --version`.
 pub const VERSION_TOOL: &str = "Return the running elenchus engine version (e.g. \"elenchus 0.3.0\"). \
 Call this once up front and compare it to the version your skill targets; if they differ, \

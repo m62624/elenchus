@@ -24,13 +24,29 @@ pub(crate) fn orphan_facts(c: &Compiled) -> Vec<OrphanFact> {
         }
     }
     for r in &c.rules {
-        for l in r.antecedent.iter().chain(r.consequent.iter()) {
+        for l in r
+            .antecedent
+            .iter()
+            .chain(r.consequent.iter())
+            .chain(r.exceptions.iter())
+        {
             referenced[l.atom as usize] = true;
         }
     }
     // Edges consumed by a relation `FOR EACH` are read as data, not idle facts.
     for &a in &c.consumed {
         referenced[a as usize] = true;
+    }
+    // A `FACT … BECAUSE <ground>` reads its ground (the justification check) and its
+    // belief carries an explicit justification — neither is an inert leftover.
+    for j in &c.justifications {
+        referenced[j.belief as usize] = true;
+        referenced[j.ground as usize] = true;
+    }
+    // A `KNOWS`/`BELIEVES <agent> <atom>` checks its atom against the world model, so a
+    // `FACT` that exists only to be known or believed is not an inert leftover.
+    for a in &c.attributions {
+        referenced[a.lit.atom as usize] = true;
     }
     let mut out: Vec<OrphanFact> = c
         .facts

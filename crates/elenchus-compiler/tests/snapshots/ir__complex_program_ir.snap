@@ -405,6 +405,7 @@ Compiled {
                     negated: false,
                 },
             ],
+            exceptions: [],
             origin: Origin {
                 source: "complex.vrf",
                 line: 29,
@@ -427,4 +428,8 @@ Compiled {
     unused_imports: [],
     consumed: [],
     placeholders: [],
+    unwitnessed_exists: [],
+    justifications: [],
+    hypotheses: [],
+    attributions: [],
 }

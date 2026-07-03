@@ -26,18 +26,18 @@ function mergeDataFiles(data, dataFiles) {
  * port values as a `{ [name]: boolean }` record; `data` supplies them from
  * data-file text as a `{ [name]: string }` record (PROVIDE-only `.vrf`);
  * `dataFiles` supplies the same from PROVIDE-only files read off disk. */
-function check(program, format, maxClasses, maxPerClass, values, data, dataFiles) {
-  return wasm.check(program, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles));
+function check(program, format, maxClasses, maxPerClass, values, data, dataFiles, maxConflicts) {
+  return wasm.check(program, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles), maxConflicts);
 }
 
 /** Check a `.vrf` program, resolving IMPORTs via a synchronous read callback. */
-function checkWithResolver(root, read, format, maxClasses, maxPerClass, values, data, dataFiles) {
-  return wasm.check_with_resolver(root, read, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles));
+function checkWithResolver(root, read, format, maxClasses, maxPerClass, values, data, dataFiles, maxConflicts) {
+  return wasm.check_with_resolver(root, read, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles), maxConflicts);
 }
 
 /** Read a single `.vrf` file and check it (no IMPORT resolution). */
-function checkFile(file, format, maxClasses, maxPerClass, values, data, dataFiles) {
-  return wasm.check(fs.readFileSync(file, "utf8"), format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles));
+function checkFile(file, format, maxClasses, maxPerClass, values, data, dataFiles, maxConflicts) {
+  return wasm.check(fs.readFileSync(file, "utf8"), format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles), maxConflicts);
 }
 
 /**
@@ -45,9 +45,9 @@ function checkFile(file, format, maxClasses, maxPerClass, values, data, dataFile
  * normalizes each relative import against the importing file, then asks the
  * resolver to load the resulting path — so a plain `readFileSync` is enough.
  */
-function checkFileWithImports(entry, format, maxClasses, maxPerClass, values, data, dataFiles) {
+function checkFileWithImports(entry, format, maxClasses, maxPerClass, values, data, dataFiles, maxConflicts) {
   const read = (path) => fs.readFileSync(path, "utf8");
-  return wasm.check_with_resolver(entry, read, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles));
+  return wasm.check_with_resolver(entry, read, format, maxClasses, maxPerClass, values, mergeDataFiles(data, dataFiles), maxConflicts);
 }
 
 module.exports = {

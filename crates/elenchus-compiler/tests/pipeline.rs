@@ -186,6 +186,80 @@ fn rule_with_or_antecedent_splits_into_two_rules() {
 }
 
 #[test]
+fn rule_records_its_unless_exceptions() {
+    // A defeasible RULE keeps its UNLESS literals as `exceptions`; they are interned
+    // as ordinary atoms (so the solver can read their model value).
+    let src = r#"
+        RULE fly:
+            WHEN x bird
+            THEN x flies
+            UNLESS x penguin
+            UNLESS x injured
+        "#;
+    let c = cs(src).unwrap();
+    assert_eq!(c.rules.len(), 1);
+    assert_eq!(c.rules[0].exceptions.len(), 2);
+    // Each exception atom exists in the interned atom table.
+    assert!(
+        c.atoms
+            .iter()
+            .any(|a| a.subject == "x" && a.predicate.as_deref() == Some("penguin"))
+    );
+    assert!(
+        c.atoms
+            .iter()
+            .any(|a| a.subject == "x" && a.predicate.as_deref() == Some("injured"))
+    );
+}
+
+#[test]
+fn or_antecedent_split_rules_each_keep_the_exceptions() {
+    // (a ∨ b) → c UNLESS e splits into two rules, both carrying the exception.
+    let src = r#"
+        RULE r:
+            WHEN x a
+            OR x b
+            THEN x c
+            UNLESS x e
+        "#;
+    let c = cs(src).unwrap();
+    assert_eq!(c.rules.len(), 2);
+    assert!(c.rules.iter().all(|r| r.exceptions.len() == 1));
+}
+
+#[test]
+fn rules_differing_only_in_exception_are_not_deduped() {
+    // The exception is part of a rule's identity: two same-named rules that differ
+    // only by their UNLESS must both survive (not collapse as a redefinition).
+    let src = r#"
+        RULE r:
+            WHEN x a
+            THEN x c
+            UNLESS x p
+        RULE r:
+            WHEN x a
+            THEN x c
+            UNLESS x q
+        "#;
+    // Distinct bodies under the same name are a redefinition error (not a silent
+    // dedup) — which proves the exception is folded into the body signature.
+    assert!(cs(src).is_err());
+}
+
+#[test]
+fn premise_with_unless_is_rejected() {
+    // UNLESS is RULE-only; a PREMISE carrying one is a category error.
+    let src = r#"
+        PREMISE p:
+            WHEN x a
+            THEN x c
+            UNLESS x e
+        "#;
+    let err = cs(src).unwrap_err();
+    assert!(matches!(err, CompileError::PremiseException { .. }));
+}
+
+#[test]
 fn rule_with_or_consequent_is_rejected() {
     // A rule cannot derive a disjunction — must be a PREMISE.
     let src = r#"
@@ -646,6 +720,20 @@ fn import_referenced_only_inside_a_premise_is_used() {
             WHEN physics.Motor over_100
             THEN x ok
         "#,
+    );
+    let c = compile("main.vrf", &r).unwrap();
+    assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
+}
+
+#[test]
+fn import_referenced_only_by_a_because_ground_is_used() {
+    // The only reference to the imported domain is a `BECAUSE physics.…` ground, so
+    // the justification's ground must count toward the unused-import lint.
+    let mut r = MemoryResolver::new();
+    r.add("physics.vrf", "DOMAIN physics\nFACT Motor over_100\n");
+    r.add(
+        "main.vrf",
+        "DOMAIN main\nIMPORT \"physics.vrf\"\nFACT x ok BECAUSE physics.Motor over_100\n",
     );
     let c = compile("main.vrf", &r).unwrap();
     assert!(c.unused_imports.is_empty(), "{:?}", c.unused_imports);
@@ -1293,6 +1381,99 @@ fn exists_over_an_undeclared_set_is_rejected() {
         panic!("expected UnknownSet");
     };
     assert_eq!(set, "handlerz");
+}
+
+#[test]
+fn exists_witness_grounds_to_one_atom() {
+    // EXISTS ... WITNESS w = ∃ over the singleton {w}: a single at-least-one clause
+    // over the one named atom, and no SET is required (an open-domain existential).
+    let src = "PREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 1);
+    assert!(c.atoms.contains(&key("auth", "is", Some("ready"))));
+}
+
+#[test]
+fn exists_witness_matches_a_singleton_set() {
+    // Oracle: the witness form produces the same clauses/atoms as EXISTS over a
+    // one-element SET {auth} — a witness is just the author naming that element.
+    let via_witness = cs("PREMISE p:\n    EXISTS h WITNESS auth\n        h does x\n").unwrap();
+    let via_set = cs("SET s\n    auth\nPREMISE p:\n    EXISTS h IN s\n        h does x\n").unwrap();
+    assert_eq!(via_witness.clauses.len(), 1);
+    assert_eq!(via_witness.atoms, via_set.atoms);
+}
+
+#[test]
+fn for_each_grounds_an_exists_witness_naming_the_header_binder() {
+    // FOR EACH x IN outer, the witness IS the header binder x: grounding must
+    // substitute x into the witness term (not just the condition), so element `a`
+    // witnesses `a matches a` and `b` witnesses `b matches b` — one clause each.
+    let src = "SET outer\n    a\n    b\nPREMISE p FOR EACH x IN outer:\n    EXISTS h WITNESS x\n        h matches x\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 2);
+    assert!(c.atoms.contains(&key("a", "matches", Some("a"))));
+    assert!(c.atoms.contains(&key("b", "matches", Some("b"))));
+    // The literal binder name must never leak into an atom.
+    assert!(
+        !c.atoms
+            .iter()
+            .any(|a| a.subject == "x" || a.object.as_deref() == Some("x"))
+    );
+}
+
+#[test]
+fn for_each_grounds_an_exists_over_a_set() {
+    // FOR EACH x IN outer with an EXISTS over an inner SET: the header binder is
+    // substituted into the existential's condition once per outer element, and each
+    // instance is an at-least-one over the inner set (exercises the InSet subst arm).
+    let src = "SET outer\n    a\n    b\nSET inner\n    p\n    q\nPREMISE cover FOR EACH x IN outer:\n    EXISTS h IN inner\n        x needs h\n";
+    let c = cs(src).unwrap();
+    assert_eq!(c.clauses.len(), 2);
+    assert!(c.atoms.contains(&key("a", "needs", Some("p"))));
+    assert!(c.atoms.contains(&key("b", "needs", Some("q"))));
+}
+
+#[test]
+fn exists_unwitnessed_emits_no_clause_but_records_an_advisory() {
+    // ∃ with neither SET nor WITNESS grounds to nothing (inert for the SAT core) but
+    // is recorded so the solver can raise a WARNING; the condition atom is not
+    // interned (the free binder never becomes a real atom).
+    let c = cs("PREMISE p:\n    EXISTS h\n        h is ready\n").unwrap();
+    assert_eq!(c.clauses.len(), 0);
+    assert!(c.atoms.is_empty());
+    assert_eq!(c.unwitnessed_exists.len(), 1);
+    assert_eq!(c.unwitnessed_exists[0].binder, "h");
+}
+
+#[test]
+fn fact_because_records_a_justification_and_emits_no_clause() {
+    // `FACT x a BECAUSE y b` asserts x a and records a justification citing y b. It
+    // emits no clause (the check is evaluative), and interns both the belief and the
+    // ground so the ground participates in the model.
+    let c = cs("FACT api healthy BECAUSE db reachable\n").unwrap();
+    assert_eq!(c.clauses.len(), 0);
+    assert_eq!(c.justifications.len(), 1);
+    let j = &c.justifications[0];
+    assert_eq!(j.belief, id(&c, &key("api", "healthy", None)));
+    assert_eq!(j.ground, id(&c, &key("db", "reachable", None)));
+    assert_eq!(j.origin.kind, kw::BECAUSE);
+}
+
+#[test]
+fn fact_because_interns_an_otherwise_unused_ground() {
+    // The ground need not appear anywhere else: `BECAUSE db reachable` alone must
+    // still intern `db reachable` (as an UNKNOWN atom) so the solver can read it.
+    let c = cs("FACT api healthy BECAUSE db reachable\n").unwrap();
+    assert!(c.atoms.contains(&key("db", "reachable", None)));
+    // Only the belief is a FACT; the ground is interned but not asserted.
+    assert_eq!(c.facts.len(), 1);
+}
+
+#[test]
+fn fact_without_because_records_no_justification() {
+    // A plain FACT is unchanged — the justification channel stays empty.
+    let c = cs("FACT api healthy\n").unwrap();
+    assert!(c.justifications.is_empty());
 }
 
 #[test]

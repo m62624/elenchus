@@ -5,18 +5,23 @@
 > models, in roughly equal measure. Expect non-professional design choices, rough
 > edges, broken behavior, or mistakes. Use it at your own risk.
 
-A small **SAT checker with three-valued logic** (TRUE / FALSE / UNKNOWN) for LLM
-reasoning. You write **facts** and **first principles** (premises) in a tiny
-English-like DSL; a Rust engine does the boolean bookkeeping and flags
-contradictions. The model can only get a premise wrong — never a step in a long
-chain — and that is caught mechanically.
+elenchus is a small **SAT checker** with a thin **English-like DSL** on top, meant to
+be driven by an LLM. You write **facts** and **first principles** (premises); a Rust
+engine does the boolean bookkeeping under three-valued logic (TRUE / FALSE / UNKNOWN,
+where UNKNOWN ≠ FALSE) and reports whether they are consistent. The split is the
+point: the model supplies premises, the engine performs every inference step — so the
+model can get a premise wrong, but never a step in a long chain, and a wrong premise
+is caught mechanically.
 
-It's a *simplified* SAT checker, not SMT: just the boolean core, no arithmetic.
-That simpler DSL — plus the bundled skill that drives it — keeps it within reach
-of local LLMs, not only large hosted ones.
+It is a *simplified* SAT checker, not an SMT solver: the boolean core only, no
+arithmetic. The engine and DSL can be used directly, but the project is aimed at
+**small local models** — the reduced surface is what keeps it within their reach. It
+also runs against large hosted models; whether that is worth doing depends on the
+task. This is a consistency checker for problems that reduce to boolean constraints,
+not a general-purpose tool for every task.
 
 The name comes from *elenchus* (ἔλεγχος) — Socratic refutation by finding
-contradictions; that's just the spirit of it. Mechanically it's a small
+contradictions; that is the spirit, not the mechanism. Mechanically it is a small
 consistency/SAT checker, not a dialogue.
 
 > **Full specification:** [`docs/SPEC.md`](docs/SPEC.md) — the epistemic basis
@@ -38,175 +43,116 @@ Given a `.vrf` program it returns one of four verdicts (and a matching exit code
 The intended loop: run → if not `CONSISTENT`, add the missing facts or rethink the
 premises → re-run until `CONSISTENT`.
 
+## Under the hood
+
+No ML inside — the engine is a pipeline of small, classic algorithms:
+
+| Job | Algorithm |
+|-----|-----------|
+| parsing `.vrf` text | parser combinators (nom), one statement per line |
+| syntax errors | every error found in one pass, grouped by keyword; "did you mean" hints via Levenshtein distance |
+| atoms (`app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
+| deriving facts from `RULE`s | forward chaining to a fixpoint |
+| truth values | three-valued Kleene logic (TRUE / FALSE / UNKNOWN — "unknown" is not "false") |
+| `CHECK … BIDIRECTIONAL` | a small CDCL SAT solver (same algorithm family as MiniSat / varisat) |
+| "is the answer pinned down?" | model enumeration with blocking clauses, counted up to two |
+| "which lines are to blame" | assumption-based unsat core, then deletion minimization — the blamed set is irreducible |
+| `fix:` suggestions (drop / flip) | every suggested fix is re-solved first and only shown if it actually restores consistency |
+| `TRY` hypotheses | one bounded side-solve per hypothesis — the engine checks candidates, it never searches for them |
+| `BECAUSE` / `UNLESS` / `WITNESS` / `KNOWS` | direct lookups against the settled model, constant work per line |
+| typo hints | Levenshtein distance between atom names |
+
+Details (and the exact SAT-core feature list) live in
+[`crates/elenchus-solver`](crates/elenchus-solver).
+
 ## Example
 
-A claim that looks isolated, but collides with a chain of ordinary first
-principles three steps away — the kind of thing a model loses track of reading
-top to bottom. ([`docs/examples/socrates.vrf`](docs/examples/socrates.vrf).)
+Three ordinary facts, each fine in isolation, that collide two inference steps apart —
+the kind of thing a model loses track of reading a file top to bottom. `app` pulls in
+`orm_v2` (which forces an async runtime, hence `tokio`) and `legacy_io` (which forces
+a `blocking` runtime), while a premise forbids running both at once. The engine chains
+the rules forward and reports the exact path to the contradiction.
 
 ```vrf
-DOMAIN philosophy
-FACT socrates is human
-FACT socrates is immortal        // the claim being cross-examined
+// runtime.vrf
+DOMAIN build
+FACT app uses orm_v2
+FACT app uses legacy_io
 
-RULE humans_are_animals:
-    WHEN socrates is human
-    THEN socrates is animal
-RULE animals_are_living:
-    WHEN socrates is animal
-    THEN socrates is living
-RULE living_things_are_mortal:
-    WHEN socrates is living
-    THEN socrates is mortal
+RULE orm_needs_async:                 // orm_v2 => an async runtime
+    WHEN app uses orm_v2
+    THEN app needs async_runtime
+RULE async_is_tokio:                  // async runtime => tokio
+    WHEN app needs async_runtime
+    THEN app runtime_is tokio
 
-PREMISE mortal_xor_immortal:        // can't be both
-    EXCLUSIVE
-        socrates is mortal
-        socrates is immortal
+RULE io_needs_blocking:               // legacy_io => a blocking runtime, by default
+    WHEN app uses legacy_io
+    THEN app runtime_is blocking
+    UNLESS app has compat_shim        // ...unless a compat shim is present
 
-CHECK socrates
+PREMISE one_runtime:                  // the two runtimes are mutually exclusive
+    FORBIDS
+        app runtime_is tokio
+        app runtime_is blocking
+
+CHECK app
 ```
 
-The engine derives `mortal` through the chain, then catches that it can't coexist
-with the asserted `immortal`:
-
 ```console
-$ elenchus-cli socrates.vrf
+$ elenchus-cli runtime.vrf
 RESULT: CONFLICT
-  CONFLICT  mortal_xor_immortal (EXCLUSIVE)  [socrates.vrf:31]
-      philosophy.socrates is mortal
-      philosophy.socrates is immortal
+  CONFLICT  one_runtime (FORBIDS)  [runtime.vrf:18]
+      build.app runtime_is tokio
+      build.app runtime_is blocking
       why:
-        philosophy.socrates is human = TRUE   [FACT socrates.vrf:15]
-        philosophy.socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:19]  <= philosophy.socrates is human
-        philosophy.socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:23]  <= philosophy.socrates is animal
-        philosophy.socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:27]  <= philosophy.socrates is living
-        philosophy.socrates is immortal = TRUE   [FACT socrates.vrf:16]
-  DERIVED   philosophy.socrates is animal = TRUE   from humans_are_animals (RULE)  [socrates.vrf:19]
-  DERIVED   philosophy.socrates is living = TRUE   from animals_are_living (RULE)  [socrates.vrf:23]
-  DERIVED   philosophy.socrates is mortal = TRUE   from living_things_are_mortal (RULE)  [socrates.vrf:27]
+        build.app uses orm_v2 = TRUE   [FACT runtime.vrf:3]
+        build.app needs async_runtime = TRUE   from orm_needs_async (RULE)  [runtime.vrf:6]  <= build.app uses orm_v2
+        build.app runtime_is tokio = TRUE   from async_is_tokio (RULE)  [runtime.vrf:9]  <= build.app needs async_runtime
+        build.app uses legacy_io = TRUE   [FACT runtime.vrf:4]
+        build.app runtime_is blocking = TRUE   from io_needs_blocking (RULE)  [runtime.vrf:13]  <= build.app uses legacy_io
+  DERIVED   build.app needs async_runtime = TRUE   from orm_needs_async (RULE)  [runtime.vrf:6]
+  DERIVED   build.app runtime_is tokio = TRUE   from async_is_tokio (RULE)  [runtime.vrf:9]
+  DERIVED   build.app runtime_is blocking = TRUE   from io_needs_blocking (RULE)  [runtime.vrf:13]
 SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 3 derived
 EXIT_CODE: 2
 ```
 
-The DSL: every file opens with `DOMAIN <name>` (the identity namespace of its
-atoms); `FACT`/`NOT` assert TRUE/FALSE (anything unstated is UNKNOWN, not false);
-`ASSUME` adds a soft, retractable hypothesis (on a clash the engine says which to
-drop, never blaming a fact); `PREMISE` states a checked first principle
-(`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, `EXISTS … IN` a set, or `WHEN … THEN`);
-`RULE` derives facts; `SET` + `FOR EACH` quantify a body over a set or relation, and
-`CLOSE <rel> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC` closes a relation at
-compile time; `IMPORT` reuses another domain (its atoms are `<domain>.<atom>`);
-`CHECK` (optionally `BIDIRECTIONAL`) runs it. See SPEC.md for the grammar — including
-**Performance**, which explains why the grammar makes a blow-up unrepresentable.
+The `why:` trace is the point: it names every step from the two root facts down to the
+clash, so the contradiction is located mechanically rather than by eye.
 
-### Multi-step example — iterate to CONSISTENT
-
-The real workflow: start with a broken program, read the conflict, fix it, re-run.
-The model believes auth is optional, but a rule says an external service *must*
-authenticate — a contradiction the engine catches and explains.
-
-```vrf
-// service.vrf
-DOMAIN net
-FACT service_api is external
-FACT api_auth is optional
-
-RULE auth_rule:                       // external ⇒ auth is required
-    WHEN service_api is external
-    THEN api_auth is required
-
-PREMISE auth_state:                   // auth can't be both optional and required
-    EXCLUSIVE
-        api_auth is required
-        api_auth is optional
-
-CHECK service_api
-```
-
-**Step 1 — first run, conflict detected.** The `why:` trace gives the exact chain:
-`external` forces `required` through the rule, which collides with the asserted
-`optional`. (Atoms print with their domain, `net.…`.)
+**The fix — establish the exception.** `io_needs_blocking` is a *default* (`UNLESS`):
+it derives `blocking` only while `compat_shim` is not established. Adding
+`FACT app has compat_shim` (below the two facts) defeats that default, the `blocking`
+derivation is retracted, and the conflict is gone — this is the one non-monotonic
+construct in the DSL, so the same rules now settle instead of clashing:
 
 ```console
-$ elenchus-cli service.vrf
-RESULT: CONFLICT
-  CONFLICT  auth_state (EXCLUSIVE)  [service.vrf:10]
-      net.api_auth is required
-      net.api_auth is optional
-      why:
-        net.service_api is external = TRUE   [FACT service.vrf:3]
-        net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:6]  <= net.service_api is external
-        net.api_auth is optional = TRUE   [FACT service.vrf:4]
-  DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:6]
-SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
-EXIT_CODE: 2
-```
-
-**Step 2 — fix: drop the wrong `FACT api_auth is optional`, re-run.** The rule
-still derives `required`, and now nothing contradicts it (line numbers shift up
-because the fact was removed):
-
-```console
-$ elenchus-cli service.vrf
+$ elenchus-cli runtime.vrf         # after adding `FACT app has compat_shim`
 RESULT: CONSISTENT
-  DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:5]
-SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+  DERIVED   build.app needs async_runtime = TRUE   from orm_needs_async (RULE)  [runtime.vrf:7]
+  DERIVED   build.app runtime_is tokio = TRUE   from async_is_tokio (RULE)  [runtime.vrf:10]
+  DEFEATED  io_needs_blocking (RULE)  [runtime.vrf:14]   default build.app runtime_is blocking suppressed by build.app has compat_shim
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 2 derived, 1 defeated
 EXIT_CODE: 0
 ```
 
-**Step 3 — add an undecided cache choice (an `EXCLUSIVE` over `cached`/`uncached`)
-and ask `CHECK … BIDIRECTIONAL`.** It is satisfiable but no longer unique — the
-backward pass says so and suggests how to pin it:
-
-```console
-$ elenchus-cli service.vrf
-RESULT: UNDERDETERMINED
-  UNDERDETERMINED  an alternative model exists
-      pin it down: add  FACT net.service_api is uncached  or  NOT net.service_api is uncached
-  DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:5]
-SUMMARY: 0 conflicts, 1 underdetermined, 0 warnings, 1 derived
-EXIT_CODE: 1
-```
-
-UNDERDETERMINED means satisfiable but not fully pinned — add the missing fact and
-re-run until CONSISTENT.
-
-### Trying a hypothesis — `ASSUME`
-
-Sometimes you want to *test* a guess without committing to it. `ASSUME` is a soft
-fact: it takes part in the check like a `FACT`, but if the guesses can't all hold,
-the engine tells you which to drop — and never blames a real `FACT`/`PREMISE`.
-
-```vrf
-// service.vrf
-DOMAIN net
-FACT service_api is external
-RULE auth_rule:
-    WHEN service_api is external
-    THEN api_auth is required
-PREMISE auth_state:
-    EXCLUSIVE
-        api_auth is required
-        api_auth is optional
-ASSUME api_auth is optional           // what if we made auth optional here?
-CHECK service_api
-```
-
-```console
-$ elenchus-cli service.vrf
-RESULT: CONFLICT
-  RETRACT  your FACTs and PREMISEs are fine.
-      But these ASSUME guesses cannot all be true together.
-      Remove or flip ONE of them, then check again:
-      ASSUME net.api_auth is optional   [service.vrf:11]
-  DERIVED   net.api_auth is required = TRUE   from auth_rule (RULE)  [service.vrf:4]
-SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 1 derived
-EXIT_CODE: 2
-```
-
-The verdict stays CONFLICT, but the fix is "drop the hypothesis", not "a fact is
-wrong" — the engine did the backtracking for you.
+The rest of the vocabulary follows the same shape — one keyword per line, CAPS keyword
+first. Every file opens with `DOMAIN <name>` (the namespace of its atoms); `FACT`/`NOT`
+assert TRUE/FALSE (anything unstated is UNKNOWN, not false), optionally
+`FACT … BECAUSE …` to name a ground; `ASSUME` adds a soft, retractable hypothesis (on a
+clash the engine says which to drop, never blaming a `FACT`); `PREMISE` states a checked
+first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, `EXISTS … IN` a set or
+`EXISTS … WITNESS` a named element, or `WHEN … THEN`); `RULE` derives facts, and
+`RULE … UNLESS` makes it a default with exceptions; `SET` + `FOR EACH` quantify a body
+over a set or relation, and `CLOSE <rel> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC`
+closes a relation at compile time; `TRY` reports whether a candidate would pin an open
+model without committing it; `KNOWS`/`BELIEVES` attribute a claim to a named agent
+(knowledge is factive, belief is not); `IMPORT` reuses another domain (its atoms are
+`<domain>.<atom>`); `CHECK` (optionally `BIDIRECTIONAL`) runs it. See
+[`docs/SPEC.md`](docs/SPEC.md) for the grammar and every construct in full — including
+**Performance**, which explains why the grammar makes a blow-up unrepresentable, and
+[`docs/examples/`](docs/examples) for runnable programs.
 
 ## Install
 

@@ -8,20 +8,22 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use elenchus_parser::{Atom, Body, Conn, ListOp, Located, Quant, Statement, kw};
+use elenchus_parser::{
+    Atom, Body, Conn, ExistsDomain, ListOp, Literal, Located, Quant, Statement, kw,
+};
 
 use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Check, Clause, Compiled, Fact, Lit, Origin, PlaceholderInfo,
-    PlaceholderStatus, PortBinding, Rule, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit,
+    Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawClause, RawFact, RawLit, RawRule, canonical_body, clause_sig, key_sig, list_kind, quant_sig,
-    raw_lits,
+    RawAttribution, RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule,
+    canonical_body, clause_sig, key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -76,6 +78,18 @@ pub struct Compiler {
     /// They join the same conflict pool as external `--set`/API values in
     /// [`Compiler::resolve_ports`].
     provides: Vec<(PortRef, PortBinding)>,
+    /// `EXISTS` premises that named no candidate (neither `SET` nor `WITNESS`).
+    /// Inert for the SAT core (no clause), carried to the report as WARNINGs.
+    unwitnessed_exists: Vec<UnwitnessedExists>,
+    /// `FACT … BECAUSE <ground>` justifications. Inert for the SAT core (no clause);
+    /// the solver checks the ground's value (FALSE → CONFLICT, UNKNOWN → WARNING).
+    justifications: Vec<RawJustification>,
+    /// `TRY <literal>` hypotheses. Never committed to the model (no clause, no fact);
+    /// the solver runs one side-solve per hypothesis and reports the outcome.
+    hypotheses: Vec<RawHypothesis>,
+    /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
+    /// clause, no fact); the solver checks each against the world model per agent.
+    attributions: Vec<RawAttribution>,
 }
 
 impl Compiler {
@@ -153,7 +167,7 @@ impl Compiler {
                         elements.iter().map(|e| e.data.to_string()).collect(),
                     );
                 }
-                Statement::Fact(a) => {
+                Statement::Fact { atom: a, .. } => {
                     // Only a 3-part fact (`a rel b`) declares a relation pair; a bare
                     // proposition or a 2-word fact has no object (hence no predicate
                     // pair to record).
@@ -194,7 +208,12 @@ impl Compiler {
         match stmt {
             // Handled by `add_source` / `load_recursive`, never reach here.
             Statement::Import { .. } | Statement::Domain(_) => {}
-            Statement::Fact(a) => self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?,
+            Statement::Fact { atom: a, because } => {
+                self.add_fact(source, a, Value::True, kw::FACT, false, ctx)?;
+                if let Some(ground) = because {
+                    self.add_justification(source, a, ground, ctx)?;
+                }
+            }
             Statement::Negation(a) => {
                 self.add_fact(source, a, Value::False, kw::NOT, false, ctx)?
             }
@@ -212,6 +231,16 @@ impl Compiler {
                     span: l.span,
                 };
                 self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
+            }
+            Statement::Try(l) => {
+                self.add_hypothesis(source, l, ctx)?;
+            }
+            Statement::Knows {
+                agent,
+                hypo,
+                factive,
+            } => {
+                self.add_attribution(source, agent, hypo, *factive, ctx)?;
             }
             Statement::Check {
                 subject,
@@ -309,6 +338,90 @@ impl Compiler {
                 kind,
             },
             soft,
+        });
+        Ok(())
+    }
+
+    /// Record a `FACT … BECAUSE <ground>` justification. The belief atom is already
+    /// interned by the preceding [`Compiler::add_fact`]; the ground is interned here
+    /// so it participates in the model (an otherwise-unconstrained ground stays
+    /// UNKNOWN → the solver reports it rather than silently forcing it true). No
+    /// clause is emitted — the check is evaluative, done by the solver.
+    fn add_justification(
+        &mut self,
+        source: &str,
+        belief: &Located<Atom>,
+        ground: &Located<Atom>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let belief_key = ctx.key(&belief.data)?;
+        let ground_key = ctx.key(&ground.data)?;
+        self.intern(&ground_key);
+        self.justifications.push(RawJustification {
+            belief: belief_key,
+            ground: ground_key,
+            origin: Origin {
+                source: source.to_string(),
+                line: belief.span.location_line(),
+                premise: None,
+                kind: kw::BECAUSE,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `TRY <literal>` hypothesis. The candidate atom is interned here so it
+    /// has a SAT variable in the side-solve (an otherwise-unmentioned atom would have
+    /// no id). No fact and no clause are emitted — the hypothesis never enters the
+    /// model or the verdict; the solver only re-solves the program *plus* this literal
+    /// and reports whether it closes the open gap.
+    fn add_hypothesis(
+        &mut self,
+        source: &str,
+        lit: &Located<Literal>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        self.hypotheses.push(RawHypothesis {
+            key,
+            negated: lit.data.negated,
+            origin: Origin {
+                source: source.to_string(),
+                line: lit.span.location_line(),
+                premise: None,
+                kind: kw::TRY,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `KNOWS`/`BELIEVES <agent> <literal>` attribution. The claimed atom is
+    /// interned so it has a SAT variable to read from the settled model; the agent is
+    /// a bare label and is **not** interned (it never becomes an atom or a clause). No
+    /// fact and no clause are emitted — the attribution is evaluative: the solver
+    /// checks the atom's model value per agent and reports, never forcing it.
+    fn add_attribution(
+        &mut self,
+        source: &str,
+        agent: &Located<&str>,
+        lit: &Located<Literal>,
+        factive: bool,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        self.attributions.push(RawAttribution {
+            agent: agent.data.to_string(),
+            key,
+            negated: lit.data.negated,
+            factive,
+            origin: Origin {
+                source: source.to_string(),
+                line: agent.span.location_line(),
+                premise: None,
+                kind: if factive { kw::KNOWS } else { kw::BELIEVES },
+            },
         });
         Ok(())
     }
@@ -424,6 +537,7 @@ impl Compiler {
                 ante_conn,
                 consequent,
                 cons_conn,
+                exceptions,
             } = body
             {
                 // A rule *derives* its consequent; an `OR` consequent is not a
@@ -434,7 +548,8 @@ impl Compiler {
                     });
                 }
                 let (ante, cons) = (raw_lits(antecedent, ctx)?, raw_lits(consequent, ctx)?);
-                for l in ante.iter().chain(cons.iter()) {
+                let exc = raw_lits(exceptions, ctx)?;
+                for l in ante.iter().chain(cons.iter()).chain(exc.iter()) {
                     self.intern(&l.key);
                 }
                 let origin = self.origin(source, line, Some(name), kw::RULE);
@@ -443,14 +558,17 @@ impl Compiler {
                     Conn::And => self.rules.push(RawRule {
                         antecedent: ante,
                         consequent: cons,
+                        exceptions: exc,
                         origin,
                     }),
-                    // (a ∨ b) → C == (a → C) ∧ (b → C): one rule per antecedent.
+                    // (a ∨ b) → C == (a → C) ∧ (b → C): one rule per antecedent. Each
+                    // split rule carries the same exceptions (they defeat every arm).
                     Conn::Or => {
                         for a in &ante {
                             self.rules.push(RawRule {
                                 antecedent: vec![a.clone()],
                                 consequent: cons.clone(),
+                                exceptions: exc.clone(),
                                 origin: origin.clone(),
                             });
                         }
@@ -503,7 +621,16 @@ impl Compiler {
                 ante_conn,
                 consequent,
                 cons_conn,
+                exceptions,
             } => {
+                // UNLESS is defeasible defaulting — it only makes sense on a RULE
+                // (which *derives*). A PREMISE is a hard constraint; an exception on
+                // it is a category error, so reject it with a teachable message.
+                if !exceptions.is_empty() {
+                    return Err(CompileError::PremiseException {
+                        name: name.to_string(),
+                    });
+                }
                 // Implication A → C as `Impossible(A_true ∧ ¬C)`. We group each
                 // side by its connective and emit one clause per (ante × cons)
                 // group pair — a uniform rule covering all AND/OR combinations:
@@ -518,17 +645,19 @@ impl Compiler {
                 }
                 let origin = self.origin(source, line, Some(name), kw::PREMISE);
 
-                let ante_groups: Vec<Vec<RawLit>> = match ante_conn {
-                    Conn::And => vec![ante.clone()],
-                    Conn::Or => ante.iter().map(|l| vec![l.clone()]).collect(),
+                // Borrow into the groups (no clone yet) — a literal is only ever
+                // cloned once, when a final clause actually needs to own it below.
+                let ante_groups: Vec<Vec<&RawLit>> = match ante_conn {
+                    Conn::And => vec![ante.iter().collect()],
+                    Conn::Or => ante.iter().map(|l| vec![l]).collect(),
                 };
-                let cons_groups: Vec<Vec<RawLit>> = match cons_conn {
-                    Conn::And => cons.iter().map(|l| vec![l.clone()]).collect(),
-                    Conn::Or => vec![cons.clone()],
+                let cons_groups: Vec<Vec<&RawLit>> = match cons_conn {
+                    Conn::And => cons.iter().map(|l| vec![l]).collect(),
+                    Conn::Or => vec![cons.iter().collect()],
                 };
                 for ag in &ante_groups {
                     for cg in &cons_groups {
-                        let mut lits = ag.clone();
+                        let mut lits: Vec<RawLit> = ag.iter().map(|l| (*l).clone()).collect();
                         for c in cg {
                             lits.push(RawLit {
                                 key: c.key.clone(),
@@ -539,28 +668,55 @@ impl Compiler {
                     }
                 }
             }
-            Body::Exists { binder, set, atom } => {
-                // ∃: at least one element of the SET satisfies the condition.
-                // Instantiate the condition per element (binder substituted) and
-                // emit a single at-least-one — exactly an `ATLEAST` whose atoms are
-                // generated from the set instead of hand-listed. Linear in `|set|`,
-                // one clause; the solver sees nothing new. The dual of a `FOR EACH`
-                // over a set (an "all"), so it resolves the set the same way.
-                let elements = match self.sets.get(set.data) {
-                    Some(els) => els.clone(),
-                    None => {
-                        return Err(CompileError::UnknownSet {
-                            file: source.to_string(),
-                            line: set.span.location_line(),
-                            set: set.data.to_string(),
-                            suggestion: nearest_set_suggestion(set.data, &self.sets),
-                        });
+            Body::Exists {
+                binder,
+                domain,
+                atom,
+            } => {
+                // Open (neither SET nor WITNESS): the existential named no candidate,
+                // so there is nothing to check. Emit no clause; record a WARNING
+                // advisory that nudges the author to name a witness. Never a blow-up
+                // — there is nothing to enumerate.
+                if let ExistsDomain::Open = domain {
+                    let key = ctx.key(&atom.data)?;
+                    let origin = self.origin(source, line, Some(name), kw::EXISTS);
+                    self.unwitnessed_exists.push(UnwitnessedExists {
+                        origin,
+                        condition: alloc::format!("{key}"),
+                        binder: binder.data.to_string(),
+                    });
+                    return Ok(());
+                }
+                // ∃: at least one candidate satisfies the condition. `IN <set>`
+                // instantiates the condition per set element; `WITNESS <term>` is
+                // the singleton {term} the author names — no SET, exactly one atom.
+                // Either way we emit a single at-least-one (an `ATLEAST` whose atoms
+                // are generated, not hand-listed); the solver sees nothing new. A
+                // witness is `∃` over `{term}`, so there is nothing to enumerate.
+                let keys: Vec<AtomKey> = match domain {
+                    ExistsDomain::InSet(set) => {
+                        let elements = match self.sets.get(set.data) {
+                            Some(els) => els.clone(),
+                            None => {
+                                return Err(CompileError::UnknownSet {
+                                    file: source.to_string(),
+                                    line: set.span.location_line(),
+                                    set: set.data.to_string(),
+                                    suggestion: nearest_set_suggestion(set.data, &self.sets),
+                                });
+                            }
+                        };
+                        elements
+                            .iter()
+                            .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
+                            .collect::<Result<_, _>>()?
                     }
+                    ExistsDomain::Witness(w) => {
+                        vec![ctx.key(&subst_atom(&atom.data, &[(binder.data, w.data)]))?]
+                    }
+                    // Handled above with an early return (no clause).
+                    ExistsDomain::Open => unreachable!("Open EXISTS emits no clause"),
                 };
-                let keys: Vec<AtomKey> = elements
-                    .iter()
-                    .map(|el| ctx.key(&subst_atom(&atom.data, &[(binder.data, el)])))
-                    .collect::<Result<_, _>>()?;
                 for k in &keys {
                     self.intern(k);
                 }
@@ -929,12 +1085,16 @@ impl Compiler {
     /// Intern all atoms (canonical sort), then lower the raw IR to ids.
     pub fn finalize(self) -> Compiled {
         let atoms: Vec<AtomKey> = self.keys.into_iter().collect(); // BTreeSet → sorted
-        let mut id_of: BTreeMap<AtomKey, AtomId> = BTreeMap::new();
-        for (i, k) in atoms.iter().enumerate() {
-            id_of.insert(k.clone(), i as AtomId);
-        }
+        // `atoms` is already sorted by `AtomKey`'s `Ord` (the same order `BTreeSet`
+        // iterated), so a binary search finds any interned key's id directly — no
+        // separate lookup map, and no cloning every key into one, is needed.
+        let id_of = |k: &AtomKey| {
+            atoms
+                .binary_search(k)
+                .expect("every referenced atom was interned") as AtomId
+        };
         let lower = |l: &RawLit| Lit {
-            atom: id_of[&l.key],
+            atom: id_of(&l.key),
             negated: l.negated,
         };
 
@@ -942,7 +1102,7 @@ impl Compiler {
             .facts
             .into_iter()
             .map(|f| Fact {
-                atom: id_of[&f.key],
+                atom: id_of(&f.key),
                 value: f.value,
                 origin: f.origin,
                 soft: f.soft,
@@ -962,6 +1122,7 @@ impl Compiler {
             .map(|r| Rule {
                 antecedent: r.antecedent.iter().map(lower).collect(),
                 consequent: r.consequent.iter().map(lower).collect(),
+                exceptions: r.exceptions.iter().map(lower).collect(),
                 origin: r.origin,
             })
             .collect();
@@ -969,7 +1130,44 @@ impl Compiler {
         let consumed = self
             .relation_consumed
             .iter()
-            .filter_map(|k| id_of.get(k).copied())
+            .filter_map(|k| atoms.binary_search(k).ok())
+            .map(|i| i as AtomId)
+            .collect();
+
+        let justifications = self
+            .justifications
+            .into_iter()
+            .map(|j| Justification {
+                belief: id_of(&j.belief),
+                ground: id_of(&j.ground),
+                origin: j.origin,
+            })
+            .collect();
+
+        let hypotheses = self
+            .hypotheses
+            .into_iter()
+            .map(|h| Hypothesis {
+                lit: Lit {
+                    atom: id_of(&h.key),
+                    negated: h.negated,
+                },
+                origin: h.origin,
+            })
+            .collect();
+
+        let attributions = self
+            .attributions
+            .into_iter()
+            .map(|a| Attribution {
+                agent: a.agent,
+                lit: Lit {
+                    atom: id_of(&a.key),
+                    negated: a.negated,
+                },
+                factive: a.factive,
+                origin: a.origin,
+            })
             .collect();
 
         Compiled {
@@ -982,6 +1180,10 @@ impl Compiler {
             unused_imports: Vec::new(), // filled by `compile` (advisory, post-resolution)
             consumed,
             placeholders: Vec::new(), // filled by `*_with` after `resolve_ports`
+            unwitnessed_exists: self.unwitnessed_exists,
+            justifications,
+            hypotheses,
+            attributions,
         }
     }
 }

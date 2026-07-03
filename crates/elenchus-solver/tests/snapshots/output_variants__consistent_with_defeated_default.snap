@@ -1,0 +1,8 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        RULE fly:\n            WHEN pengu is bird\n            THEN pengu can_fly\n            UNLESS pengu is penguin\n        FACT pengu is bird\n        FACT pengu is penguin\n        CHECK\n        \"#)"
+---
+RESULT: CONSISTENT
+  DEFEATED  fly (RULE)  [v.vrf:3]   default d.pengu can_fly suppressed by d.pengu is penguin
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 0 derived, 1 defeated
+EXIT_CODE: 0

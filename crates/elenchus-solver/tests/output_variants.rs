@@ -32,6 +32,23 @@ fn consistent_with_derived() {
     ));
 }
 
+#[test]
+fn consistent_with_defeated_default() {
+    // A defeasible RULE whose default is suppressed by an established UNLESS: the
+    // report carries an informational DEFEATED line, verdict stays CONSISTENT.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE fly:
+            WHEN pengu is bird
+            THEN pengu can_fly
+            UNLESS pengu is penguin
+        FACT pengu is bird
+        FACT pengu is penguin
+        CHECK
+        "#
+    ));
+}
+
 // --- WARNING ---------------------------------------------------------------
 
 #[test]
@@ -200,4 +217,138 @@ fn underdetermined_with_witness_hint() {
         CHECK x BIDIRECTIONAL
         "#
     ));
+}
+
+// --- EXISTS witness / unwitnessed ------------------------------------------
+
+#[test]
+fn conflict_exists_witness() {
+    // The named witness is forced false → CONFLICT blamed on the EXISTS premise.
+    insta::assert_snapshot!(report(
+        "NOT auth is ready\nPREMISE covered:\n    EXISTS h WITNESS auth\n        h is ready\n"
+    ));
+}
+
+#[test]
+fn warning_exists_unwitnessed() {
+    // EXISTS with no SET and no WITNESS → WARNING nudging to name a witness.
+    insta::assert_snapshot!(report(
+        "PREMISE someone_ready:\n    EXISTS h\n        h is ready\n"
+    ));
+}
+
+// --- FACT … BECAUSE (justification) ----------------------------------------
+
+#[test]
+fn conflict_fact_because_false() {
+    // The cited ground is FALSE → CONFLICT, with a trace explaining why.
+    insta::assert_snapshot!(report(
+        "NOT db reachable\nFACT api healthy BECAUSE db reachable\nCHECK api\n"
+    ));
+}
+
+#[test]
+fn warning_fact_because_unknown() {
+    // The cited ground is UNKNOWN → WARNING nudging to establish it.
+    insta::assert_snapshot!(report("FACT api healthy BECAUSE db reachable\nCHECK api\n"));
+}
+
+// --- TRY (abduction / L5) --------------------------------------------------
+
+#[test]
+fn try_closes_the_gap() {
+    // An open model (a RULE whose antecedent is free): TRYing the antecedent pins
+    // it, so the engine reports the hypothesis would close the gap. Verdict stays
+    // UNDERDETERMINED — TRY is advisory, it never commits the candidate.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        CHECK BIDIRECTIONAL
+        TRY deploys is_ready
+        "#
+    ));
+}
+
+#[test]
+fn try_conflicts_with_established() {
+    // A hypothesis that contradicts a FACT: the engine reports it would conflict.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT deploys is_ready
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        CHECK BIDIRECTIONAL
+        TRY NOT deploys is_ready
+        "#
+    ));
+}
+
+#[test]
+fn try_leaves_it_still_open() {
+    // A hypothesis that pins one part but leaves another free: the model is still
+    // not unique, so the engine reports the gap stays open.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        RULE gate2:
+            WHEN backup done
+            THEN backup safe
+        CHECK BIDIRECTIONAL
+        TRY deploys is_ready
+        "#
+    ));
+}
+
+// --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
+
+#[test]
+fn knows_a_falsehood_is_a_conflict() {
+    // Knowledge is factive (axiom T): you cannot know what the world establishes
+    // FALSE. `alice KNOWS door locked` against `NOT door locked` is a CONFLICT.
+    insta::assert_snapshot!(report("NOT door locked\nKNOWS alice door locked\n"));
+}
+
+#[test]
+fn knows_a_truth_is_silent() {
+    // Knowing something the world establishes TRUE holds — no report, CONSISTENT.
+    insta::assert_snapshot!(report("FACT door locked\nKNOWS alice door locked\n"));
+}
+
+#[test]
+fn knows_the_unestablished_is_a_warning() {
+    // A knowledge claim the world has not established cannot be confirmed factive:
+    // a WARNING nudging you to assert it or downgrade to BELIEVES.
+    insta::assert_snapshot!(report("KNOWS alice door locked\n"));
+}
+
+#[test]
+fn believes_a_falsehood_is_a_false_belief() {
+    // Belief is non-factive: a false belief is reported (WARNING-level) but is never
+    // a CONFLICT — the world stays consistent, bob is simply wrong.
+    insta::assert_snapshot!(report("NOT door locked\nBELIEVES bob door locked\n"));
+}
+
+#[test]
+fn knowing_both_polarities_is_incoherent() {
+    // One agent that KNOWS both φ and ¬φ is incoherent (axiom T makes both true): a
+    // single CONFLICT, with no redundant per-claim "unconfirmed" warnings.
+    insta::assert_snapshot!(report("KNOWS a x p\nKNOWS a NOT x p\n"));
+}
+
+#[test]
+fn knows_a_negated_truth_is_silent() {
+    // Negated knowledge works: alice correctly knows the door is NOT locked.
+    insta::assert_snapshot!(report("NOT door locked\nKNOWS alice NOT door locked\n"));
+}
+
+#[test]
+fn believes_the_unestablished_is_silent() {
+    // Believing something the world has not established is allowed and unremarkable
+    // (belief is non-factive): no report, CONSISTENT.
+    insta::assert_snapshot!(report("BELIEVES bob door locked\n"));
 }

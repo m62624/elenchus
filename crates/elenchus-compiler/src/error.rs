@@ -61,6 +61,18 @@ pub enum CompileError {
         /// The offending rule name.
         name: String,
     },
+    /// A `PREMISE` carried an `UNLESS` exception. Defeasible defaulting only makes
+    /// sense on a `RULE` (which *derives* a value it can withhold); a `PREMISE` is a
+    /// hard constraint with nothing to defeat. Model it as a `RULE`, or drop the
+    /// `UNLESS`.
+    #[error(
+        "UNLESS is a RULE-only defeasible exception; premise '{name}' is a hard \
+         constraint with nothing to defeat — make it a RULE, or drop the UNLESS"
+    )]
+    PremiseException {
+        /// The offending premise name.
+        name: String,
+    },
     /// A reference used a value outside the closed set an `ONEOF` declared for that
     /// variable. Almost always a typo: the misspelling would otherwise mint a new
     /// atom that hangs in the air as UNKNOWN. Closed-world is opt-in — it only

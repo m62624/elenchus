@@ -70,6 +70,16 @@ fn then_without_literal() {
 }
 
 #[test]
+fn unless_without_literal() {
+    insta::assert_snapshot!(err(r#"
+        RULE r:
+            WHEN x a
+            THEN x b
+            UNLESS
+        "#));
+}
+
+#[test]
 fn and_literal_missing() {
     insta::assert_snapshot!(err(r#"
         PREMISE g:
@@ -273,8 +283,59 @@ fn close_with_an_unknown_kind() {
 
 #[test]
 fn exists_missing_in() {
-    // EXISTS without `IN` groups under EXISTS and shows its card once.
+    // EXISTS without `IN`/`WITNESS` groups under EXISTS and shows its card once.
     insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h handlers\n        h does x\n"));
+}
+
+#[test]
+fn exists_witness_missing_term() {
+    // `WITNESS` with no term is committed under EXISTS and points at the header.
+    insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h WITNESS\n        h does x\n"));
+}
+
+#[test]
+fn exists_missing_condition_line() {
+    // A complete EXISTS header with no condition line under it is committed to the
+    // "needs a condition line" message (covers the final EXISTS parse branch).
+    insta::assert_snapshot!(err("PREMISE p:\n    EXISTS h WITNESS auth\n"));
+}
+
+#[test]
+fn fact_because_missing_ground() {
+    // `FACT <atom> BECAUSE` with no ground atom is committed under BECAUSE (its
+    // message leads with the keyword), so it groups there and shows the BECAUSE card.
+    insta::assert_snapshot!(err("FACT api healthy BECAUSE\n"));
+}
+
+#[test]
+fn knows_missing_agent() {
+    // `KNOWS` commits on its keyword, then needs an agent name — a bare `NOT` (a
+    // reserved word) is not one, so it fails under KNOWS with the agent-name message.
+    insta::assert_snapshot!(err("KNOWS NOT door locked\n"));
+}
+
+#[test]
+fn knows_missing_atom() {
+    // An agent with no atom after it: `KNOWS` expects a claim to attribute.
+    insta::assert_snapshot!(err("KNOWS alice\n"));
+}
+
+#[test]
+fn knows_atom_not_an_identifier() {
+    // A non-identifier where the claimed atom should be (a digit cannot start one).
+    insta::assert_snapshot!(err("KNOWS alice 9\n"));
+}
+
+#[test]
+fn knows_trailing_text() {
+    // A fourth word past the atom triple is unexpected text after the KNOWS atom.
+    insta::assert_snapshot!(err("KNOWS alice a b c d\n"));
+}
+
+#[test]
+fn believes_missing_agent() {
+    // `BELIEVES` shares the tail with `KNOWS`; a missing agent fails under BELIEVES.
+    insta::assert_snapshot!(err("BELIEVES NOT x y\n"));
 }
 
 #[test]

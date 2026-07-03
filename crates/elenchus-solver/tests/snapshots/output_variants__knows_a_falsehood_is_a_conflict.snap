@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(\"NOT door locked\\nKNOWS alice door locked\\n\")"
+---
+RESULT: CONFLICT
+  CONFLICT  - (KNOWS)  [v.vrf:3]
+      alice cannot know d.door locked — it is FALSE
+      why:
+        d.door locked = FALSE   [NOT v.vrf:2]
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2
