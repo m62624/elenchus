@@ -123,14 +123,15 @@ impl VarOrder {
 
     /// Remove and return the highest-priority variable, or `None` when empty.
     fn pop(&mut self, activity: &[f64]) -> Option<Var> {
-        let top = *self.heap.first()?;
-        self.pos[top as usize] = NOT_IN_HEAP;
-        let last = self.heap.pop().expect("non-empty: first() succeeded");
-        if !self.heap.is_empty() {
-            self.heap[0] = last;
-            self.pos[last as usize] = 0;
-            self.sift_down(activity, 0);
+        let last = self.heap.pop()?;
+        if self.heap.is_empty() {
+            self.pos[last as usize] = NOT_IN_HEAP; // `last` was the root itself
+            return Some(last);
         }
+        let top = core::mem::replace(&mut self.heap[0], last);
+        self.pos[top as usize] = NOT_IN_HEAP;
+        self.pos[last as usize] = 0;
+        self.sift_down(activity, 0);
         Some(top)
     }
 
@@ -321,7 +322,7 @@ impl Solver {
         while self.qhead < self.trail.len() {
             let p = self.trail[self.qhead];
             self.qhead += 1;
-            self.stats.propagations += 1;
+            self.stats.propagations = self.stats.propagations.saturating_add(1);
             if let Some(cref) = self.propagate_lit(p) {
                 return Some(cref);
             }
@@ -423,7 +424,7 @@ impl Solver {
     /// Learn an asserting clause from `conflict` and return (clause, backjump level).
     /// Uses the reusable `seen`/`touched` buffers and restores both on exit.
     fn analyze(&mut self, conflict: usize) -> (Vec<SatLit>, u32) {
-        self.stats.conflicts += 1;
+        self.stats.conflicts = self.stats.conflicts.saturating_add(1);
         let cur_level = self.current_level();
         let mut learned: Vec<SatLit> = vec![SatLit(0)]; // slot 0 = asserting literal
         // Borrow the scratch buffer for this call (it is empty on entry/exit), so a
@@ -432,11 +433,10 @@ impl Solver {
         let mut touched: Vec<Var> = core::mem::take(&mut self.touched);
         let mut counter = 0usize;
         let mut idx = self.trail.len();
-        let mut p: Option<SatLit> = None;
+        let mut start = 0; // conflict clause: scan all; reason clauses: slot 0 is the resolved literal
         let mut confl = conflict;
 
-        loop {
-            let start = if p.is_some() { 1 } else { 0 }; // a reason clause has p at index 0
+        let uip = loop {
             for j in start..self.clauses[confl].len() {
                 let q = self.clauses[confl][j];
                 let v = q.var() as usize;
@@ -461,16 +461,16 @@ impl Solver {
             let lit = self.trail[idx];
             self.seen[lit.var() as usize] = false;
             counter -= 1;
-            p = Some(lit);
             if counter == 0 {
-                break;
+                break lit; // the sole current-level literal left = the first UIP
             }
+            start = 1;
             confl = match self.reason[lit.var() as usize] {
                 Reason::Long(c) => c,
                 _ => unreachable!("a resolved current-level literal must have a clause reason"),
             };
-        }
-        learned[0] = p.unwrap().negate();
+        };
+        learned[0] = uip.negate();
         if self.config.ccmin {
             self.minimize_learned(&mut learned);
         }
@@ -482,7 +482,10 @@ impl Solver {
             self.seen[v as usize] = false; // restore the scratch buffer
         }
         self.touched = touched; // give the (now empty) buffer back for next time
-        self.stats.learned_literals += learned.len() as u64;
+        self.stats.learned_literals = self
+            .stats
+            .learned_literals
+            .saturating_add(learned.len() as u64);
         (learned, backjump)
     }
 
@@ -643,7 +646,7 @@ impl Solver {
                 return Decision::UnsatCore(self.analyze_final(p.negate()));
             } else {
                 self.decisions.push(self.trail.len());
-                self.stats.decisions += 1;
+                self.stats.decisions = self.stats.decisions.saturating_add(1);
                 self.enqueue(p, Reason::Decision);
                 return Decision::Propagated;
             }
@@ -652,7 +655,7 @@ impl Solver {
             None => Decision::Sat,
             Some(lit) => {
                 self.decisions.push(self.trail.len());
-                self.stats.decisions += 1;
+                self.stats.decisions = self.stats.decisions.saturating_add(1);
                 self.enqueue(lit, Reason::Decision);
                 Decision::Propagated
             }
@@ -771,4 +774,37 @@ impl Solver {
     }
 }
 
-// --- public API ------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The work counters pin at `u64::MAX` instead of panicking (debug) or
+    /// silently wrapping (release). With plain `+=` this test dies with an
+    /// overflow panic on the very first decision.
+    #[test]
+    fn stats_saturate_at_u64_max() {
+        // UNSAT over two vars: exercises every counter at least once
+        // (a decision, propagations, a conflict, a learned clause).
+        let a = SatLit::positive(0);
+        let b = SatLit::positive(1);
+        let mut cnf = Cnf::new(2);
+        cnf.clauses.push(vec![a, b]);
+        cnf.clauses.push(vec![a, b.negate()]);
+        cnf.clauses.push(vec![a.negate(), b]);
+        cnf.clauses.push(vec![a.negate(), b.negate()]);
+
+        let mut s = Solver::new(&cnf);
+        s.stats = Stats {
+            decisions: u64::MAX,
+            propagations: u64::MAX,
+            conflicts: u64::MAX,
+            learned_literals: u64::MAX,
+        };
+        assert!(s.run().is_err(), "the formula is UNSAT");
+        let saturated = s.stats();
+        assert_eq!(saturated.decisions, u64::MAX);
+        assert_eq!(saturated.propagations, u64::MAX);
+        assert_eq!(saturated.conflicts, u64::MAX);
+        assert_eq!(saturated.learned_literals, u64::MAX);
+    }
+}

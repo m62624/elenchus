@@ -46,6 +46,12 @@ use solver::Solver;
 /// on any machine** — unlike wall-clock time, they are an honest performance
 /// metric on shared/noisy hardware (CI). Tests compare them across solving
 /// strategies to prove one does strictly less work than another.
+///
+/// All increments are saturating: a counter that reaches [`u64::MAX`] pins
+/// there instead of panicking (debug) or silently wrapping (release), so a
+/// value always reads as "at least this much work". Saturation is unreachable
+/// in practice — at 10⁹ increments per second it takes ~584 years — the
+/// arithmetic is total purely so no build profile can misbehave.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     /// Literals decided on (assumptions and VSIDS branches alike).
