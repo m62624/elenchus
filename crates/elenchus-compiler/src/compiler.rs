@@ -197,10 +197,22 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compile one already-resolved file's statements under its domain context.
+    /// Phase A of the two-phase multi-file compile: collect one resolved file's
+    /// grounding declarations (`SET`s and relation pairs) into the registries.
+    /// Runs for *every* file before any file grounds, so a qualified
+    /// `FACT other.a rel b` in a later file (the importer) is already in
+    /// `other`'s relation when `other`'s `FOR EACH`/`CLOSE` runs in phase B.
+    pub(crate) fn collect_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
+        let program = parse_tagged(&file.path, &file.content)?;
+        self.collect_decls(&program, &file.ctx)
+    }
+
+    /// Phase B: compile one already-resolved file's statements under its domain
+    /// context — closures first (over the phase-A-complete registries), then
+    /// the statement loop. [`Compiler::collect_resolved`] must have run for
+    /// every file of the graph beforehand.
     pub(crate) fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
         let program = parse_tagged(&file.path, &file.content)?;
-        self.collect_decls(&program, &file.ctx)?;
         self.apply_closures(&program, &file.path, &file.ctx)?;
         for stmt in &program.statements {
             match stmt {

@@ -139,6 +139,14 @@ pub fn compile_with<R: Resolver>(
 ) -> Result<Compiled, CompileError> {
     let (files, unused_imports) = resolve_graph(root, resolver)?;
     let mut c = Compiler::new();
+    // Two phases (the same shape as the deferred port/closed-world passes
+    // below): first collect every file's grounding declarations, then ground.
+    // This is what lets a fact in an importing file feed an imported
+    // template's FOR EACH/CLOSE — the template grounds only after the whole
+    // graph's relation pairs are known.
+    for file in &files {
+        c.collect_resolved(file)?;
+    }
     for file in &files {
         c.add_resolved(file)?;
     }
