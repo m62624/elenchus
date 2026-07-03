@@ -26,6 +26,7 @@ CHECK x"                                          # inline, multi-line
 $ printf 'DOMAIN d\nFACT x a\nNOT x a\nCHECK x\n' | elenchus-cli -   # stdin, one line
 $ elenchus-cli program.vrf --format json          # machine-readable, one line out
 $ elenchus-cli broken.vrf --max-per-class 3       # cap places shown per error class
+$ elenchus-cli slow.vrf --max-conflicts 100000    # safety valve (exit 3 if exceeded)
 ```
 
 `--text` and a file are mutually exclusive; with no input at all the CLI prints help
@@ -39,6 +40,9 @@ Exit code doubles as a CI gate:
 | 0 | CONSISTENT |
 | 1 | UNDERDETERMINED or WARNING |
 | 2 | CONFLICT, or a parse/compile error |
+| 3 | `--max-conflicts` budget exceeded — the check did **not** finish, no verdict |
+
+**`--max-conflicts`** — safety valve, only set if a check hangs. Aborts (exit 3, no verdict) if the solver needs more SAT conflicts than this (`0` or omitted = unlimited). Recommended: **100000**.
 
 ## Output
 
