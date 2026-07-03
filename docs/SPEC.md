@@ -584,6 +584,23 @@ others expect or produce self/back pairs by design. `CLOSE` **replaces** the
 relation's pairs with the closed set, so an edge that drops out of the closure
 (e.g. a one-way edge under `SCC`) is no longer consumed by a `FOR EACH` — by intent.
 
+**Feeding a relation across files.** A relation is identified by `(domain,
+predicate)`, and grounding declarations are collected for the *whole* import graph
+before any file grounds. So an importing file can supply edges to an imported
+template's relation by writing them **into the template's domain** —
+`FACT tmpl.taskA depends_on taskB` — and the template's `FOR EACH x depends_on y`
+and `CLOSE depends_on …` then range over the template's own pairs *plus* every
+explicitly fed one (a fed edge counts as consumed, so it is never an ORPHAN; a fed
+edge that closes a cycle under `CLOSE … TRANSITIVE` is the same `CyclicRelation`
+error). This is the template-library pattern: the vetted template owns the
+premises, quantifier and closure; the entry file is nothing but qualified `FACT`
+lines. Sharing stays explicit — a bare `FACT taskA depends_on taskB` lands in the
+entry file's own domain and feeds nothing (if nothing else references it, the
+ORPHAN lint says so). `SET`s do not cross files: a set name cannot carry a
+`domain.` prefix (unrepresentable), so a set is only ever visible in its own
+domain. `CLOSE` and `FOR EACH` likewise take only bare names, so a file can never
+close or quantify a *foreign* relation — it can only contribute data to one.
+
 **The one-binder rule (why it stays cheap).** A header carries **exactly one**
 `FOR EACH` — the grammar has no production for a second, so quantifier nesting is
 *unrepresentable* (a second `FOR EACH` does not parse). This is the structural
@@ -803,7 +820,9 @@ library's `capital` never silently collides with yours.
 Sharing is therefore **explicit**: to let an imported premise about
 `physics.Motor over_200` constrain your fact, you write that fact *into* the
 physics domain — `FACT physics.Motor over_200`. Think of the domain prefix as the
-opt-in to unification.
+opt-in to unification. The same opt-in feeds a template's *relation*: a 3-part
+`FACT tmpl.a depends_on b` joins the pairs that `tmpl`'s `FOR EACH`/`CLOSE`
+ground over (see "Feeding a relation across files" under Bounded quantification).
 
 `IMPORT "x.vrf" [AS <alias>]` makes the imported file's domain referenceable in
 the current file (under its own declared name, or under `<alias>`). Two analogy

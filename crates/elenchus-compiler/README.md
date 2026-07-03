@@ -23,8 +23,11 @@ import resolver.
 - **Bounded quantification, compile-time** — `FOR EACH … IN <set>` / `… <rel> …`
   ground the body once per element/pair (linear); `CLOSE <rel>
   TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC` closes a relation as a graph op
-  (only `TRANSITIVE` requires a DAG). All of it desugars away — **the solver is
-  never touched**, so every cost lives at compile time.
+  (only `TRANSITIVE` requires a DAG). A relation is keyed by `(domain, predicate)`
+  and its pairs are collected across the whole import graph before grounding, so
+  an importing file's qualified `FACT tmpl.a rel b` feeds an imported template's
+  quantifier/closure. All of it desugars away — **the solver is never touched**,
+  so every cost lives at compile time.
 - **Source-agnostic `IMPORT`** via a `Resolver` (`MemoryResolver`, or the
   `std`-gated `FileResolver`): a flat merge into one shared atom universe, so an
   imported premise unifies with a local fact by identity.

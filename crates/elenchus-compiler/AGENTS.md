@@ -15,6 +15,7 @@ Documents the elenchus-compiler crate — AST-to-IR pipeline, atom interning, de
 - Desugaring rules: CAPS → Impossible clauses, EXCLUSIVE → pairwise, WHEN…THEN → Impossible([A, …, NOT C]).
 - SHA-256 content-addressing: identical clauses deduped (idempotent), redefinition with different body → PremiseRedefinition error.
 - Import resolution is iterative, depth-first, with circular-import detection and per-import error recording.
+- Multi-file compile is two-phase: phase A collects every file's grounding declarations (SETs + relation pairs, keyed by `(domain, name)`), phase B applies closures and grounds in the same file order — this is what lets a qualified FACT in an importing file feed an imported template's FOR EACH/CLOSE.
 - 11 source modules: compiler.rs, data.rs, domain.rs, error.rs, ir.rs, ports.rs, resolver.rs, sig.rs, subst.rs, closure.rs.
 
 ### Read First

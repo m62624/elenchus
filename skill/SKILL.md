@@ -422,6 +422,9 @@ PREMISE diff FOR EACH x linked y:    // neighbours can't share a colour
         x is red
         y is red
 ```
+- **cross-file** — a relation is `(domain, predicate)`: an importing file feeds an
+  imported template's relation with qualified facts (`FACT tmpl.a linked b`) — see
+  the `IMPORT` card's template-library example. Bare facts stay in your own domain.
 
 ### `CLOSE <relation> <kind>` — close a relation at compile time
 - **is** — a graph closure over the relation's `FACT` pairs at **compile time** (no
@@ -438,6 +441,9 @@ FACT web depends_on api
 FACT api depends_on db
 CLOSE depends_on TRANSITIVE           // web depends_on db, transitively
 ```
+- **cross-file** — the closure runs over the template's own pairs *plus* every
+  qualified fed edge (`FACT tmpl.b depends_on c` from an importer); a fed edge that
+  closes a cycle under `TRANSITIVE` is the same compile error.
 
 ### `CHECK` / `BIDIRECTIONAL` — run it
 - **is** — runs the engine. Bare `CHECK` checks everything; `CHECK <subject>` restricts
@@ -465,6 +471,25 @@ CHECK alice BIDIRECTIONAL
 DOMAIN demo
 IMPORT "physics.vrf"
 FACT physics.Motor over_200   // a fact placed into the imported domain
+```
+- **template-library pattern** — the same explicit opt-in feeds a template's
+  *relation*: the imported template owns the premises, `FOR EACH` and `CLOSE`; your
+  entry file is nothing but qualified `FACT` edges. Fed edges are consumed (never
+  ORPHAN); `SET`s never cross files (a set name cannot take a `domain.` prefix).
+```vrf
+// deps.vrf (the vetted template)
+DOMAIN deps
+CLOSE blocks TRANSITIVE
+PREMISE no_cycle_work FOR EACH x blocks y:
+    FORBIDS
+        x in_progress now
+        y in_progress now
+
+// plan.vrf (your file: facts only)
+DOMAIN plan
+IMPORT "deps.vrf"
+FACT deps.review blocks merge      // edges fed into the template's relation
+FACT deps.build blocks review
 ```
 
 ### `VAR` / `PROVIDE` / `DEFAULT` — external ports (templating)
