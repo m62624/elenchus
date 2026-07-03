@@ -221,9 +221,19 @@ pub struct UnknownValue {
 // hold keys instead of ids.
 
 /// `" — did you mean \`x\`?"` for an undeclared set name, or empty when no
-/// declared set name is close enough.
-pub(crate) fn nearest_set_suggestion(set: &str, sets: &BTreeMap<String, Vec<String>>) -> String {
-    let names: Vec<&str> = sets.keys().map(String::as_str).collect();
+/// declared set name is close enough. Only sets of the referencing file's own
+/// `domain` are candidates — a set is never visible across domains, so a
+/// foreign name would be a false lead.
+pub(crate) fn nearest_set_suggestion(
+    set: &str,
+    domain: &str,
+    sets: &BTreeMap<(String, String), Vec<String>>,
+) -> String {
+    let names: Vec<&str> = sets
+        .keys()
+        .filter(|(d, _)| d == domain)
+        .map(|(_, n)| n.as_str())
+        .collect();
     did_you_mean(set, &names)
 }
 

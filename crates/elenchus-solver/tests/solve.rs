@@ -1085,3 +1085,65 @@ fn premise_with_unless_is_a_compile_error() {
     assert!(msg.contains("UNLESS"), "{msg}");
     assert!(msg.contains("RULE"), "{msg}");
 }
+
+// --- Cross-file relation feeding (template + facts-only entry file) ------------
+
+/// The two-file template pattern: the imported template owns the `dep`
+/// relation (closed transitively) and a FORBIDS premise over it; the entry
+/// file supplies the edges by qualifying facts into the template's domain.
+fn verify_fed(entry: &str) -> Report {
+    let mut r = MemoryResolver::new();
+    r.add(
+        "tmpl.vrf",
+        r"DOMAIN tmpl
+FACT a dep b
+CLOSE dep TRANSITIVE
+PREMISE no_hot_chain FOR EACH x dep y:
+    FORBIDS
+        x hot on
+        y hot on
+",
+    );
+    r.add("entry.vrf", entry);
+    verify("entry.vrf", &r).unwrap()
+}
+
+#[test]
+fn a_cross_file_fed_edge_is_consumed_not_orphan() {
+    // The qualified edge is read as data by the template's FOR EACH — the
+    // orphan lint must stay silent about it.
+    let rep = verify_fed(
+        "DOMAIN e\nIMPORT \"tmpl.vrf\"\nFACT tmpl.b dep c\nNOT tmpl.a hot on\nNOT tmpl.b hot on\nNOT tmpl.c hot on\nCHECK\n",
+    );
+    assert_eq!(rep.status, Status::Consistent);
+    assert!(rep.orphans.is_empty(), "{:?}", rep.orphans);
+}
+
+#[test]
+fn a_bare_entry_edge_stays_orphan() {
+    // Without the domain prefix the edge lands in the ENTRY domain, feeds
+    // nothing, and is correctly flagged as an idle fact.
+    let rep = verify_fed(
+        "DOMAIN e\nIMPORT \"tmpl.vrf\"\nFACT b dep c\nNOT tmpl.a hot on\nNOT tmpl.b hot on\nCHECK\n",
+    );
+    assert_eq!(rep.orphans.len(), 1, "{:?}", rep.orphans);
+    assert_eq!(rep.orphans[0].atom, "e.b dep c");
+}
+
+#[test]
+fn fed_transitive_closure_reaches_the_verdict() {
+    // a->b (template) + b->c (entry) close to a->c, so `a hot` and `c hot`
+    // together violate the grounded FORBIDS — a conflict only reachable
+    // through the fed, closed pair.
+    let rep = verify_fed(
+        "DOMAIN e\nIMPORT \"tmpl.vrf\"\nFACT tmpl.b dep c\nFACT tmpl.a hot on\nFACT tmpl.c hot on\nNOT tmpl.b hot on\nCHECK\n",
+    );
+    assert_eq!(rep.status, Status::Conflict);
+    assert!(
+        rep.conflicts
+            .iter()
+            .any(|c| c.origin.premise.as_deref() == Some("no_hot_chain")),
+        "{:?}",
+        rep.conflicts
+    );
+}
