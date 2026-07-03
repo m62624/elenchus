@@ -54,15 +54,20 @@ pub struct Compiler {
     /// that carry an object register here (binary atoms have no value slot to
     /// close). See [`Compiler::validate_closed_world`].
     oneof_values: BTreeMap<(String, String, String), BTreeSet<String>>,
-    /// Declared `SET <name>` collections: name → elements, used to ground a
-    /// `FOR EACH <binder> IN <name>` quantifier by instantiating the body once
-    /// per element. Populated in a pre-pass so a `FOR EACH` may reference a set
-    /// declared later in the file.
-    sets: BTreeMap<String, Vec<String>>,
-    /// Declared relation pairs: predicate → `(subject, object)` of every 3-part
-    /// `FACT`, used to ground a `FOR EACH <a> <predicate> <b>` quantifier. Also a
-    /// pre-pass, so the edges may be declared after the quantifier.
-    relations: BTreeMap<String, Vec<(String, String)>>,
+    /// Declared `SET <name>` collections, keyed by `(domain, name)`: elements
+    /// used to ground a `FOR EACH <binder> IN <name>` quantifier by instantiating
+    /// the body once per element. Populated in a pre-pass so a `FOR EACH` may
+    /// reference a set declared later in the file. A set name is a bare
+    /// identifier (no `domain.` prefix in the grammar), so a set is only ever
+    /// visible inside its own domain.
+    sets: BTreeMap<(String, String), Vec<String>>,
+    /// Declared relation pairs, keyed by `(canonical domain, predicate)`:
+    /// `(subject, object)` of every 3-part `FACT`, used to ground a
+    /// `FOR EACH <a> <predicate> <b>` quantifier. Also a pre-pass, so the edges
+    /// may be declared after the quantifier. The domain key is the *resolved*
+    /// domain of the fact's atom, so a qualified `FACT other.a rel b` feeds the
+    /// relation `rel` of `other`, not of the declaring file.
+    relations: BTreeMap<(String, String), Vec<(String, String)>>,
     /// Edge atoms consumed by a relation `FOR EACH` (e.g. each `a linked b`).
     /// They are *read as data* by the quantifier, so they are not idle facts —
     /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
@@ -112,8 +117,8 @@ impl Compiler {
             current: domain,
             aliases,
         };
-        self.collect_decls(&program);
-        self.apply_closures(&program, source)?;
+        self.collect_decls(&program, &ctx)?;
+        self.apply_closures(&program, source, &ctx)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Domain(_) => {}
@@ -135,21 +140,21 @@ impl Compiler {
         &mut self,
         program: &elenchus_parser::Program,
         source: &str,
+        ctx: &DomainCtx,
     ) -> Result<(), CompileError> {
         for stmt in &program.statements {
             if let Statement::Close { relation, kind } = stmt {
-                let pairs = self
-                    .relations
-                    .get(relation.data)
-                    .cloned()
-                    .unwrap_or_default();
+                // A CLOSE names a bare relation, so it always closes its own
+                // domain's pairs (a foreign relation is unrepresentable here).
+                let key = (ctx.current.clone(), relation.data.to_string());
+                let pairs = self.relations.get(&key).cloned().unwrap_or_default();
                 let closed = close(*kind, pairs).map_err(|node| CompileError::CyclicRelation {
                     file: source.to_string(),
                     line: relation.span.location_line(),
                     relation: relation.data.to_string(),
                     node,
                 })?;
-                self.relations.insert(relation.data.to_string(), closed);
+                self.relations.insert(key, closed);
             }
         }
         Ok(())
@@ -157,13 +162,20 @@ impl Compiler {
 
     /// Pre-pass: record every `SET` and every relation pair (3-part `FACT`) so a
     /// `FOR EACH` may reference a set or relation declared anywhere in the same
-    /// source, including after the quantifier.
-    fn collect_decls(&mut self, program: &elenchus_parser::Program) {
+    /// source, including after the quantifier. A relation pair is recorded under
+    /// the fact's *resolved* domain, so a qualified `FACT other.a rel b` feeds
+    /// `other`'s relation (an unknown prefix is the same `UnknownDomain` error
+    /// the statement pass would raise).
+    fn collect_decls(
+        &mut self,
+        program: &elenchus_parser::Program,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
         for stmt in &program.statements {
             match stmt {
                 Statement::Set { name, elements } => {
                     self.sets.insert(
-                        name.data.to_string(),
+                        (ctx.current.clone(), name.data.to_string()),
                         elements.iter().map(|e| e.data.to_string()).collect(),
                     );
                 }
@@ -172,8 +184,9 @@ impl Compiler {
                     // proposition or a 2-word fact has no object (hence no predicate
                     // pair to record).
                     if let (Some(pred), Some(obj)) = (a.data.predicate, a.data.object) {
+                        let dom = ctx.resolve(a.data.domain)?;
                         self.relations
-                            .entry(pred.to_string())
+                            .entry((dom, pred.to_string()))
                             .or_default()
                             .push((a.data.subject.to_string(), obj.to_string()));
                     }
@@ -181,13 +194,14 @@ impl Compiler {
                 _ => {}
             }
         }
+        Ok(())
     }
 
     /// Compile one already-resolved file's statements under its domain context.
     pub(crate) fn add_resolved(&mut self, file: &ResolvedFile) -> Result<(), CompileError> {
         let program = parse_tagged(&file.path, &file.content)?;
-        self.collect_decls(&program);
-        self.apply_closures(&program, &file.path)?;
+        self.collect_decls(&program, &file.ctx)?;
+        self.apply_closures(&program, &file.path, &file.ctx)?;
         for stmt in &program.statements {
             match stmt {
                 Statement::Import { .. } | Statement::Domain(_) => {}
@@ -468,14 +482,15 @@ impl Compiler {
             // the *same* desugar — linear, never a domain product (a second binder
             // is unrepresentable in the grammar).
             Some(Quant::InSet { binder, set }) => {
-                let elements = match self.sets.get(set.data) {
+                let key = (ctx.current.clone(), set.data.to_string());
+                let elements = match self.sets.get(&key) {
                     Some(els) => els.clone(),
                     None => {
                         return Err(CompileError::UnknownSet {
                             file: source.to_string(),
                             line: set.span.location_line(),
                             set: set.data.to_string(),
-                            suggestion: nearest_set_suggestion(set.data, &self.sets),
+                            suggestion: nearest_set_suggestion(set.data, &ctx.current, &self.sets),
                         });
                     }
                 };
@@ -496,7 +511,7 @@ impl Compiler {
             }) => {
                 let pairs = self
                     .relations
-                    .get(predicate.data)
+                    .get(&(ctx.current.clone(), predicate.data.to_string()))
                     .cloned()
                     .unwrap_or_default();
                 for (subj, obj) in &pairs {
@@ -695,14 +710,19 @@ impl Compiler {
                 // witness is `∃` over `{term}`, so there is nothing to enumerate.
                 let keys: Vec<AtomKey> = match domain {
                     ExistsDomain::InSet(set) => {
-                        let elements = match self.sets.get(set.data) {
+                        let key = (ctx.current.clone(), set.data.to_string());
+                        let elements = match self.sets.get(&key) {
                             Some(els) => els.clone(),
                             None => {
                                 return Err(CompileError::UnknownSet {
                                     file: source.to_string(),
                                     line: set.span.location_line(),
                                     set: set.data.to_string(),
-                                    suggestion: nearest_set_suggestion(set.data, &self.sets),
+                                    suggestion: nearest_set_suggestion(
+                                        set.data,
+                                        &ctx.current,
+                                        &self.sets,
+                                    ),
                                 });
                             }
                         };
