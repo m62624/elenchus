@@ -44,6 +44,7 @@ Entry is **either** an inline `program` **or** a filesystem `path` (exactly one)
 | `format` | `"human"` \| `"json"` | output format, default `"json"` |
 | `max_classes` | integer | on a syntax error, show at most this many error classes — one per keyword (`0` or omitted = all) |
 | `max_per_class` | integer | on a syntax error, show at most this many places within each class (`0` or omitted = all) |
+| `max_conflicts` | integer | safety valve — only set if a check hangs. Aborts with an error (no verdict) if the solver needs more SAT conflicts than this (`0` or omitted = unlimited). Recommended: **100000**. |
 
 The result is one of **CONSISTENT / WARNING / UNDERDETERMINED / CONFLICT**.
 Treat anything other than CONSISTENT as *not done*: add the missing facts or
@@ -56,6 +57,8 @@ listed beneath. Every error is reported in one pass. By default you get all of
 them; `max_classes` and `max_per_class` independently cap the two dimensions
 (both default to all). The whole multi-line block is a single JSON string, so the
 wire stays valid JSON.
+
+If `max_conflicts` is exceeded, the tool returns `isError: true` with a one-line message — the check did not finish, no verdict.
 
 ## Run
 
