@@ -31,7 +31,7 @@ fn php(p: usize, h: usize) -> Cnf {
 fn solve_php_with(config: SolverConfig) -> Stats {
     let cnf = php(8, 7);
     let mut inc = Incremental::with_config(&cnf, config);
-    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
     inc.stats().clone()
 }
 
@@ -80,7 +80,7 @@ fn profiles_agree_on_pigeonhole_verdicts() {
         for config in [SolverConfig::default(), SolverConfig::TURBO] {
             let mut inc = Incremental::with_config(&cnf, config);
             assert_eq!(
-                matches!(inc.solve(&[]), Solved::Sat(_)),
+                matches!(inc.solve(&[]).unwrap(), Solved::Sat(_)),
                 sat,
                 "php({p},{h})"
             );
@@ -137,7 +137,7 @@ fn guarded_counting_work_never_exceeds_scratch() {
     // the engine's guarded counting: mint a guard, block under it, then retire.
     let count2 = |inc: &mut Incremental, assume: &[SatLit]| -> usize {
         let guard = inc.add_var();
-        let n = match inc.solve(assume) {
+        let n = match inc.solve(assume).unwrap() {
             Solved::Unsat(_) => 0,
             Solved::Sat(model) => {
                 let mut block = vec![SatLit::negative(guard)];
@@ -151,7 +151,7 @@ fn guarded_counting_work_never_exceeds_scratch() {
                 inc.add_clause(&block);
                 let mut asm = assume.to_vec();
                 asm.push(SatLit::positive(guard));
-                match inc.solve(&asm) {
+                match inc.solve(&asm).unwrap() {
                     Solved::Sat(_) => 2,
                     Solved::Unsat(_) => 1,
                 }

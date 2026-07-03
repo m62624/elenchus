@@ -110,10 +110,13 @@ pub(crate) struct Eval<'a> {
     false_beliefs: Vec<FalseBelief>,
     /// Minimal set of constructs to blame when the backward pass finds UNSAT.
     unsat_core: Vec<CoreItem>,
+    /// The run-wide conflict pool, shared with every other solver of this run.
+    /// `None` (the default) means the backward pass can never abort.
+    budget: Option<sat::Budget>,
 }
 
 impl<'a> Eval<'a> {
-    pub(crate) fn new(c: &'a Compiled) -> Self {
+    pub(crate) fn new(c: &'a Compiled, budget: Option<sat::Budget>) -> Self {
         Eval {
             c,
             model: vec![V3::Unknown; c.atoms.len()],
@@ -124,6 +127,7 @@ impl<'a> Eval<'a> {
             defeated: Vec::new(),
             false_beliefs: Vec::new(),
             unsat_core: Vec::new(),
+            budget,
         }
     }
 
@@ -383,15 +387,15 @@ impl<'a> Eval<'a> {
     /// pass may have missed). Two or more models means an alternative exists; we
     /// return the UNDERDETERMINED witness — the first constrained atom the two
     /// models disagree on.
-    pub(crate) fn backward_pass(&mut self) -> Option<String> {
+    pub(crate) fn backward_pass(&mut self) -> Result<Option<String>, sat::BudgetExhausted> {
         if !self.c.checks.iter().any(|ch| ch.bidirectional) {
-            return None;
+            return Ok(None);
         }
         let (cnf, project) = build_cnf(self.c);
-        let found = sat::models(&cnf, &project, 2);
-        match found.len() {
+        let found = sat::models_budgeted(&cnf, &project, 2, self.budget.as_ref())?;
+        Ok(match found.len() {
             0 if self.conflicts.is_empty() => {
-                self.unsat_core = minimal_unsat_core(self.c);
+                self.unsat_core = minimal_unsat_core(self.c, self.budget.as_ref())?;
                 self.conflicts.push(RawConflict {
                     origin: Origin {
                         source: String::from("<system>"),
@@ -415,7 +419,7 @@ impl<'a> Eval<'a> {
                     .or_else(|| Some(String::from("a free atom")))
             }
             _ => None,
-        }
+        })
     }
 
     /// Turn each unwitnessed `EXISTS` (an `ExistsDomain::Open` the compiler flagged)
@@ -577,8 +581,9 @@ impl<'a> Eval<'a> {
     }
 
     /// Run the backward pass, sort deterministically, and assemble the report.
-    pub(crate) fn finish(mut self) -> Report {
-        let underdetermined = self.backward_pass();
+    /// Fails only when a conflict budget was installed and ran out.
+    pub(crate) fn finish(mut self) -> Result<Report, sat::BudgetExhausted> {
+        let underdetermined = self.backward_pass()?;
         self.conflicts.sort_by_key(|c| key(&c.origin));
         self.warnings.sort_by_key(|w| key(&w.origin));
         self.defeated.sort_by_key(|d| key(&d.origin));
@@ -610,7 +615,7 @@ impl<'a> Eval<'a> {
                 trace: self.build_trace(&rc.cause, &mut visited),
             })
             .collect();
-        Report {
+        Ok(Report {
             status,
             conflicts,
             warnings: self.warnings,
@@ -625,6 +630,6 @@ impl<'a> Eval<'a> {
             placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
             tried: Vec::new(),   // filled by `solve` (advisory, post-verdict)
             beliefs: self.false_beliefs,
-        }
+        })
     }
 }

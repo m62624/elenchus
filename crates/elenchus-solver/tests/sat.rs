@@ -135,13 +135,13 @@ fn incremental_reentrant_queries_share_one_database() {
     c.add_clause(vec![SatLit::negative(0), SatLit::positive(1)]);
     c.add_clause(vec![SatLit::negative(1), SatLit::positive(2)]);
     let mut inc = Incremental::new(&c);
-    match inc.solve(&[SatLit::positive(0)]) {
+    match inc.solve(&[SatLit::positive(0)]).unwrap() {
         Solved::Sat(m) => assert!(m[0] && m[1] && m[2]),
         Solved::Unsat(_) => panic!("chain under `a` is SAT"),
     }
     // Assuming a ∧ ¬c contradicts the chain; the core names only assumptions.
     let asm = [SatLit::positive(0), SatLit::negative(2)];
-    match inc.solve(&asm) {
+    match inc.solve(&asm).unwrap() {
         Solved::Unsat(core) => {
             assert!(!core.is_empty());
             assert!(core.iter().all(|l| asm.contains(l)));
@@ -149,7 +149,10 @@ fn incremental_reentrant_queries_share_one_database() {
         Solved::Sat(_) => panic!("a ∧ ¬c violates the chain"),
     }
     // The solver stays usable after an UNSAT query.
-    assert!(matches!(inc.solve(&[SatLit::negative(2)]), Solved::Sat(_)));
+    assert!(matches!(
+        inc.solve(&[SatLit::negative(2)]).unwrap(),
+        Solved::Sat(_)
+    ));
 }
 
 #[test]
@@ -157,13 +160,13 @@ fn incremental_added_clauses_persist_across_queries() {
     let mut c = Cnf::new(2);
     c.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
     let mut inc = Incremental::new(&c);
-    assert!(matches!(inc.solve(&[]), Solved::Sat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Sat(_)));
     inc.add_clause(&[SatLit::negative(0)]);
     inc.add_clause(&[SatLit::negative(1)]);
     // (a∨b) ∧ ¬a ∧ ¬b is now UNSAT regardless of assumptions — and stays so.
-    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
     assert!(matches!(
-        inc.solve(&[SatLit::positive(0)]),
+        inc.solve(&[SatLit::positive(0)]).unwrap(),
         Solved::Unsat(_)
     ));
 }
@@ -178,14 +181,14 @@ fn incremental_stats_count_work_and_never_reset() {
     c.add_clause(vec![SatLit::positive(a), SatLit::negative(b)]);
     c.add_clause(vec![SatLit::negative(a), SatLit::negative(b)]);
     let mut inc = Incremental::new(&c);
-    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
     let first = inc.stats().clone();
     assert!(first.decisions >= 1);
     assert!(first.propagations >= 1);
     assert!(first.conflicts >= 1);
     assert!(first.learned_literals >= 1);
     // Counters are cumulative: a second query can only grow them.
-    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
     let second = inc.stats().clone();
     assert!(second.decisions >= first.decisions);
     assert!(second.propagations >= first.propagations);
@@ -234,14 +237,14 @@ fn incremental_reuse_beats_scratch_on_work_counters() {
 
     let mut shared = Incremental::new(&c);
     for q in &queries {
-        assert!(matches!(shared.solve(q), Solved::Unsat(_)));
+        assert!(matches!(shared.solve(q).unwrap(), Solved::Unsat(_)));
     }
     let shared_conflicts = shared.stats().conflicts;
 
     let mut scratch_conflicts = 0;
     for q in &queries {
         let mut fresh = Incremental::new(&c);
-        assert!(matches!(fresh.solve(q), Solved::Unsat(_)));
+        assert!(matches!(fresh.solve(q).unwrap(), Solved::Unsat(_)));
         scratch_conflicts += fresh.stats().conflicts;
     }
     assert!(
@@ -277,7 +280,7 @@ fn budget_boundary_admits_exactly_n_conflicts() {
     let cnf = budget_php(4, 3);
 
     let mut inc = Incremental::new(&cnf);
-    let unbudgeted = inc.solve(&[]);
+    let unbudgeted = inc.solve(&[]).unwrap();
     assert!(matches!(unbudgeted, Solved::Unsat(_)));
     let needed = inc.stats().conflicts;
     assert!(needed > 0, "php(4,3) must conflict");
@@ -322,7 +325,7 @@ fn zero_budget_still_answers_conflict_free_solves() {
 fn budget_pool_is_shared_across_solves() {
     let cnf = budget_php(4, 3);
     let mut inc = Incremental::new(&cnf);
-    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    assert!(matches!(inc.solve(&[]).unwrap(), Solved::Unsat(_)));
     let needed = inc.stats().conflicts;
 
     let pool = Budget::new(needed);
@@ -364,4 +367,10 @@ fn models_budgeted_matches_models_or_aborts() {
         models_budgeted(&cnf, &project, 8, Some(&zero)),
         Err(BudgetExhausted)
     );
+}
+
+/// The abort marker renders a stable message (hosts embed it in error text).
+#[test]
+fn budget_exhausted_displays_a_stable_message() {
+    assert_eq!(format!("{BudgetExhausted}"), "conflict budget exhausted");
 }

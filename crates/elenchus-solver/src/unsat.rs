@@ -23,9 +23,12 @@ use elenchus_compiler::{Compiled, Origin, Value};
 /// ([`constructs`], [`subset_is_sat`]); the only difference is that hard
 /// constructs are pinned active. Labels carry polarity (`NOT …`) so a small
 /// model sees exactly what it assumed.
-pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
+pub(crate) fn retract_assumptions(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<CoreItem>, sat::BudgetExhausted> {
     if !c.facts.iter().any(|f| f.soft) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let all = constructs(c);
     // The first `c.facts.len()` constructs mirror `c.facts` 1:1 (see `constructs`).
@@ -35,49 +38,47 @@ pub(crate) fn retract_assumptions(c: &Compiled) -> Vec<CoreItem> {
 
     // One shared incremental solver answers every satisfiability question below.
     // All of them are verdict-only, so heuristics are on from the start.
-    let mut cs = ConstructSolver::new(c.atoms.len(), &all);
+    let mut cs = ConstructSolver::new(c.atoms.len(), &all, budget);
     cs.enable_turbo();
 
     // The hard program (drop every soft construct) must be consistent on its own,
     // else the facts/premises are to blame and we must not point at assumptions.
     let hard_only: Vec<bool> = is_soft.iter().map(|&s| !s).collect();
-    if !cs.subset_is_sat(&hard_only) {
-        return Vec::new();
+    if !cs.subset_is_sat(&hard_only)? {
+        return Ok(Vec::new());
     }
     // The full program must actually be UNSAT for there to be anything to drop.
     let mut active = vec![true; all.len()];
-    if cs.subset_is_sat(&active) {
-        return Vec::new();
+    if cs.subset_is_sat(&active)? {
+        return Ok(Vec::new());
     }
     // Deletion-minimize over the soft constructs only; hard ones stay pinned.
     for i in 0..all.len() {
         if active[i] && is_soft[i] {
             active[i] = false;
-            if cs.subset_is_sat(&active) {
+            if cs.subset_is_sat(&active)? {
                 active[i] = true; // still needed for the contradiction
             }
         }
     }
-    let mut core: Vec<CoreItem> = (0..all.len())
-        .filter(|&i| active[i] && is_soft[i])
-        .map(|i| {
-            let f = &c.facts[i];
-            // Show the assumed polarity so `ASSUME NOT x` reads as `NOT x`.
-            let label = if matches!(f.value, Value::False) {
-                alloc::format!("NOT {}", label(c, f.atom))
-            } else {
-                label(c, f.atom)
-            };
-            let fixes = fixes_for(c, &mut cs, &all, &active, i, &label);
-            CoreItem {
-                origin: f.origin.clone(),
-                label,
-                fixes,
-            }
-        })
-        .collect();
+    let mut core: Vec<CoreItem> = Vec::new();
+    for i in (0..all.len()).filter(|&i| active[i] && is_soft[i]) {
+        let f = &c.facts[i];
+        // Show the assumed polarity so `ASSUME NOT x` reads as `NOT x`.
+        let label = if matches!(f.value, Value::False) {
+            alloc::format!("NOT {}", label(c, f.atom))
+        } else {
+            label(c, f.atom)
+        };
+        let fixes = fixes_for(c, &mut cs, &all, &active, i, &label)?;
+        core.push(CoreItem {
+            origin: f.origin.clone(),
+            label,
+            fixes,
+        });
+    }
     core.sort_by_key(|it| key(&it.origin));
-    core
+    Ok(core)
 }
 
 // --- near-duplicate atom detection (advisory typo hints) -------------------
@@ -163,8 +164,10 @@ pub(crate) struct ConstructSolver {
 }
 
 impl ConstructSolver {
-    /// Load every construct's clauses, guarded by one selector each.
-    pub(crate) fn new(num_vars: usize, all: &[Construct]) -> Self {
+    /// Load every construct's clauses, guarded by one selector each. `budget`
+    /// (a clone of the run-wide pool, if any) caps the total conflicts every
+    /// query on this solver may analyze.
+    pub(crate) fn new(num_vars: usize, all: &[Construct], budget: Option<&sat::Budget>) -> Self {
         let mut cnf = sat::Cnf::new(num_vars + all.len());
         for (i, k) in all.iter().enumerate() {
             let s_neg = sat::SatLit::negative((num_vars + i) as sat::Var);
@@ -175,8 +178,10 @@ impl ConstructSolver {
                 cnf.add_clause(lits);
             }
         }
+        let mut inc = sat::Incremental::new(&cnf);
+        inc.set_budget(budget.cloned());
         ConstructSolver {
-            inc: sat::Incremental::new(&cnf),
+            inc,
             base: num_vars,
         }
     }
@@ -196,19 +201,24 @@ impl ConstructSolver {
     }
 
     /// Is the program satisfiable using only the constructs marked active?
-    pub(crate) fn subset_is_sat(&mut self, active: &[bool]) -> bool {
+    pub(crate) fn subset_is_sat(&mut self, active: &[bool]) -> Result<bool, sat::BudgetExhausted> {
         let asm: Vec<sat::SatLit> = active
             .iter()
             .enumerate()
             .filter(|&(_, &a)| a)
             .map(|(i, _)| self.selector(i))
             .collect();
-        matches!(self.inc.solve(&asm), sat::Solved::Sat(_))
+        Ok(matches!(self.inc.solve(&asm)?, sat::Solved::Sat(_)))
     }
 
     /// Like [`ConstructSolver::subset_is_sat`], but construct `i` is replaced by
     /// asserting the single literal `flipped` (its selector stays free = off).
-    fn flip_is_sat(&mut self, active: &[bool], i: usize, flipped: sat::SatLit) -> bool {
+    fn flip_is_sat(
+        &mut self,
+        active: &[bool],
+        i: usize,
+        flipped: sat::SatLit,
+    ) -> Result<bool, sat::BudgetExhausted> {
         let mut asm: Vec<sat::SatLit> = active
             .iter()
             .enumerate()
@@ -216,7 +226,7 @@ impl ConstructSolver {
             .map(|(k, _)| self.selector(k))
             .collect();
         asm.push(flipped);
-        matches!(self.inc.solve(&asm), sat::Solved::Sat(_))
+        Ok(matches!(self.inc.solve(&asm)?, sat::Solved::Sat(_)))
     }
 }
 
@@ -231,10 +241,10 @@ pub(crate) fn flip_restores_sat(
     all: &[Construct],
     active: &[bool],
     i: usize,
-) -> bool {
+) -> Result<bool, sat::BudgetExhausted> {
     // A flippable construct is exactly one unit clause holding one literal.
     if all[i].clauses.len() != 1 || all[i].clauses[0].len() != 1 {
-        return false;
+        return Ok(false);
     }
     cs.flip_is_sat(active, i, all[i].clauses[0][0].negate())
 }
@@ -251,12 +261,12 @@ pub(crate) fn fixes_for(
     active: &[bool],
     i: usize,
     drop_target: &str,
-) -> Vec<Fix> {
+) -> Result<Vec<Fix>, sat::BudgetExhausted> {
     let mut fixes = vec![Fix {
         kind: FixKind::Drop,
         target: String::from(drop_target),
     }];
-    if i < c.facts.len() && flip_restores_sat(cs, all, active, i) {
+    if i < c.facts.len() && flip_restores_sat(cs, all, active, i)? {
         let f = &c.facts[i];
         // The flip asserts the opposite of the fact's current value.
         let target = if matches!(f.value, Value::True) {
@@ -269,7 +279,7 @@ pub(crate) fn fixes_for(
             target,
         });
     }
-    fixes
+    Ok(fixes)
 }
 
 /// A fast sufficient core via one assumption-solve: solve asserting every selector
@@ -281,11 +291,14 @@ pub(crate) fn fixes_for(
 /// exact same computation as a standalone `solve_assuming` over the same CNF, so
 /// the returned candidate — whose contents shape the reported core — is identical
 /// to the pre-incremental implementation's.
-pub(crate) fn candidate_via_assumptions(cs: &mut ConstructSolver, count: usize) -> Vec<bool> {
+pub(crate) fn candidate_via_assumptions(
+    cs: &mut ConstructSolver,
+    count: usize,
+) -> Result<Vec<bool>, sat::BudgetExhausted> {
     let assumptions: Vec<sat::SatLit> = (0..count).map(|i| cs.selector(i)).collect();
     let base = cs.base;
     let mut active = vec![false; count];
-    match cs.inc.solve(&assumptions) {
+    match cs.inc.solve(&assumptions)? {
         sat::Solved::Unsat(core) => {
             for lit in core {
                 let v = lit.var() as usize;
@@ -299,7 +312,7 @@ pub(crate) fn candidate_via_assumptions(cs: &mut ConstructSolver, count: usize) 
         // correct (just slower).
         sat::Solved::Sat(_) => active.iter_mut().for_each(|a| *a = true),
     }
-    active
+    Ok(active)
 }
 
 /// A 1-minimal unsat core. First an assumption-solve narrows the program to a
@@ -307,37 +320,36 @@ pub(crate) fn candidate_via_assumptions(cs: &mut ConstructSolver, count: usize) 
 /// minimization over *that candidate only* drops each construct in turn — if the
 /// rest is still unsatisfiable it was not needed — leaving an irreducible set
 /// jointly to blame. Called only when the full system is UNSAT.
-pub(crate) fn minimal_unsat_core(c: &Compiled) -> Vec<CoreItem> {
+pub(crate) fn minimal_unsat_core(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<CoreItem>, sat::BudgetExhausted> {
     let all = constructs(c);
     // One incremental solver serves the candidate solve, the deletion loop, and
     // the flip checks; the candidate must come first (see its docs).
-    let mut cs = ConstructSolver::new(c.atoms.len(), &all);
-    let mut active = candidate_via_assumptions(&mut cs, all.len());
+    let mut cs = ConstructSolver::new(c.atoms.len(), &all, budget);
+    let mut active = candidate_via_assumptions(&mut cs, all.len())?;
     // The content-bearing candidate query is done; everything after is verdict-only.
     cs.enable_turbo();
     for i in 0..all.len() {
         if active[i] {
             active[i] = false;
-            if cs.subset_is_sat(&active) {
+            if cs.subset_is_sat(&active)? {
                 active[i] = true; // removing it restored SAT → it is part of the core
             }
         }
     }
-    let mut core: Vec<CoreItem> = all
-        .iter()
-        .enumerate()
-        .filter(|&(i, _)| active[i])
-        .map(|(i, k)| {
-            let fixes = fixes_for(c, &mut cs, &all, &active, i, &k.label);
-            CoreItem {
-                origin: k.origin.clone(),
-                label: k.label.clone(),
-                fixes,
-            }
-        })
-        .collect();
+    let mut core: Vec<CoreItem> = Vec::new();
+    for (i, k) in all.iter().enumerate().filter(|&(i, _)| active[i]) {
+        let fixes = fixes_for(c, &mut cs, &all, &active, i, &k.label)?;
+        core.push(CoreItem {
+            origin: k.origin.clone(),
+            label: k.label.clone(),
+            fixes,
+        });
+    }
     core.sort_by_key(|it| key(&it.origin));
-    core
+    Ok(core)
 }
 
 /// Sort key giving conflicts/warnings a stable, source-then-line order.
@@ -357,9 +369,12 @@ pub(crate) fn key(o: &Origin) -> (String, u32) {
 /// what is established), or leaves more than one model ([`TryOutcome::StillOpen`] — it
 /// does not pin it). On an already-unsatisfiable program every hypothesis reads as
 /// `Conflicts` (adding a clause never clears a conflict — that is L4's job).
-pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
+pub(crate) fn tried_hypotheses(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<Tried>, sat::BudgetExhausted> {
     if c.hypotheses.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let (cnf, project) = build_cnf(c);
     // One incremental solver counts models for the base program AND every
@@ -373,6 +388,7 @@ pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
     //
     // Counts are heuristic-invariant, so the turbo profile is sound throughout.
     let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
+    inc.set_budget(budget.cloned());
     // Count the models of (program ∧ assumptions) projected on `project`, up to 2.
     // The guard lives exactly as long as its session: minted on entry (a future
     // session's guard does not exist yet, so it is never branched on) and
@@ -380,9 +396,11 @@ pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
     // clause is satisfied at level 0 forever, its guard assigned and never
     // branched on again). Without both ends every solve would branch over
     // O(#hypotheses) idle guards — quadratic over a long TRY list.
-    let count2 = |inc: &mut sat::Incremental, assume: &[sat::SatLit]| {
+    let count2 = |inc: &mut sat::Incremental,
+                  assume: &[sat::SatLit]|
+     -> Result<usize, sat::BudgetExhausted> {
         let guard = inc.add_var();
-        let count = match inc.solve(assume) {
+        let count = match inc.solve(assume)? {
             sat::Solved::Unsat(_) => 0,
             sat::Solved::Sat(model) => {
                 let mut block = Vec::with_capacity(project.len() + 1);
@@ -398,39 +416,38 @@ pub(crate) fn tried_hypotheses(c: &Compiled) -> Vec<Tried> {
                 let mut asm = Vec::with_capacity(assume.len() + 1);
                 asm.extend_from_slice(assume);
                 asm.push(sat::SatLit::positive(guard));
-                match inc.solve(&asm) {
+                match inc.solve(&asm)? {
                     sat::Solved::Sat(_) => 2,
                     sat::Solved::Unsat(_) => 1,
                 }
             }
         };
         inc.add_clause(&[sat::SatLit::negative(guard)]);
-        count
+        Ok(count)
     };
     // A single base model over the constrained atoms means the program is already
     // pinned; two means it is open (the same measure the backward pass uses).
-    let base_unique = count2(&mut inc, &[]) == 1;
-    c.hypotheses
-        .iter()
-        .map(|h| {
-            // Assume the candidate literal (positive unless written `TRY NOT …`).
-            let lit = sat::SatLit::new(h.lit.atom, !h.lit.negated);
-            let outcome = match count2(&mut inc, &[lit]) {
-                0 => TryOutcome::Conflicts,
-                1 if !base_unique => TryOutcome::Closes,
-                _ => TryOutcome::StillOpen,
-            };
-            let name = label(c, h.lit.atom);
-            let text = if h.lit.negated {
-                alloc::format!("NOT {name}")
-            } else {
-                name
-            };
-            Tried {
-                origin: h.origin.clone(),
-                label: text,
-                outcome,
-            }
-        })
-        .collect()
+    let base_unique = count2(&mut inc, &[])? == 1;
+    let mut tried = Vec::with_capacity(c.hypotheses.len());
+    for h in &c.hypotheses {
+        // Assume the candidate literal (positive unless written `TRY NOT …`).
+        let lit = sat::SatLit::new(h.lit.atom, !h.lit.negated);
+        let outcome = match count2(&mut inc, &[lit])? {
+            0 => TryOutcome::Conflicts,
+            1 if !base_unique => TryOutcome::Closes,
+            _ => TryOutcome::StillOpen,
+        };
+        let name = label(c, h.lit.atom);
+        let text = if h.lit.negated {
+            alloc::format!("NOT {name}")
+        } else {
+            name
+        };
+        tried.push(Tried {
+            origin: h.origin.clone(),
+            label: text,
+            outcome,
+        });
+    }
+    Ok(tried)
 }

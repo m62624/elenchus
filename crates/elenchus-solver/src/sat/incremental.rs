@@ -16,7 +16,7 @@
 //! fresh-solver path so their reported witnesses stay stable).
 
 use super::solver::{RunFail, Solver};
-use super::{Cnf, SatLit, Solved, SolverConfig, Stats};
+use super::{Budget, BudgetExhausted, Cnf, SatLit, Solved, SolverConfig, Stats};
 
 /// A persistent solver over one CNF, answering assumption queries incrementally.
 /// See the [module docs](self) for the contract and the determinism caveat.
@@ -47,17 +47,23 @@ impl Incremental {
         self.solver.set_config(config);
     }
 
+    /// Install (or remove) a shared conflict [`Budget`]; applies to every later
+    /// [`Incremental::solve`]. With `None` — the default — a solve can never
+    /// abort, so `solve`'s error arm is dead for budget-free users.
+    pub fn set_budget(&mut self, budget: Option<Budget>) {
+        self.solver.set_budget(budget);
+    }
+
     /// Solve under `assumptions` (each forced true). Re-entrant: call as many
     /// times as needed; learned clauses accumulate across calls. The returned
     /// core, like [`solve_assuming`](super::solve_assuming)'s, is a sufficient
     /// subset of the assumptions (empty = UNSAT regardless of them).
-    pub fn solve(&mut self, assumptions: &[SatLit]) -> Solved {
+    /// Fails only when an installed [`Budget`] runs out mid-search.
+    pub fn solve(&mut self, assumptions: &[SatLit]) -> Result<Solved, BudgetExhausted> {
         match self.solver.solve_with(assumptions) {
-            Ok(()) => Solved::Sat(self.solver.model()),
-            Err(RunFail::Unsat(core)) => Solved::Unsat(core),
-            // `Incremental` exposes no budget installation (yet), so a solve
-            // can never exhaust one.
-            Err(RunFail::Exhausted) => unreachable!("budget-free solve cannot exhaust"),
+            Ok(()) => Ok(Solved::Sat(self.solver.model())),
+            Err(RunFail::Unsat(core)) => Ok(Solved::Unsat(core)),
+            Err(RunFail::Exhausted) => Err(BudgetExhausted),
         }
     }
 

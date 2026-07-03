@@ -1116,7 +1116,7 @@ proptest! {
                 clauses.push(cl);
             }
             let assumptions = to_assumptions(asm);
-            match inc.solve(&assumptions) {
+            match inc.solve(&assumptions).unwrap() {
                 Solved::Sat(model) => {
                     prop_assert!(brute_sat_assuming(n, &clauses, asm), "SAT but oracle says UNSAT");
                     for clause in &clauses {
@@ -1569,6 +1569,34 @@ proptest! {
         // An Err(BudgetExhausted) outcome is a legal withheld answer.
         if let Ok(found) = sat::models_budgeted(&cnf, &project, cap, Some(&budget)) {
             prop_assert_eq!(found, free);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(300))]
+
+    /// Pipeline law: a conflict budget never changes a report, only withholds
+    /// it — for random programs exercising the backward pass, core
+    /// minimization, and retract, the budgeted run either errors with the
+    /// configured limit or reproduces the budget-free report exactly.
+    #[test]
+    fn pipeline_budget_never_changes_the_report(
+        (n, facts, raw) in core_instance(),
+        limit in 0u64..64,
+    ) {
+        let compiled = build_core_compiled(n, &facts, &raw);
+        let free = solve(&compiled);
+        let budgeted = elenchus_solver::solve_opts(
+            &compiled,
+            &elenchus_solver::SolveOptions { max_conflicts: Some(limit) },
+        );
+        match budgeted {
+            Ok(report) => prop_assert_eq!(report, free),
+            Err(elenchus_solver::VerifyError::ConflictBudget { limit: echoed }) => {
+                prop_assert_eq!(echoed, limit);
+            }
+            Err(other) => prop_assert!(false, "unexpected error: {other}"),
         }
     }
 }
