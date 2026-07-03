@@ -49,6 +49,7 @@ What actually runs, piece by piece — no ML, just classic algorithms:
 | fix checking (drop / flip) | each candidate fix is re-solved on the shared incremental solver; only verified fixes are reported |
 | `TRY` (abduction) | one bounded side-solve per supplied hypothesis |
 | `BECAUSE` / `UNLESS` / `WITNESS` / `KNOWS` | direct reads of the settled model, constant work per line |
+| resource limit | opt-in deterministic conflict budget (`max_conflicts`): one shared pool for the whole run; running out aborts with an explicit error — never a silent or truncated verdict |
 | performance gating | deterministic work counters (decisions / propagations / conflicts / learned literals) — bit-identical on any hardware, asserted in tests; wall-clock benchmarks are informational only |
 
 Intentionally omitted from the SAT core: proof/DRAT logging, clause-database GC,

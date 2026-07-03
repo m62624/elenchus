@@ -452,3 +452,35 @@ fn file_with_imports_is_resolved() {
     let out = elenchus(&[&path]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn max_conflicts_aborts_with_exit_3_and_no_verdict() {
+    // A small pigeonhole (4 pigeons / 3 holes): UNSAT that needs real search.
+    let mut php = String::from("DOMAIN php\n");
+    for i in 0..4 {
+        php.push_str(&format!("PREMISE pigeon{i}:\n    ATLEAST\n"));
+        for j in 0..3 {
+            php.push_str(&format!("        p{i} in h{j}\n"));
+        }
+    }
+    for j in 0..3 {
+        php.push_str(&format!("PREMISE hole{j}:\n    EXCLUSIVE\n"));
+        for i in 0..4 {
+            php.push_str(&format!("        p{i} in h{j}\n"));
+        }
+    }
+    php.push_str("CHECK p0 BIDIRECTIONAL\n");
+
+    let aborted = elenchus(&["--text", &php, "--max-conflicts", "0"]);
+    assert_eq!(aborted.status.code(), Some(3), "aborted = exit 3, not 2");
+    let err = String::from_utf8_lossy(&aborted.stderr);
+    assert!(err.contains("conflict budget exceeded"), "stderr: {err}");
+    assert!(aborted.stdout.is_empty(), "no verdict may be printed");
+
+    // A generous cap changes nothing: byte-identical to the plain run.
+    let plain = elenchus(&["--text", &php]);
+    let capped = elenchus(&["--text", &php, "--max-conflicts", "100000"]);
+    assert_eq!(plain.status.code(), Some(2));
+    assert_eq!(capped.status.code(), Some(2));
+    assert_eq!(plain.stdout, capped.stdout);
+}

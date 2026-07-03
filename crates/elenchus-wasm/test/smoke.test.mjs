@@ -81,3 +81,20 @@ test("dataFiles: disagreeing with a values record is a hard PortConflict", () =>
   ]);
   assert.match(out, /two different values/);
 });
+
+test("maxConflicts: abort is an error string, omitted stays a verdict", () => {
+  // A tiny pigeonhole — UNSAT that needs real search.
+  let php = "DOMAIN php\n";
+  for (let i = 0; i < 3; i++)
+    php += `PREMISE pigeon${i}:\n    ATLEAST\n        p${i} in h0\n        p${i} in h1\n`;
+  for (let j = 0; j < 2; j++)
+    php += `PREMISE hole${j}:\n    EXCLUSIVE\n        p0 in h${j}\n        p1 in h${j}\n        p2 in h${j}\n`;
+  php += "CHECK p0 BIDIRECTIONAL\n";
+  const aborted = e.check(php, "json", 0, 0, undefined, undefined, undefined, 0);
+  assert.match(aborted, /conflict budget exceeded/);
+  assert.doesNotMatch(aborted, /"exit_code"/);
+  assert.equal(
+    e.check(php, "json", 0, 0, undefined, undefined, undefined, 1000000),
+    e.check(php)
+  );
+});

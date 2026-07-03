@@ -53,6 +53,18 @@ until it is **CONSISTENT**.
 | **WARNING** | 1 | a premise can't be checked — a needed atom is UNKNOWN | add the `FACT`/`NOT` it names under `blocked by:` — or, if that atom should follow automatically from an already-true `WHEN`, make it a `RULE` (which derives it) instead of a `PREMISE` |
 | **UNDERDETERMINED** | 1 | satisfiable, but several models fit | add the fact it suggests (`fix: add …`) — or `TRY <atom>` first to have the engine check a candidate would pin it before you commit |
 | **CONFLICT** | 2 | a premise is violated, or premises are jointly unsatisfiable | a fact is wrong, or two principles can't both hold — the `CORE`/`RETRACT` names each culprit with a `drop` (and, for a fact, a verified `flip it to: …  (checked)`); apply ONE, re-check |
+| *(aborted)* | 3 | `--max-conflicts` safety valve fired — the check did **not** finish, no verdict | not a logic verdict; see the note below |
+
+
+> **`--max-conflicts` / `max_conflicts` (safety valve — do not use it on a normal
+> check).** Every legitimate program finishes in milliseconds with ~0 SAT
+> conflicts, so the right value is *unset* (unlimited). Reach for it only when
+> the user explicitly asks, or after **3** runs of the *same* program failed to
+> complete (hung until your own timeout) — then re-run once with
+> `--max-conflicts 100000` (MCP: `"max_conflicts": 100000`) to turn the hang
+> into a clean, deterministic `conflict budget exceeded` error (CLI exit 3) you
+> can report. Never treat that abort as CONFLICT: there is no verdict. If the
+> user merely asks what the flag is, explain it — don't apply it.
 
 **The target before you act on the reasoning is `CONSISTENT` (exit 0) — nothing
 else.** WARNING, UNDERDETERMINED and CONFLICT are *not* "done"; each is the engine

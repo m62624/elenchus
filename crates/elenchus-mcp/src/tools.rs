@@ -3,8 +3,8 @@
 //! Descriptions come from [`crate::messages`]; envelopes from [`crate::rpc`].
 
 use elenchus_solver::{
-    CompileError, FileResolver, MemoryResolver, PortBinding, read_data_bindings,
-    verify_source_with, verify_with,
+    CompileError, FileResolver, MemoryResolver, PortBinding, SolveOptions, VerifyError,
+    read_data_bindings, verify_opts, verify_source_opts,
 };
 use serde_json::{Value, json};
 
@@ -75,6 +75,11 @@ fn check_def() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": messages::CHECK_ARG_DATA_PATHS
+                },
+                "max_conflicts": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": messages::CHECK_ARG_MAX_CONFLICTS
                 }
             },
             // Exactly one of `program` / `path` is required; the body enforces it
@@ -148,6 +153,12 @@ fn check(id: Value, args: Option<&Value>) -> Value {
 
     let program = args.and_then(|a| a.get("program")).and_then(Value::as_str);
     let path = args.and_then(|a| a.get("path")).and_then(Value::as_str);
+    // The safety valve; absent (the normal case) = unlimited.
+    let opts = SolveOptions {
+        max_conflicts: args
+            .and_then(|a| a.get("max_conflicts"))
+            .and_then(Value::as_u64),
+    };
 
     let result = match (program, path) {
         (Some(_), Some(_)) => {
@@ -165,7 +176,7 @@ fn check(id: Value, args: Option<&Value>) -> Value {
             );
         }
         // Filesystem entry: read + resolve IMPORTs from disk, like the CLI.
-        (None, Some(path)) => verify_with(path, &FileResolver, &inputs),
+        (None, Some(path)) => verify_opts(path, &FileResolver, &inputs, &opts),
         // Inline entry: IMPORTs resolve against the in-memory `files` map (program
         // registered as the `<mcp>` root); otherwise it is a single source.
         (Some(program), None) => {
@@ -179,9 +190,9 @@ fn check(id: Value, args: Option<&Value>) -> Value {
                     }
                     // Add the root last so a stray `files["<mcp>"]` can never shadow it.
                     resolver.add("<mcp>", program);
-                    verify_with("<mcp>", &resolver, &inputs)
+                    verify_opts("<mcp>", &resolver, &inputs, &opts)
                 }
-                _ => verify_source_with("<mcp>", program, &inputs),
+                _ => verify_source_opts("<mcp>", program, &inputs, &opts),
             }
         }
     };
@@ -198,10 +209,12 @@ fn check(id: Value, args: Option<&Value>) -> Value {
         // Syntax errors get the grouped diagnostic blocks (capped by the two
         // limits). `rpc::tool_result` carries the whole multi-line block as one
         // JSON string, which serde_json escapes — the wire stays valid JSON.
-        Err(CompileError::Parse(diag)) => {
+        Err(VerifyError::Compile(CompileError::Parse(diag))) => {
             let text = diag.render(arg_limit("max_classes"), arg_limit("max_per_class"));
             rpc::tool_result(id, text, true)
         }
+        // A budget abort (`max_conflicts`) or any other compile error: one line,
+        // tool-level. The budget message says explicitly there is NO verdict.
         Err(other) => rpc::tool_result(id, other.to_string(), true),
     }
 }

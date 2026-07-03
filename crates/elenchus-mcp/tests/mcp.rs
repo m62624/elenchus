@@ -393,3 +393,15 @@ fn unknown_method_yields_jsonrpc_error() {
     let resps = roundtrip(&[r#"{"jsonrpc":"2.0","id":7,"method":"does/not/exist"}"#]);
     assert_eq!(resps[0]["error"]["code"], -32601);
 }
+
+#[test]
+fn max_conflicts_abort_is_a_tool_error_without_a_verdict() {
+    // A 3-pigeon / 2-hole UNSAT program (needs real search) under a zero budget.
+    let resps = roundtrip(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"elenchus_check","arguments":{"program":"DOMAIN php\nPREMISE pigeon0:\n    ATLEAST\n        p0 in h0\n        p0 in h1\nPREMISE pigeon1:\n    ATLEAST\n        p1 in h0\n        p1 in h1\nPREMISE pigeon2:\n    ATLEAST\n        p2 in h0\n        p2 in h1\nPREMISE hole0:\n    EXCLUSIVE\n        p0 in h0\n        p1 in h0\n        p2 in h0\nPREMISE hole1:\n    EXCLUSIVE\n        p0 in h1\n        p1 in h1\n        p2 in h1\nCHECK p0 BIDIRECTIONAL\n","max_conflicts":0}}}"#,
+    ]);
+    assert_eq!(resps[0]["result"]["isError"], true);
+    let text = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("conflict budget exceeded"), "got: {text}");
+    assert!(!text.contains("exit_code"), "must not look like a verdict");
+}

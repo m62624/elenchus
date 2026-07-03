@@ -30,6 +30,7 @@ export function check(
   values?: Values,
   data?: Data,
   dataFiles?: string[],
+  maxConflicts?: number,
 ): string;
 
 /**
@@ -46,6 +47,7 @@ export function checkWithResolver(
   values?: Values,
   data?: Data,
   dataFiles?: string[],
+  maxConflicts?: number,
 ): string;
 
 /** Read a single `.vrf` file (Node) and check it (no IMPORT resolution). */
@@ -57,6 +59,7 @@ export function checkFile(
   values?: Values,
   data?: Data,
   dataFiles?: string[],
+  maxConflicts?: number,
 ): string;
 
 /** Check a `.vrf` file (Node), resolving IMPORTs through the filesystem. */
@@ -68,6 +71,7 @@ export function checkFileWithImports(
   values?: Values,
   data?: Data,
   dataFiles?: string[],
+  maxConflicts?: number,
 ): string;
 
 /** The running engine version, e.g. `"elenchus 0.9.1"` (engine, not package). */
