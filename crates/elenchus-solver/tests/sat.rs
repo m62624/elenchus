@@ -249,3 +249,119 @@ fn incremental_reuse_beats_scratch_on_work_counters() {
         "shared database must hit fewer conflicts: {shared_conflicts} vs {scratch_conflicts}"
     );
 }
+
+// --- conflict budget ---------------------------------------------------------
+
+/// Pigeonhole PHP(p, h) — small but guaranteed to conflict (UNSAT for p > h).
+fn budget_php(p: usize, h: usize) -> Cnf {
+    let v = |i: usize, j: usize| (i * h + j) as Var;
+    let mut c = Cnf::new(p * h);
+    for i in 0..p {
+        c.add_clause((0..h).map(|j| SatLit::positive(v(i, j))).collect());
+    }
+    for j in 0..h {
+        for a in 0..p {
+            for b in (a + 1)..p {
+                c.add_clause(vec![SatLit::negative(v(a, j)), SatLit::negative(v(b, j))]);
+            }
+        }
+    }
+    c
+}
+
+/// A budget of n admits exactly n analyzed conflicts: the budget equal to the
+/// solve's true conflict count finishes with the identical answer (and an empty
+/// pool), one conflict less aborts. This pins the boundary semantics.
+#[test]
+fn budget_boundary_admits_exactly_n_conflicts() {
+    let cnf = budget_php(4, 3);
+
+    let mut inc = Incremental::new(&cnf);
+    let unbudgeted = inc.solve(&[]);
+    assert!(matches!(unbudgeted, Solved::Unsat(_)));
+    let needed = inc.stats().conflicts;
+    assert!(needed > 0, "php(4,3) must conflict");
+
+    let exact = Budget::new(needed);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&exact)),
+        Ok(unbudgeted),
+        "an exact budget must not change the answer"
+    );
+    assert_eq!(exact.remaining(), 0);
+
+    let short = Budget::new(needed - 1);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&short)),
+        Err(BudgetExhausted)
+    );
+    assert_eq!(short.remaining(), 0);
+}
+
+/// A zero budget still answers anything that needs no conflict analysis.
+#[test]
+fn zero_budget_still_answers_conflict_free_solves() {
+    let mut easy = Cnf::new(2);
+    easy.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let zero = Budget::new(0);
+    assert!(matches!(
+        solve_assuming_budgeted(&easy, &[], Some(&zero)),
+        Ok(Solved::Sat(_))
+    ));
+
+    assert_eq!(
+        solve_assuming_budgeted(&budget_php(4, 3), &[], Some(&zero)),
+        Err(BudgetExhausted)
+    );
+}
+
+/// Clones of one handle draw from a single pool: a budget sized for one solve
+/// funds the first call and starves an identical second one — the global
+/// (whole-run) semantics, not per-solve.
+#[test]
+fn budget_pool_is_shared_across_solves() {
+    let cnf = budget_php(4, 3);
+    let mut inc = Incremental::new(&cnf);
+    assert!(matches!(inc.solve(&[]), Solved::Unsat(_)));
+    let needed = inc.stats().conflicts;
+
+    let pool = Budget::new(needed);
+    assert!(solve_assuming_budgeted(&cnf, &[], Some(&pool)).is_ok());
+    assert_eq!(pool.remaining(), 0);
+    assert_eq!(
+        solve_assuming_budgeted(&cnf, &[], Some(&pool)),
+        Err(BudgetExhausted),
+        "the second solve must find the shared pool already empty"
+    );
+}
+
+/// Budgeted enumeration issues the same solver calls in the same order, so with
+/// any sufficient budget it returns exactly what `models` returns; running out
+/// mid-enumeration aborts the whole call rather than returning a short list.
+#[test]
+fn models_budgeted_matches_models_or_aborts() {
+    // x ∨ y: three models, and enumeration provably conflicts after the first
+    // (the blocking clause clashes with the saved phase).
+    let mut cnf = Cnf::new(2);
+    cnf.add_clause(vec![SatLit::positive(0), SatLit::positive(1)]);
+    let project = [0 as Var, 1 as Var];
+
+    let reference = models(&cnf, &project, 8);
+    assert_eq!(reference.len(), 3);
+
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, None),
+        Ok(reference.clone())
+    );
+    let generous = Budget::new(1_000);
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, Some(&generous)),
+        Ok(reference)
+    );
+
+    let zero = Budget::new(0);
+    assert_eq!(
+        models_budgeted(&cnf, &project, 8, Some(&zero)),
+        Err(BudgetExhausted)
+    );
+}

@@ -3,7 +3,17 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{Cnf, SatLit, SolverConfig, Stats, Var};
+use super::{Budget, BudgetExhausted, Cnf, SatLit, SolverConfig, Stats, Var};
+
+/// How a [`Solver::run`] ended without a model.
+pub(crate) enum RunFail {
+    /// Unsatisfiable, with a sufficient subset of the assumptions (empty when
+    /// UNSAT regardless of them). A real, terminal answer.
+    Unsat(Vec<SatLit>),
+    /// The conflict [`Budget`] ran out mid-search — no answer. Only reachable
+    /// when a budget is installed.
+    Exhausted,
+}
 
 /// Why a variable was assigned — needed for conflict analysis and backtracking.
 #[derive(Clone, Copy)]
@@ -181,6 +191,8 @@ pub(crate) struct Solver {
     pub(crate) assumptions: Vec<SatLit>,
     stats: Stats, // deterministic work counters (never reset over the lifetime)
     config: SolverConfig,
+    // Shared conflict pool; `None` (the default) can never abort a solve.
+    budget: Option<Budget>,
 }
 
 impl Solver {
@@ -212,6 +224,7 @@ impl Solver {
             assumptions: Vec::new(),
             stats: Stats::default(),
             config,
+            budget: None,
         };
         for clause in &cnf.clauses {
             s.add_clause(clause);
@@ -663,18 +676,28 @@ impl Solver {
     }
 
     /// Drive the search to a terminal state under the current assumptions.
-    /// `Ok(())` = SAT; `Err(core)` = UNSAT with a sufficient subset of the
-    /// assumptions (empty when unsat regardless of them). Re-entrant: after
+    /// `Ok(())` = SAT; `Err(Unsat(core))` = UNSAT with a sufficient subset of
+    /// the assumptions (empty when unsat regardless of them);
+    /// `Err(Exhausted)` = the conflict budget ran out (no answer — only
+    /// possible when a budget is installed). Re-entrant: after
     /// [`Solver::block`] resets to level 0, calling it again continues the search.
-    pub(crate) fn run(&mut self) -> Result<(), Vec<SatLit>> {
+    pub(crate) fn run(&mut self) -> Result<(), RunFail> {
         if !self.ok {
-            return Err(Vec::new());
+            return Err(RunFail::Unsat(Vec::new()));
         }
         loop {
             if let Some(cref) = self.propagate() {
                 if self.current_level() == 0 {
                     self.ok = false;
-                    return Err(Vec::new());
+                    return Err(RunFail::Unsat(Vec::new()));
+                }
+                // A budget of n admits exactly n analyzed conflicts; the n+1-th
+                // aborts here, before analysis. Terminal level-0 UNSAT above is
+                // checked first: a real answer always beats giving up.
+                if let Some(budget) = &self.budget
+                    && !budget.spend()
+                {
+                    return Err(RunFail::Exhausted);
                 }
                 let (learned, backjump) = self.analyze(cref);
                 self.backtrack(backjump);
@@ -683,16 +706,20 @@ impl Solver {
                 match self.decide() {
                     Decision::Propagated => {}
                     Decision::Sat => return Ok(()),
-                    Decision::UnsatCore(core) => return Err(core),
+                    Decision::UnsatCore(core) => return Err(RunFail::Unsat(core)),
                 }
             }
         }
     }
 
     /// Plain satisfiability (no assumptions): `true` if a model exists. Re-entrant
-    /// for [`Models`] enumeration.
-    pub(crate) fn search(&mut self) -> bool {
-        self.run().is_ok()
+    /// for [`Models`] enumeration. Fails only when an installed [`Budget`] runs out.
+    pub(crate) fn search(&mut self) -> Result<bool, BudgetExhausted> {
+        match self.run() {
+            Ok(()) => Ok(true),
+            Err(RunFail::Unsat(_)) => Ok(false),
+            Err(RunFail::Exhausted) => Err(BudgetExhausted),
+        }
     }
 
     /// Snapshot the assignment as `var -> bool` (any still-unassigned variable,
@@ -730,7 +757,7 @@ impl Solver {
     /// learned clauses) persist across calls — that is the whole point: a sequence
     /// of related queries shares one clause database instead of re-solving from
     /// scratch. Same contract as [`Solver::run`].
-    pub(crate) fn solve_with(&mut self, assumptions: &[SatLit]) -> Result<(), Vec<SatLit>> {
+    pub(crate) fn solve_with(&mut self, assumptions: &[SatLit]) -> Result<(), RunFail> {
         self.backtrack(0);
         self.assumptions.clear();
         self.assumptions.extend_from_slice(assumptions);
@@ -771,6 +798,12 @@ impl Solver {
     /// Switch the heuristics profile from the next solve on.
     pub(crate) fn set_config(&mut self, config: SolverConfig) {
         self.config = config;
+    }
+
+    /// Install (or remove) a shared conflict [`Budget`]. With `None` — the
+    /// default — no solve on this solver can ever abort.
+    pub(crate) fn set_budget(&mut self, budget: Option<Budget>) {
+        self.budget = budget;
     }
 }
 

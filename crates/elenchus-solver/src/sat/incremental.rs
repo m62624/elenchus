@@ -15,7 +15,7 @@
 //! consumes verdicts or counts, not model/core contents (those callers keep the
 //! fresh-solver path so their reported witnesses stay stable).
 
-use super::solver::Solver;
+use super::solver::{RunFail, Solver};
 use super::{Cnf, SatLit, Solved, SolverConfig, Stats};
 
 /// A persistent solver over one CNF, answering assumption queries incrementally.
@@ -54,7 +54,10 @@ impl Incremental {
     pub fn solve(&mut self, assumptions: &[SatLit]) -> Solved {
         match self.solver.solve_with(assumptions) {
             Ok(()) => Solved::Sat(self.solver.model()),
-            Err(core) => Solved::Unsat(core),
+            Err(RunFail::Unsat(core)) => Solved::Unsat(core),
+            // `Incremental` exposes no budget installation (yet), so a solve
+            // can never exhaust one.
+            Err(RunFail::Exhausted) => unreachable!("budget-free solve cannot exhaust"),
         }
     }
 

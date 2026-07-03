@@ -1530,3 +1530,45 @@ proptest! {
         prop_assert_eq!(got, ref_tried(&compiled));
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    /// A conflict budget can only withhold an answer, never change one: for any
+    /// formula, assumptions, and budget size, the budgeted solve either aborts
+    /// with `BudgetExhausted` or returns exactly the budget-free result.
+    #[test]
+    fn budget_never_changes_an_answer(
+        (n, raw, asm) in instance_with_assumptions(),
+        limit in 0u64..32,
+    ) {
+        let cnf = to_cnf(n, &raw);
+        let assumptions = to_assumptions(&asm);
+        let free = sat::solve_assuming(&cnf, &assumptions);
+        let budget = sat::Budget::new(limit);
+        // An Err(BudgetExhausted) outcome is a legal withheld answer.
+        if let Ok(answer) = sat::solve_assuming_budgeted(&cnf, &assumptions, Some(&budget)) {
+            prop_assert_eq!(answer, free);
+        }
+    }
+
+    /// Budgeted enumeration replays the same solver calls, so an unlimited (or
+    /// absent) budget reproduces `models` exactly, and any budget either
+    /// reproduces it or aborts as a whole — never a silently short list.
+    #[test]
+    fn budgeted_enumeration_matches_models(
+        (n, raw) in instance(),
+        limit in 0u64..32,
+    ) {
+        let cnf = to_cnf(n, &raw);
+        let project: Vec<Var> = (0..n as Var).collect();
+        let cap = 1usize << n;
+        let free = sat::models(&cnf, &project, cap);
+        prop_assert_eq!(sat::models_budgeted(&cnf, &project, cap, None), Ok(free.clone()));
+        let budget = sat::Budget::new(limit);
+        // An Err(BudgetExhausted) outcome is a legal withheld answer.
+        if let Ok(found) = sat::models_budgeted(&cnf, &project, cap, Some(&budget)) {
+            prop_assert_eq!(found, free);
+        }
+    }
+}
