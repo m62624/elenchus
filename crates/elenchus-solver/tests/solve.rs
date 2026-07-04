@@ -1147,3 +1147,590 @@ fn fed_transitive_closure_reaches_the_verdict() {
         rep.conflicts
     );
 }
+
+// --- PROVE (entailment / the ⊨ goal, F1) -------------------------------------
+
+#[test]
+fn prove_entailed_goal_is_proved() {
+    // A fact plus a rule force the goal: theory ∧ ¬goal is unsatisfiable.
+    let r = vs(
+        "FACT s is human\nRULE mortal:\n    WHEN s is human\n    THEN s is mortal\nPROVE s is mortal\nCHECK s\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent); // advisory: the goal never raises it
+    assert_eq!(r.goals.len(), 1);
+    assert_eq!(r.goals[0].label, "t.s is mortal");
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved);
+    assert_eq!(r.goals[0].origin.kind, kw::PROVE);
+}
+
+#[test]
+fn prove_contradicted_goal_is_refuted() {
+    // The theory establishes the goal's negation: theory ∧ goal is unsatisfiable.
+    let r = vs("NOT s is immortal\nPROVE s is immortal\nCHECK s\n").unwrap();
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Refuted);
+}
+
+#[test]
+fn prove_unpinned_goal_is_open() {
+    // Nothing determines the goal either way — the honest three-valued answer.
+    let r = vs("FACT x a\nPROVE x b\nCHECK x\n").unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Open);
+}
+
+#[test]
+fn prove_on_inconsistent_theory_is_vacuous() {
+    // Both refutation calls come back unsatisfiable: the theory itself is broken,
+    // so the goal line says VACUOUS instead of a misleading PROVED.
+    let r = vs("FACT x a\nNOT x a\nPROVE x b\n").unwrap();
+    assert_eq!(r.status, Status::Conflict); // the conflict is the theory's, not the goal's
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Vacuous);
+}
+
+#[test]
+fn prove_not_carries_polarity_in_label_and_check() {
+    // `PROVE NOT g` asks whether ¬g follows; here it does (g is asserted FALSE).
+    let r = vs("NOT door open\nPROVE NOT door open\nCHECK door\n").unwrap();
+    assert_eq!(r.goals[0].label, "NOT t.door open");
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved);
+}
+
+#[test]
+fn prove_never_commits_the_goal() {
+    // The goal atom stays UNKNOWN in the model: no DERIVED, no WARNING from it, and
+    // a premise blocked by that atom still warns exactly as without the PROVE.
+    let with =
+        vs("FACT x a\nPREMISE p:\n    WHEN x a\n    THEN x b\nPROVE x b\nCHECK x\n").unwrap();
+    let without = vs("FACT x a\nPREMISE p:\n    WHEN x a\n    THEN x b\nCHECK x\n").unwrap();
+    assert_eq!(with.status, without.status);
+    assert_eq!(with.warnings.len(), without.warnings.len());
+    assert_eq!(with.goals.len(), 1);
+    // Refutational reading: theory ∧ ¬(x b) violates the premise ⇒ PROVED — the
+    // constraint *forces* x b even though the forward pass could not confirm it.
+    assert_eq!(with.goals[0].outcome, ProveOutcome::Proved);
+}
+
+// --- HENCE … FROM (checked derivation / the proof kernel, F2) -----------------
+
+#[test]
+fn hence_valid_step_holds() {
+    // Modus ponens as a witness: the cited premise + cited fact entail the
+    // conclusion, so the step holds. Advisory: the verdict is what it would be
+    // without the HENCE line.
+    let r = vs(
+        "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nHENCE socrates is mortal FROM all_mortal, socrates is human\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.derivation.len(), 1);
+    assert!(r.derivation[0].holds);
+    assert_eq!(r.derivation[0].conclusion, "t.socrates is mortal");
+    assert_eq!(
+        r.derivation[0].from,
+        vec!["all_mortal".to_string(), "t.socrates is human".to_string()]
+    );
+    assert_eq!(r.derivation[0].origin.kind, kw::HENCE);
+}
+
+#[test]
+fn hence_gap_is_named_per_step() {
+    // The cited premise talks about `x b`, not `x a` — the conclusion does not
+    // follow from what the step cites, even though the program is consistent.
+    let r =
+        vs("FACT x a\nPREMISE p:\n    WHEN x b\n    THEN x c\nHENCE x c FROM p, x a\nCHECK x\n")
+            .unwrap();
+    assert!(!r.derivation[0].holds);
+    assert_eq!(r.status, Status::Warning); // p is blocked by UNKNOWN x b — unrelated to HENCE
+}
+
+#[test]
+fn hence_may_cite_an_earlier_hence_conclusion() {
+    // A linear chain: step 2 rests on step 1's conclusion (never on the whole
+    // program). Both steps hold; each was checked separately.
+    let r = vs(
+        "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nRULE mortal_dies:\n    WHEN socrates is mortal\n    THEN socrates will_die\nHENCE socrates is mortal FROM all_mortal, socrates is human\nHENCE socrates will_die FROM mortal_dies, socrates is mortal\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.derivation.len(), 2);
+    assert!(r.derivation[0].holds && r.derivation[1].holds);
+    assert_eq!(r.derivation[1].from[1], "t.socrates is mortal");
+}
+
+#[test]
+fn hence_may_cite_a_construct_written_later() {
+    // Resolution is deferred until the whole program is read, so citing a premise
+    // defined further down the file works.
+    let r = vs("FACT x a\nHENCE x b FROM ab, x a\nRULE ab:\n    WHEN x a\n    THEN x b\nCHECK x\n")
+        .unwrap();
+    assert!(r.derivation[0].holds);
+}
+
+#[test]
+fn hence_not_conclusion_and_negated_ref() {
+    // Polarity flows through both slots: a NOT conclusion checked against a
+    // written NOT fact.
+    let r = vs("NOT door open\nHENCE NOT door open FROM NOT door open\nCHECK door\n").unwrap();
+    assert!(r.derivation[0].holds);
+    assert_eq!(r.derivation[0].conclusion, "NOT t.door open");
+    assert_eq!(r.derivation[0].from, vec!["NOT t.door open".to_string()]);
+}
+
+#[test]
+fn hence_unknown_reference_is_a_compile_error_with_suggestion() {
+    // Citing a name that is neither a construct, a written fact, nor an earlier
+    // conclusion fails compilation — the engine refuses to guess (Law 5).
+    let err = vs(
+        "FACT x a\nRULE all_mortal:\n    WHEN x a\n    THEN x b\nHENCE x b FROM all_mortel\nCHECK x\n",
+    )
+    .unwrap_err();
+    match err {
+        CompileError::UnknownHenceRef {
+            line,
+            reference,
+            suggestion,
+            ..
+        } => {
+            assert_eq!(line, 6);
+            assert_eq!(reference, "all_mortel");
+            assert!(suggestion.contains("all_mortal"), "{suggestion}");
+        }
+        other => panic!("expected UnknownHenceRef, got {other}"),
+    }
+}
+
+#[test]
+fn hence_cited_fact_is_not_an_orphan() {
+    // A fact used only as proof data would otherwise be flagged ORPHAN; citing it
+    // in a HENCE counts as consumption.
+    let r = vs("FACT x a\nHENCE x a FROM x a\nCHECK x\n").unwrap();
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+    assert!(r.derivation[0].holds);
+}
+
+#[test]
+fn hence_broken_earlier_step_stays_local() {
+    // Step 1 is a gap; step 2 cites its conclusion and is checked *locally* (the
+    // chain is a witness, not a proof search): step 2 holds on its own line while
+    // step 1's line names the gap — the reader repairs the first broken step.
+    let r = vs(
+        "FACT x a\nHENCE x b FROM x a\nRULE bc:\n    WHEN x b\n    THEN x c\nHENCE x c FROM bc, x b\nCHECK x\n",
+    )
+    .unwrap();
+    assert!(!r.derivation[0].holds);
+    assert!(r.derivation[1].holds);
+}
+
+// --- FOR EACH <x> MENTIONED (the universal schema, F3) -------------------------
+
+#[test]
+fn mentioned_schema_reaches_an_unenlisted_individual() {
+    // "All men are mortal" reaches Socrates although no SET lists him — writing a
+    // fact about him is what makes him an individual of the domain.
+    let r = vs(
+        "FACT socrates is human\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.socrates is mortal" && d.value == Value::True),
+        "{:?}",
+        r.derived
+    );
+}
+
+#[test]
+fn mentioned_includes_not_and_assume_subjects() {
+    // NOT and ASSUME introduce individuals too. Each blocked instance surfaces as
+    // its own WARNING: `known` warns for a (FACT) and c (ASSUME) — TRUE antecedent,
+    // UNKNOWN consequent — while `voided` warns for b (NOT). Three warnings ⇒ all
+    // three subjects were instantiated.
+    let r = vs(
+        "FACT a is thing\nNOT b is thing\nASSUME c is thing\nPREMISE known FOR EACH x MENTIONED:\n    WHEN x is thing\n    THEN x is known\nPREMISE voided FOR EACH y MENTIONED:\n    WHEN NOT y is thing\n    THEN y is voided\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 3, "{:?}", r.warnings);
+}
+
+#[test]
+fn mentioned_schema_grounds_once_per_subject() {
+    // Two individuals, both human: the schema derives mortality for each.
+    let r = vs(
+        "FACT socrates is human\nFACT plato is human\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.derived.len(), 2, "{:?}", r.derived);
+}
+
+#[test]
+fn mentioned_excludes_var_ports() {
+    // A bare proposition (a VAR port) is not an individual: only `x` is mentioned,
+    // so exactly one instance grounds and exactly one derivation happens.
+    let r = vs(
+        "VAR db_ready DEFAULT true\nFACT x is human\nRULE mortal FOR EACH s MENTIONED:\n    WHEN s is human\n    THEN s is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.derived.len(), 1, "{:?}", r.derived);
+}
+
+#[test]
+fn mentioned_empty_domain_grounds_to_nothing() {
+    // No ground assertion mentions anyone — the schema grounds to zero instances,
+    // like a FOR EACH over an empty relation. VARs alone name no individual.
+    let r = vs(
+        "VAR flag DEFAULT true\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.derived.is_empty() && r.warnings.is_empty());
+}
+
+#[test]
+fn mentioned_is_same_domain_only() {
+    // The schema lives in the template's domain. The entry file's *bare* fact
+    // belongs to the entry domain and must NOT grow the template's schema; the
+    // *qualified* fact deliberately feeds it. Exactly one derivation: tmpl.sock.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.sock is human\nFACT local is human\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(
+        r.derived
+            .iter()
+            .map(|d| d.atom.as_str())
+            .collect::<Vec<_>>(),
+        vec!["tmpl.sock is mortal"],
+        "{:?}",
+        r.derived
+    );
+}
+
+#[test]
+fn mentioned_schema_redefinition_with_different_quant_is_an_error() {
+    // The quantifier participates in the redefinition hash: the same name with a
+    // MENTIONED quantifier vs a plain body is a real redefinition.
+    let err = vs(
+        "FACT a is thing\nRULE r FOR EACH x MENTIONED:\n    WHEN x is thing\n    THEN x is fine\nRULE r:\n    WHEN a is thing\n    THEN a is fine\n",
+    )
+    .unwrap_err();
+    assert!(matches!(err, CompileError::PremiseRedefinition { .. }));
+}
+
+// --- TOTAL <relation> ON <set> (Skolem witness tables, F4) ---------------------
+
+#[test]
+fn total_fully_served_is_silent_and_consumes_pairs() {
+    // Every task has an assignee pair — the ∀∃ claim is discharged by data. No
+    // warning, and the witness pairs are not ORPHANs (they are read by the check).
+    let r = vs(
+        "SET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nFACT backup assigned bob\nTOTAL assigned ON tasks\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.warnings.is_empty());
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+}
+
+#[test]
+fn total_missing_witness_is_a_warning_naming_the_element() {
+    // `backup` has no assignee: WARNING, the unserved element named, with a
+    // data-shaped fix (the LLM supplies the witness, the engine re-checks).
+    let r = vs(
+        "SET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nTOTAL assigned ON tasks\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].origin.kind, kw::TOTAL);
+    assert_eq!(
+        r.warnings[0].blocked_by,
+        vec!["backup (no assigned witness)"]
+    );
+    assert!(
+        r.warnings[0]
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("FACT backup assigned"),
+        "{:?}",
+        r.warnings[0].hint
+    );
+}
+
+#[test]
+fn total_over_an_empty_relation_names_every_element() {
+    // No pair declared at all (or a typo'd relation): everything is unserved.
+    let r = vs("SET tasks\n    deploy\n    backup\nTOTAL assigned ON tasks\nCHECK\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings[0].blocked_by.len(), 2);
+}
+
+#[test]
+fn total_counts_closed_pairs() {
+    // CLOSE runs before the totality scan, so closure-produced pairs serve too:
+    // `a dep b` + `b dep c` close to `a dep c` — every element of `starts` then
+    // has a `dep` pair as subject except `c` (a leaf), which is named.
+    let r = vs(
+        "SET starts\n    a\n    b\n    c\nFACT a dep b\nFACT b dep c\nCLOSE dep TRANSITIVE\nTOTAL dep ON starts\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings[0].blocked_by, vec!["c (no dep witness)"]);
+}
+
+#[test]
+fn total_unknown_set_is_a_compile_error_with_suggestion() {
+    let err = vs("SET tasks\n    deploy\nFACT deploy assigned ana\nTOTAL assigned ON taks\n")
+        .unwrap_err();
+    match err {
+        CompileError::UnknownTotalSet {
+            line,
+            set,
+            suggestion,
+            ..
+        } => {
+            assert_eq!(line, 5);
+            assert_eq!(set, "taks");
+            assert!(suggestion.contains("tasks"), "{suggestion}");
+        }
+        other => panic!("expected UnknownTotalSet, got {other}"),
+    }
+}
+
+#[test]
+fn total_is_fed_by_a_qualified_cross_file_pair() {
+    // The witness table may live in the importing file: a qualified pair feeds
+    // the template's relation before the template's TOTAL is evaluated.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nSET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nTOTAL assigned ON tasks\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.backup assigned bob\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.warnings);
+    assert!(r.warnings.is_empty());
+}
+
+// --- TRY <H> FOR <G> (targeted abduction, F6) ----------------------------------
+
+#[test]
+fn try_for_a_hypothesis_that_explains_the_goal() {
+    // The textbook abduction question, completed: H is consistent with the theory
+    // AND theory + H entails G — the missing premise genuinely explains the goal.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY deploys is_ready FOR deploys unblocked\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried.len(), 1);
+    assert_eq!(r.tried[0].outcome, TryOutcome::Explains);
+    assert_eq!(r.tried[0].goal.as_deref(), Some("t.deploys unblocked"));
+}
+
+#[test]
+fn try_for_a_hypothesis_that_does_not_explain() {
+    // H is compatible, but the goal still does not follow — no explanation.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY backup done FOR deploys unblocked\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::NotExplaining);
+}
+
+#[test]
+fn try_for_a_contradicting_hypothesis_conflicts() {
+    // Check (a) comes first: an H that clashes with the theory can explain
+    // nothing, whatever the goal.
+    let r = vs("FACT deploys is_ready\nTRY NOT deploys is_ready FOR deploys unblocked\nCHECK\n")
+        .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::Conflicts);
+}
+
+#[test]
+fn plain_try_and_targeted_try_coexist() {
+    // The goal-less line keeps the exact L5 outcomes; the targeted one answers the
+    // FOR question. One program, both voices.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\nTRY deploys is_ready FOR deploys unblocked\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried.len(), 2);
+    assert_eq!(r.tried[0].outcome, TryOutcome::Closes);
+    assert_eq!(r.tried[0].goal, None);
+    assert_eq!(r.tried[1].outcome, TryOutcome::Explains);
+}
+
+#[test]
+fn try_for_with_negated_goal() {
+    // Polarity flows through the goal slot: H entails NOT G here.
+    let r = vs(
+        "RULE off:\n    WHEN power cut\n    THEN NOT lamp on\nTRY power cut FOR NOT lamp on\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::Explains);
+    assert_eq!(r.tried[0].goal.as_deref(), Some("NOT t.lamp on"));
+}
+
+// --- PREFERS <winner> OVER <loser> (default priorities, F7) --------------------
+
+#[test]
+fn prefers_penguin_beats_bird() {
+    // Specificity: both defaults are applicable, the declared winner stands, the
+    // loser is suppressed and visible as DEFEATED — no conflict.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.pengu can_fly" && d.value == Value::False),
+        "{:?}",
+        r.derived
+    );
+    assert_eq!(r.defeated.len(), 1);
+    assert_eq!(r.defeated[0].origin.premise.as_deref(), Some("bird_flies"));
+}
+
+#[test]
+fn prefers_works_whatever_the_source_order() {
+    // The loser is written FIRST: without the winners-first re-ordering it would
+    // fire in the same sweep before the winner. The verdict must be identical to
+    // the winner-first spelling.
+    let r = vs(
+        "PREFERS penguin_grounded OVER bird_flies\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nRULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_loser_still_fires_when_winner_is_inapplicable() {
+    // Not a penguin: the winner never fires, so the default stands untouched.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN tweety is bird\n    THEN tweety can_fly\nRULE penguin_grounded:\n    WHEN tweety is penguin\n    THEN NOT tweety can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT tweety is bird\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.tweety can_fly" && d.value == Value::True)
+    );
+    assert!(r.defeated.is_empty());
+}
+
+#[test]
+fn prefers_chain_ranks_transitively() {
+    // a beats b, b beats c: with all three applicable only `a`'s consequent
+    // lands; b is defeated by a, and c by b's... b never fired, so c's exception
+    // (b's consequent) is not established — c fires too. Declared, not derived:
+    // to silence c under a, the author writes PREFERS a OVER c as well (attack
+    // edges are written, never computed — the Dung seed).
+    let r = vs(
+        "RULE a:\n    WHEN x is thing\n    THEN x mode alpha\nRULE b:\n    WHEN x is thing\n    THEN x mode beta\nRULE c:\n    WHEN x is thing\n    THEN x mode gamma\nPREFERS a OVER b\nPREFERS b OVER c\nFACT x is thing\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    let modes: Vec<&str> = r.derived.iter().map(|d| d.atom.as_str()).collect();
+    assert!(modes.contains(&"t.x mode alpha"), "{modes:?}");
+    assert!(!modes.contains(&"t.x mode beta"), "{modes:?}");
+    assert!(modes.contains(&"t.x mode gamma"), "{modes:?}");
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_cycle_is_a_compile_error() {
+    let err = vs(
+        "RULE a:\n    WHEN x p\n    THEN x q\nRULE b:\n    WHEN x p\n    THEN NOT x q\nPREFERS a OVER b\nPREFERS b OVER a\nFACT x p\n",
+    )
+    .unwrap_err();
+    assert!(matches!(err, CompileError::PreferenceCycle { .. }), "{err}");
+}
+
+#[test]
+fn prefers_unknown_or_premise_name_is_an_error() {
+    // A PREMISE is not a RULE (it checks, it does not derive) — priorities only
+    // rank defeasible defaults.
+    let err = vs(
+        "RULE a:\n    WHEN x p\n    THEN x q\nPREMISE guard:\n    WHEN x p\n    THEN x q\nPREFERS a OVER guard\nFACT x p\n",
+    )
+    .unwrap_err();
+    match err {
+        CompileError::UnknownRuleName { name, .. } => assert_eq!(name, "guard"),
+        other => panic!("expected UnknownRuleName, got {other}"),
+    }
+    // And a typo'd rule name gets a suggestion.
+    let err = vs("RULE alpha:\n    WHEN x p\n    THEN x q\nRULE beta:\n    WHEN x p\n    THEN NOT x q\nPREFERS alpa OVER beta\n")
+        .unwrap_err();
+    match err {
+        CompileError::UnknownRuleName {
+            name, suggestion, ..
+        } => {
+            assert_eq!(name, "alpa");
+            assert!(suggestion.contains("alpha"), "{suggestion}");
+        }
+        other => panic!("expected UnknownRuleName, got {other}"),
+    }
+}
+
+#[test]
+fn prefers_with_quantified_winner_covers_every_instance() {
+    // The winner is a FOR EACH rule: every instance's consequent joins the
+    // loser's exceptions, so whichever instance fires suppresses the default.
+    let r = vs(
+        "SET birds\n    pengu\nRULE grounded FOR EACH b IN birds:\n    WHEN b is penguin\n    THEN NOT b can_fly\nRULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nPREFERS grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_backward_pass_stays_consistent() {
+    // BIDIRECTIONAL exercises the CNF path: the loser's clause carries the
+    // winner's consequent as an escape literal, so the SAT view agrees with the
+    // forward pass — no phantom joint unsatisfiability.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK BIDIRECTIONAL\n",
+    )
+    .unwrap();
+    assert_ne!(r.status, Status::Conflict, "{:?}", r.conflicts);
+}
+
+// --- the proof kernel × IMPORT: qualified references work across files ---------
+
+#[test]
+fn hence_and_prove_reach_imported_atoms_by_qualified_name() {
+    // The entry file proves against, and derives from, the template's atoms via
+    // the ordinary `domain.` qualification — the proof-kernel layer needs no new
+    // import machinery. The HENCE cites a qualified fact of ANOTHER domain (facts
+    // match by atom identity, not by source), and PROVE asks about a derived
+    // template atom.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.sock is human\nPROVE tmpl.sock is mortal\nHENCE tmpl.sock is human FROM tmpl.sock is human\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved, "{:?}", r.goals);
+    assert!(r.derivation[0].holds, "{:?}", r.derivation);
+    assert_eq!(r.derivation[0].conclusion, "tmpl.sock is human");
+}

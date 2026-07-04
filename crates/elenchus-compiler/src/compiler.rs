@@ -16,14 +16,16 @@ use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit,
-    Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Derivation, Fact, Goal, Hypothesis,
+    Justification, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, StepRef,
+    Totality, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawAttribution, RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule,
-    canonical_body, clause_sig, key_sig, list_kind, quant_sig, raw_lits,
+    RawAttribution, RawClause, RawDerivation, RawFact, RawGoal, RawHenceRef, RawHypothesis,
+    RawJustification, RawLit, RawRule, RawStepRef, ResolvedDerivation, canonical_body, clause_sig,
+    key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -68,6 +70,15 @@ pub struct Compiler {
     /// domain of the fact's atom, so a qualified `FACT other.a rel b` feeds the
     /// relation `rel` of `other`, not of the declaring file.
     relations: BTreeMap<(String, String), Vec<(String, String)>>,
+    /// Every subject a ground assertion (`FACT`/`NOT`/`ASSUME` with a predicate)
+    /// mentions, keyed by the atom's *resolved* domain — the grounding domain of a
+    /// `FOR EACH <binder> MENTIONED` universal schema. Same-domain by design: an
+    /// imported file in another domain can never silently grow a schema's domain
+    /// (adding an unrelated file cannot change a verdict); only a deliberately
+    /// qualified `FACT other.x …` feeds `other`'s schemas. Bare propositions
+    /// (`VAR` ports) are not individuals and are excluded. A pre-pass like
+    /// [`Compiler::sets`], so a schema may precede the facts that populate it.
+    mentioned: BTreeMap<String, BTreeSet<String>>,
     /// Edge atoms consumed by a relation `FOR EACH` (e.g. each `a linked b`).
     /// They are *read as data* by the quantifier, so they are not idle facts —
     /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
@@ -92,6 +103,24 @@ pub struct Compiler {
     /// `TRY <literal>` hypotheses. Never committed to the model (no clause, no fact);
     /// the solver runs one side-solve per hypothesis and reports the outcome.
     hypotheses: Vec<RawHypothesis>,
+    /// `PROVE <literal>` entailment goals. Never committed to the model (no clause,
+    /// no fact); the solver answers each with two refutation side-solves.
+    goals: Vec<RawGoal>,
+    /// `HENCE … FROM …` steps as written, references unresolved. Turned into
+    /// [`Compiler::derivations`] by [`Compiler::resolve_derivations`] once every
+    /// named construct and fact of the program is known.
+    raw_derivations: Vec<RawDerivation>,
+    /// Resolved `HENCE` steps (the checked-proof witness chain), in program order.
+    derivations: Vec<ResolvedDerivation>,
+    /// `TOTAL <relation> ON <set>` checks as written: `(domain, relation, set,
+    /// origin)`. Evaluated by [`Compiler::check_totality`] once the set and
+    /// relation registries are complete.
+    raw_totals: Vec<(String, String, String, Origin)>,
+    /// Evaluated totality records, carried to the IR (the solver only reports).
+    totality: Vec<Totality>,
+    /// `PREFERS <winner> OVER <loser>` pairs as written: `(source, winner, loser,
+    /// line)`. Desugared by [`Compiler::apply_preferences`] once every rule is in.
+    raw_prefs: Vec<(String, String, String, u32)>,
     /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
     /// clause, no fact); the solver checks each against the world model per agent.
     attributions: Vec<RawAttribution>,
@@ -190,9 +219,26 @@ impl Compiler {
                             .or_default()
                             .push((a.data.subject.to_string(), obj.to_string()));
                     }
+                    self.record_mentioned(&a.data, ctx)?;
                 }
+                Statement::Negation(a) => self.record_mentioned(&a.data, ctx)?,
+                Statement::Assume(l) => self.record_mentioned(&l.data.atom, ctx)?,
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Record a ground assertion's subject as a *mentioned individual* of its
+    /// resolved domain — the population of a `FOR EACH … MENTIONED` schema. A
+    /// bare proposition (no predicate) is a `VAR` port, not an individual.
+    fn record_mentioned(&mut self, a: &Atom, ctx: &DomainCtx) -> Result<(), CompileError> {
+        if a.predicate.is_some() {
+            let dom = ctx.resolve(a.domain)?;
+            self.mentioned
+                .entry(dom)
+                .or_default()
+                .insert(a.subject.to_string());
         }
         Ok(())
     }
@@ -258,8 +304,14 @@ impl Compiler {
                 };
                 self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
             }
-            Statement::Try(l) => {
-                self.add_hypothesis(source, l, ctx)?;
+            Statement::Try { hypo, goal } => {
+                self.add_hypothesis(source, hypo, goal.as_ref(), ctx)?;
+            }
+            Statement::Prove(l) => {
+                self.add_goal(source, l, ctx)?;
+            }
+            Statement::Hence { conclusion, from } => {
+                self.add_derivation(source, conclusion, from, ctx)?;
             }
             Statement::Knows {
                 agent,
@@ -278,6 +330,33 @@ impl Compiler {
             // Declared in the `collect_decls` / `apply_closures` pre-passes;
             // nothing to emit here.
             Statement::Set { .. } | Statement::Close { .. } => {}
+            // A preference names two bare rule labels, so it always ranks rules of
+            // its own source (labels are per-source; a foreign rule is
+            // unrepresentable here). Deferred — the rules may be defined later.
+            Statement::Prefers { winner, loser } => {
+                self.raw_prefs.push((
+                    source.to_string(),
+                    winner.data.to_string(),
+                    loser.data.to_string(),
+                    winner.span.location_line(),
+                ));
+            }
+            // A totality check names a bare relation and set, so it always checks
+            // its own domain's registries (a foreign one is unrepresentable here).
+            // Deferred to `check_totality` — the pairs may come from later files.
+            Statement::Total { relation, set } => {
+                self.raw_totals.push((
+                    ctx.current.clone(),
+                    relation.data.to_string(),
+                    set.data.to_string(),
+                    Origin {
+                        source: source.to_string(),
+                        line: relation.span.location_line(),
+                        premise: None,
+                        kind: kw::TOTAL,
+                    },
+                ));
+            }
             // A port declaration: record it under this file's domain (the first
             // declaration of a `(domain, name)` wins). It is resolved against
             // external values later, in `resolve_ports`.
@@ -396,12 +475,50 @@ impl Compiler {
         Ok(())
     }
 
-    /// Record a `TRY <literal>` hypothesis. The candidate atom is interned here so it
-    /// has a SAT variable in the side-solve (an otherwise-unmentioned atom would have
-    /// no id). No fact and no clause are emitted — the hypothesis never enters the
-    /// model or the verdict; the solver only re-solves the program *plus* this literal
-    /// and reports whether it closes the open gap.
+    /// Record a `TRY <literal> [FOR <goal>]` hypothesis. The candidate atom (and the
+    /// goal's, when present) is interned here so it has a SAT variable in the
+    /// side-solves (an otherwise-unmentioned atom would have no id). No fact and no
+    /// clause are emitted — the hypothesis never enters the model or the verdict;
+    /// the solver only runs the bounded side-checks and reports.
     fn add_hypothesis(
+        &mut self,
+        source: &str,
+        lit: &Located<Literal>,
+        goal: Option<&Located<Literal>>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        let goal = match goal {
+            Some(g) => {
+                let gkey = ctx.key(&g.data.atom)?;
+                self.intern(&gkey);
+                Some(RawLit {
+                    key: gkey,
+                    negated: g.data.negated,
+                })
+            }
+            None => None,
+        };
+        self.hypotheses.push(RawHypothesis {
+            key,
+            negated: lit.data.negated,
+            goal,
+            origin: Origin {
+                source: source.to_string(),
+                line: lit.span.location_line(),
+                premise: None,
+                kind: kw::TRY,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `PROVE <literal>` entailment goal. Like a `TRY` hypothesis, the goal
+    /// atom is interned so it has a SAT variable in the side-solves, but no fact and
+    /// no clause are emitted — the goal never enters the model or the verdict; the
+    /// solver only asks refutationally whether the theory entails it.
+    fn add_goal(
         &mut self,
         source: &str,
         lit: &Located<Literal>,
@@ -409,15 +526,306 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let key = ctx.key(&lit.data.atom)?;
         self.intern(&key);
-        self.hypotheses.push(RawHypothesis {
+        self.goals.push(RawGoal {
             key,
             negated: lit.data.negated,
             origin: Origin {
                 source: source.to_string(),
                 line: lit.span.location_line(),
                 premise: None,
-                kind: kw::TRY,
+                kind: kw::PROVE,
             },
+        });
+        Ok(())
+    }
+
+    /// Record a `HENCE <conclusion> FROM <refs>` step with its references still
+    /// unresolved — a reference may cite a construct or fact written *later* in
+    /// the file, so resolution is deferred to [`Compiler::resolve_derivations`].
+    /// Only the conclusion atom is interned here (it must have a SAT variable in
+    /// the step's side-solve); a reference must match something already interned.
+    fn add_derivation(
+        &mut self,
+        source: &str,
+        conclusion: &Located<Literal>,
+        from: &[Located<Literal>],
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let conclusion_key = ctx.key(&conclusion.data.atom)?;
+        self.intern(&conclusion_key);
+        let mut refs = Vec::with_capacity(from.len());
+        for r in from {
+            let a = &r.data.atom;
+            // A single bare unqualified positive word may name a PREMISE/RULE;
+            // anything longer, negated, or domain-qualified can only be an atom.
+            let word = (!r.data.negated && a.domain.is_none() && a.predicate.is_none())
+                .then(|| a.subject.to_string());
+            let key = ctx.key(a)?;
+            let mut label = String::new();
+            if r.data.negated {
+                label.push_str(kw::NOT);
+                label.push(' ');
+            }
+            if let Some(d) = a.domain {
+                label.push_str(d);
+                label.push('.');
+            }
+            label.push_str(a.subject);
+            for part in [a.predicate, a.object].into_iter().flatten() {
+                label.push(' ');
+                label.push_str(part);
+            }
+            refs.push(RawHenceRef {
+                word,
+                key,
+                negated: r.data.negated,
+                label,
+            });
+        }
+        self.raw_derivations.push(RawDerivation {
+            conclusion_key,
+            conclusion_negated: conclusion.data.negated,
+            refs,
+            origin: Origin {
+                source: source.to_string(),
+                line: conclusion.span.location_line(),
+                premise: None,
+                kind: kw::HENCE,
+            },
+        });
+        Ok(())
+    }
+
+    /// Resolve every `HENCE` step's `FROM` references, in program order. Each
+    /// reference must name something *already written*: a `PREMISE`/`RULE` of the
+    /// same source, a written `FACT`/`NOT`/`ASSUME` with the same polarity, or the
+    /// conclusion of an **earlier** `HENCE` (a linear chain — line order forbids a
+    /// cycle by construction). Anything else is [`CompileError::UnknownHenceRef`]:
+    /// the engine refuses to guess what a proof step rests on (Law 5). Must run
+    /// after every source is accumulated and before [`Compiler::finalize`]; cited
+    /// facts are marked consumed (they are read as proof data, not idle).
+    pub(crate) fn resolve_derivations(&mut self) -> Result<(), CompileError> {
+        for d in core::mem::take(&mut self.raw_derivations) {
+            let mut refs = Vec::with_capacity(d.refs.len());
+            for r in d.refs {
+                let is_name = r.word.as_ref().is_some_and(|w| {
+                    self.defined
+                        .contains_key(&(d.origin.source.clone(), w.clone()))
+                });
+                let resolved =
+                    if is_name {
+                        RawStepRef::Construct {
+                            source: d.origin.source.clone(),
+                            name: r.word.expect("checked by is_name"),
+                        }
+                    } else if self
+                        .facts
+                        .iter()
+                        .any(|f| f.key == r.key && (matches!(f.value, Value::True) != r.negated))
+                    {
+                        // Cited as proof data — keep the fact out of the ORPHAN lint.
+                        self.relation_consumed.insert(r.key.clone());
+                        RawStepRef::Fact {
+                            key: r.key,
+                            negated: r.negated,
+                        }
+                    } else if let Some(i) = self.derivations.iter().position(|e| {
+                        e.conclusion_key == r.key && e.conclusion_negated == r.negated
+                    }) {
+                        RawStepRef::Earlier(i as u32)
+                    } else {
+                        let names: Vec<&str> = self
+                            .defined
+                            .keys()
+                            .filter(|(s, _)| *s == d.origin.source)
+                            .map(|(_, n)| n.as_str())
+                            .collect();
+                        let suggestion = did_you_mean(&r.label, &names);
+                        return Err(CompileError::UnknownHenceRef {
+                            file: d.origin.source.clone(),
+                            line: d.origin.line,
+                            reference: r.label,
+                            suggestion,
+                        });
+                    };
+                refs.push(resolved);
+            }
+            self.derivations.push(ResolvedDerivation {
+                conclusion_key: d.conclusion_key,
+                conclusion_negated: d.conclusion_negated,
+                refs,
+                origin: d.origin,
+            });
+        }
+        Ok(())
+    }
+
+    /// Evaluate every `TOTAL <relation> ON <set>`: one linear scan of the declared
+    /// pairs per check — does every element of the set appear as a pair's subject?
+    /// The `∀x ∃y` meaning with zero quantifier syntax: the `∃` was discharged as
+    /// `FACT` data by the author, and the engine only verifies the table (it never
+    /// proposes a witness — Law 5). Runs after all sources are accumulated (the
+    /// registries are complete, closures applied); witness pairs are marked
+    /// consumed so the ORPHAN lint stays quiet about them.
+    pub(crate) fn check_totality(&mut self) -> Result<(), CompileError> {
+        for (domain, relation, set, origin) in core::mem::take(&mut self.raw_totals) {
+            let Some(elements) = self.sets.get(&(domain.clone(), set.clone())) else {
+                let suggestion = nearest_set_suggestion(&set, &domain, &self.sets);
+                return Err(CompileError::UnknownTotalSet {
+                    file: origin.source,
+                    line: origin.line,
+                    set,
+                    suggestion,
+                });
+            };
+            let pairs = self
+                .relations
+                .get(&(domain.clone(), relation.clone()))
+                .cloned()
+                .unwrap_or_default();
+            let mut missing = Vec::new();
+            for el in elements {
+                let mut served = false;
+                for (subj, obj) in pairs.iter().filter(|(subj, _)| subj == el) {
+                    served = true;
+                    // The witness pair is read as data by this check, not idle.
+                    self.relation_consumed.insert(AtomKey {
+                        domain: domain.clone(),
+                        subject: subj.clone(),
+                        predicate: Some(relation.clone()),
+                        object: Some(obj.clone()),
+                    });
+                }
+                if !served {
+                    missing.push(el.clone());
+                }
+            }
+            self.totality.push(Totality {
+                relation,
+                set,
+                missing,
+                origin,
+            });
+        }
+        Ok(())
+    }
+
+    /// Desugar every `PREFERS <winner> OVER <loser>` onto the existing `UNLESS`
+    /// exception slot: each loser instance gains the winner's consequent literals
+    /// as exceptions, so when the winner actually fires (its consequent becomes
+    /// established) the loser's default is suppressed by the ordinary defeasible
+    /// gate — and shows up as `DEFEATED`, exactly like an `UNLESS`. The solver is
+    /// untouched.
+    ///
+    /// Validation first: both names must be defined `RULE`s of the same source
+    /// ([`CompileError::UnknownRuleName`]), and the pairs must form a DAG
+    /// ([`CompileError::PreferenceCycle`] — the `CLOSE … TRANSITIVE` fence).
+    /// Finally the rules are **stably re-ordered** winners-first (by preference
+    /// rank), so a winner fires in the same forward-chaining sweep *before* its
+    /// loser is considered, whatever their source order. A program with no
+    /// `PREFERS` is untouched — same rules, same order, byte-identical output.
+    /// Like `UNLESS`, an already-fired default is not retracted if the winner's
+    /// antecedent only becomes derivable later — inherent to the monotone L3 pass.
+    pub(crate) fn apply_preferences(&mut self) -> Result<(), CompileError> {
+        if self.raw_prefs.is_empty() {
+            return Ok(());
+        }
+        let prefs = core::mem::take(&mut self.raw_prefs);
+        // (1) Both names of every pair must be defined RULEs of their source.
+        for (source, winner, loser, line) in &prefs {
+            for name in [winner, loser] {
+                let is_rule = self.rules.iter().any(|r| {
+                    r.origin.source == *source && r.origin.premise.as_deref() == Some(name)
+                });
+                if !is_rule {
+                    let names: Vec<&str> = self
+                        .rules
+                        .iter()
+                        .filter(|r| r.origin.source == *source)
+                        .filter_map(|r| r.origin.premise.as_deref())
+                        .collect();
+                    return Err(CompileError::UnknownRuleName {
+                        file: source.clone(),
+                        line: *line,
+                        name: name.clone(),
+                        suggestion: did_you_mean(name, &names),
+                    });
+                }
+            }
+        }
+        // (2) Priority ranks via longest-path relaxation over the winner→loser
+        // edges; a rank that keeps growing past the node count is a cycle.
+        let mut rank: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+        for (source, winner, loser, _) in &prefs {
+            rank.entry((source, winner)).or_insert(0);
+            rank.entry((source, loser)).or_insert(0);
+        }
+        let nodes = rank.len() as u32;
+        for pass in 0..=nodes {
+            let mut changed = false;
+            for (source, winner, loser, line) in &prefs {
+                let w = rank[&(source.as_str(), winner.as_str())];
+                let l = rank
+                    .get_mut(&(source.as_str(), loser.as_str()))
+                    .expect("seeded above");
+                if *l <= w {
+                    *l = w + 1;
+                    changed = true;
+                }
+                if pass == nodes && changed {
+                    // Still relaxing after |nodes| passes → a cycle exists; name
+                    // every rule that is part of one (rank exceeded the maximum a
+                    // DAG allows).
+                    let names: Vec<&str> = rank
+                        .iter()
+                        .filter(|&(_, &r)| r >= nodes)
+                        .map(|((_, n), _)| *n)
+                        .collect();
+                    return Err(CompileError::PreferenceCycle {
+                        file: source.clone(),
+                        line: *line,
+                        names: names.join(", "),
+                    });
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // (3) Desugar: every loser instance gains every winner instance's
+        // consequent literals as exceptions (deduped — declaring a pair twice is
+        // idempotent).
+        for (source, winner, loser, _) in &prefs {
+            let winner_cons: Vec<RawLit> = self
+                .rules
+                .iter()
+                .filter(|r| {
+                    r.origin.source == *source && r.origin.premise.as_deref() == Some(winner)
+                })
+                .flat_map(|r| r.consequent.iter().cloned())
+                .collect();
+            for r in self.rules.iter_mut().filter(|r| {
+                r.origin.source == *source && r.origin.premise.as_deref() == Some(loser)
+            }) {
+                for c in &winner_cons {
+                    if !r
+                        .exceptions
+                        .iter()
+                        .any(|e| e.key == c.key && e.negated == c.negated)
+                    {
+                        r.exceptions.push(c.clone());
+                    }
+                }
+            }
+        }
+        // (4) Winners fire first: stable sort by rank (rules outside any
+        // preference keep rank 0 and their relative order).
+        self.rules.sort_by_key(|r| {
+            r.origin
+                .premise
+                .as_deref()
+                .and_then(|n| rank.get(&(r.origin.source.as_str(), n)).copied())
+                .unwrap_or(0)
         });
         Ok(())
     }
@@ -506,6 +914,23 @@ impl Compiler {
                         });
                     }
                 };
+                for el in &elements {
+                    let grounded = subst_body(body, &[(binder.data, el)]);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                }
+                Ok(())
+            }
+            // `FOR EACH <binder> MENTIONED`: the universal schema — instantiate the
+            // body once per subject this domain's ground assertions mention. The
+            // domain is what was *written here*: finite, closed at end of
+            // compilation, and linear (doubling the program at most doubles the
+            // instances). An empty domain grounds to nothing, like an empty relation.
+            Some(Quant::Mentioned { binder }) => {
+                let elements: Vec<String> = self
+                    .mentioned
+                    .get(&ctx.current)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
                 for el in &elements {
                     let grounded = subst_body(body, &[(binder.data, el)]);
                     self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
@@ -1184,7 +1609,49 @@ impl Compiler {
                     atom: id_of(&h.key),
                     negated: h.negated,
                 },
+                goal: h.goal.as_ref().map(|g| Lit {
+                    atom: id_of(&g.key),
+                    negated: g.negated,
+                }),
                 origin: h.origin,
+            })
+            .collect();
+
+        let derivations = self
+            .derivations
+            .into_iter()
+            .map(|d| Derivation {
+                conclusion: Lit {
+                    atom: id_of(&d.conclusion_key),
+                    negated: d.conclusion_negated,
+                },
+                refs: d
+                    .refs
+                    .into_iter()
+                    .map(|r| match r {
+                        RawStepRef::Construct { source, name } => {
+                            StepRef::Construct { source, name }
+                        }
+                        RawStepRef::Fact { key, negated } => StepRef::Fact(Lit {
+                            atom: id_of(&key),
+                            negated,
+                        }),
+                        RawStepRef::Earlier(i) => StepRef::Earlier(i),
+                    })
+                    .collect(),
+                origin: d.origin,
+            })
+            .collect();
+
+        let goals = self
+            .goals
+            .into_iter()
+            .map(|g| Goal {
+                lit: Lit {
+                    atom: id_of(&g.key),
+                    negated: g.negated,
+                },
+                origin: g.origin,
             })
             .collect();
 
@@ -1215,6 +1682,9 @@ impl Compiler {
             unwitnessed_exists: self.unwitnessed_exists,
             justifications,
             hypotheses,
+            goals,
+            derivations,
+            totality: self.totality,
             attributions,
         }
     }

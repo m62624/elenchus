@@ -94,6 +94,67 @@ pub enum CompileError {
         /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
         suggestion: String,
     },
+    /// A `PREFERS <winner> OVER <loser>` named something that is not a defined
+    /// `RULE` of the same source — either an unknown name (a typo) or a `PREMISE`
+    /// (priorities only make sense between defeasible defaults, which derive).
+    #[error("{file}:{line}: PREFERS names '{name}', which is not a defined RULE{suggestion}")]
+    UnknownRuleName {
+        /// The source the offending `PREFERS` is in.
+        file: String,
+        /// 1-based line of the `PREFERS`.
+        line: u32,
+        /// The name that matched no `RULE`.
+        name: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// The declared `PREFERS` pairs form a cycle: some rule transitively beats
+    /// itself. Priorities must be a DAG — the same fence `CLOSE … TRANSITIVE`
+    /// enforces on relations (Law 1: the unbounded case is rejected, not chased).
+    #[error(
+        "{file}:{line}: PREFERS forms a priority cycle among rules: {names} \
+         — priorities must be a DAG"
+    )]
+    PreferenceCycle {
+        /// The source the offending `PREFERS` is in.
+        file: String,
+        /// 1-based line of a `PREFERS` on the cycle.
+        line: u32,
+        /// The rule names on the cycle, comma-joined.
+        names: String,
+    },
+    /// A `TOTAL <relation> ON <set>` named a set that was never declared with
+    /// `SET`. Usually a typo; the suggestion offers the nearest declared set.
+    #[error("{file}:{line}: TOTAL checks '{set}', which is not a declared SET{suggestion}")]
+    UnknownTotalSet {
+        /// The source the offending `TOTAL` is in.
+        file: String,
+        /// 1-based line of the `TOTAL`.
+        line: u32,
+        /// The undeclared set name that was referenced.
+        set: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// A `HENCE … FROM` reference matched nothing written: not a `PREMISE`/`RULE`
+    /// name of the same source, not a written `FACT`/`NOT`/`ASSUME` with that
+    /// polarity, and not an earlier `HENCE` conclusion. A proof step may only rest
+    /// on what exists — the engine refuses to guess (usually a typo'd name or a
+    /// fact that was never asserted).
+    #[error(
+        "{file}:{line}: HENCE cites '{reference}', which is not a PREMISE/RULE name, \
+         a written fact, or an earlier HENCE conclusion{suggestion}"
+    )]
+    UnknownHenceRef {
+        /// The source the offending `HENCE` is in.
+        file: String,
+        /// 1-based line of the `HENCE`.
+        line: u32,
+        /// The reference as written (e.g. `mortality` or `NOT x b`).
+        reference: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
     /// `CLOSE <relation> TRANSITIVE` found a cycle: a node transitively reaches
     /// itself. Transitive closure requires a DAG (e.g. a dependency graph).
     #[error(

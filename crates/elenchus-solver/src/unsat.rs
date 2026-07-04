@@ -1,12 +1,14 @@
 //! The minimal-unsat-core search: which named constructs / facts are jointly
 //! responsible for an unsatisfiable system, via SAT under assumptions.
 use crate::cnf::{build_cnf, clause_lit, fact_lit, rule_consequent_clause};
-use crate::report::{CoreItem, Fix, FixKind, Tried, TryOutcome, label};
+use crate::report::{
+    CoreItem, Fix, FixKind, Hence, ProveOutcome, Proved, Tried, TryOutcome, label,
+};
 use crate::sat;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use elenchus_compiler::{Compiled, Origin, Value};
+use elenchus_compiler::{Compiled, Lit, Origin, StepRef, Value};
 
 /// The minimal set of `ASSUME` hypotheses to retract so an
 /// otherwise-consistent program stops contradicting itself.
@@ -357,6 +359,134 @@ pub(crate) fn key(o: &Origin) -> (String, u32) {
     (o.source.clone(), o.line)
 }
 
+/// The entailment (⊨) side-check: for each `PROVE <literal>` goal, ask
+/// refutationally whether the theory entails it. `theory ∧ ¬goal` unsatisfiable →
+/// [`ProveOutcome::Proved`]; `theory ∧ goal` unsatisfiable →
+/// [`ProveOutcome::Refuted`]; both satisfiable → [`ProveOutcome::Open`] (the honest
+/// three-valued answer); both unsatisfiable → [`ProveOutcome::Vacuous`] (the theory
+/// itself is inconsistent, so it entails everything). Purely advisory — the goal is
+/// never committed; cost is exactly two bounded solves per *written* goal, and the
+/// engine never picks goals itself (Law 5).
+pub(crate) fn prove_goals(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<Proved>, sat::BudgetExhausted> {
+    if c.goals.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (cnf, _) = build_cnf(c);
+    // Every query below is verdict-only (no model contents reach the report), so
+    // the turbo profile is sound from the first solve. One incremental solver
+    // answers both refutation questions for every goal.
+    let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
+    inc.set_budget(budget.cloned());
+    let mut out = Vec::with_capacity(c.goals.len());
+    for g in &c.goals {
+        // The goal literal as written (positive unless `PROVE NOT …`).
+        let lit = sat::SatLit::new(g.lit.atom, !g.lit.negated);
+        let neg_unsat = matches!(inc.solve(&[lit.negate()])?, sat::Solved::Unsat(_));
+        let pos_unsat = matches!(inc.solve(&[lit])?, sat::Solved::Unsat(_));
+        let outcome = match (neg_unsat, pos_unsat) {
+            (true, false) => ProveOutcome::Proved,
+            (false, true) => ProveOutcome::Refuted,
+            (false, false) => ProveOutcome::Open,
+            (true, true) => ProveOutcome::Vacuous,
+        };
+        let name = label(c, g.lit.atom);
+        let text = if g.lit.negated {
+            alloc::format!("NOT {name}")
+        } else {
+            name
+        };
+        out.push(Proved {
+            origin: g.origin.clone(),
+            label: text,
+            outcome,
+        });
+    }
+    Ok(out)
+}
+
+/// A literal rendered with its surface polarity (`NOT …` when negated) — the
+/// shared spelling for HENCE conclusions and references.
+fn lit_label(c: &Compiled, l: &Lit) -> String {
+    let name = label(c, l.atom);
+    if l.negated {
+        alloc::format!("NOT {name}")
+    } else {
+        name
+    }
+}
+
+/// The checked-derivation (proof kernel) pass: verify each `HENCE <conclusion>
+/// FROM <refs>` step separately — do the clauses of the *cited* references alone
+/// entail the conclusion? One refutation solve per step over a CNF containing
+/// exactly: every clause of each cited `PREMISE`/`RULE` (a defeasible rule keeps
+/// its `UNLESS` escapes), one unit per cited fact, one unit per cited earlier
+/// conclusion (each step is checked *locally* — a broken earlier step is visible
+/// on its own line, and citing its conclusion does not silently re-break later
+/// steps), plus the negated conclusion. UNSAT → the step holds; SAT → the gap is
+/// here. Purely advisory — no step is committed, the main solve is untouched, and
+/// cost is O(steps written) × one bounded solve (Law 5: the engine never completes
+/// a proof or picks premises).
+pub(crate) fn check_derivations(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<Hence>, sat::BudgetExhausted> {
+    if c.derivations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<Hence> = Vec::with_capacity(c.derivations.len());
+    for d in &c.derivations {
+        let mut cnf = sat::Cnf::new(c.atoms.len());
+        let mut from = Vec::with_capacity(d.refs.len());
+        for r in &d.refs {
+            match r {
+                StepRef::Construct { source, name } => {
+                    for cl in c.clauses.iter().filter(|cl| {
+                        cl.origin.source == *source && cl.origin.premise.as_deref() == Some(name)
+                    }) {
+                        cnf.add_clause(cl.lits.iter().map(clause_lit).collect());
+                    }
+                    for rl in c.rules.iter().filter(|rl| {
+                        rl.origin.source == *source && rl.origin.premise.as_deref() == Some(name)
+                    }) {
+                        for cons in &rl.consequent {
+                            cnf.add_clause(rule_consequent_clause(rl, cons));
+                        }
+                    }
+                    from.push(name.clone());
+                }
+                StepRef::Fact(l) => {
+                    cnf.add_clause(vec![sat::SatLit::new(l.atom, !l.negated)]);
+                    from.push(lit_label(c, l));
+                }
+                StepRef::Earlier(i) => {
+                    let concl = &c.derivations[*i as usize].conclusion;
+                    cnf.add_clause(vec![sat::SatLit::new(concl.atom, !concl.negated)]);
+                    from.push(lit_label(c, concl));
+                }
+            }
+        }
+        // The refutation target: assert the conclusion's negation.
+        cnf.add_clause(vec![sat::SatLit::new(
+            d.conclusion.atom,
+            d.conclusion.negated,
+        )]);
+        // Verdict-only (UNSAT = the step holds), so the turbo profile is sound.
+        let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
+        inc.set_budget(budget.cloned());
+        let holds = matches!(inc.solve(&[])?, sat::Solved::Unsat(_));
+        out.push(Hence {
+            origin: d.origin.clone(),
+            conclusion: lit_label(c, &d.conclusion),
+            from,
+            holds,
+        });
+    }
+    Ok(out)
+}
+
 /// The abduction (L5) side-check: for each `TRY <literal>` hypothesis, judge whether
 /// asserting the supplied candidate would resolve the program's open model. Purely
 /// advisory — the candidate is **never committed**; each verdict is one bounded
@@ -432,10 +562,28 @@ pub(crate) fn tried_hypotheses(
     for h in &c.hypotheses {
         // Assume the candidate literal (positive unless written `TRY NOT …`).
         let lit = sat::SatLit::new(h.lit.atom, !h.lit.negated);
-        let outcome = match count2(&mut inc, &[lit])? {
-            0 => TryOutcome::Conflicts,
-            1 if !base_unique => TryOutcome::Closes,
-            _ => TryOutcome::StillOpen,
+        let outcome = match &h.goal {
+            // Plain TRY (L5 abduction): count models under the candidate.
+            None => match count2(&mut inc, &[lit])? {
+                0 => TryOutcome::Conflicts,
+                1 if !base_unique => TryOutcome::Closes,
+                _ => TryOutcome::StillOpen,
+            },
+            // `TRY H FOR G` (targeted abduction): the textbook pair of checks —
+            // (a) theory + H must stay consistent, (b) theory + H ⊨ G, decided
+            // refutationally (theory + H + ¬G unsatisfiable). Both are plain
+            // verdict-only solves; a past session's retired guard cannot affect
+            // them (its blocking clause is satisfied at level 0 forever).
+            Some(g) => match inc.solve(&[lit])? {
+                sat::Solved::Unsat(_) => TryOutcome::Conflicts,
+                sat::Solved::Sat(_) => {
+                    let goal = sat::SatLit::new(g.atom, !g.negated);
+                    match inc.solve(&[lit, goal.negate()])? {
+                        sat::Solved::Unsat(_) => TryOutcome::Explains,
+                        sat::Solved::Sat(_) => TryOutcome::NotExplaining,
+                    }
+                }
+            },
         };
         let name = label(c, h.lit.atom);
         let text = if h.lit.negated {
@@ -443,9 +591,11 @@ pub(crate) fn tried_hypotheses(
         } else {
             name
         };
+        let goal_text = h.goal.as_ref().map(|g| lit_label(c, g));
         tried.push(Tried {
             origin: h.origin.clone(),
             label: text,
+            goal: goal_text,
             outcome,
         });
     }

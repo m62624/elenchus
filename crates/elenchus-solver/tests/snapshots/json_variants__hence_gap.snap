@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"WARNING","exit_code":1,"conflicts":[],"warnings":[{"premise":"p","kind":"PREMISE","source":"v.vrf","line":3,"blocked_by":["d.x b","d.x c"],"hint":"nothing determines `d.x b` — add `FACT d.x b` (or `NOT …`), or if a PREMISE's THEN is meant to establish it, make that PREMISE a RULE so it derives the value"}],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"goals":[],"derivation":[{"premise":null,"kind":"HENCE","source":"v.vrf","line":6,"conclusion":"d.x c","from":["p","d.x a"],"holds":false}],"beliefs":[]}

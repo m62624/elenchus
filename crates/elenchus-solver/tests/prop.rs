@@ -243,6 +243,9 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         unwitnessed_exists: Vec::new(),
         justifications: Vec::new(),
         hypotheses: Vec::new(),
+        goals: Vec::new(),
+        derivations: Vec::new(),
+        totality: Vec::new(),
         attributions: Vec::new(),
     }
 }
@@ -1517,6 +1520,7 @@ proptest! {
             .enumerate()
             .map(|(i, &(atom, negated))| Hypothesis {
                 lit: Lit { atom, negated },
+                goal: None,
                 origin: Origin {
                     source: "<prop>".into(),
                     line: 200 + i as u32,

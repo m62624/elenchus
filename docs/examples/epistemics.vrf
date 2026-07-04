@@ -1,0 +1,33 @@
+// A vetted epistemology library — first principles only, no facts. A human
+// curates it once; the model imports it and only supplies the concrete case.
+//
+// The classical analysis: "S knows that P" = justified true belief (JTB).
+//   (1) P is true          — the truth condition
+//   (2) S believes P       — the belief condition
+//   (3) S is justified      — the justification condition
+// Knowledge is their conjunction. This file states the constraints; the importing
+// file writes the facts and asks the engine whether the case amounts to knowledge.
+
+DOMAIN epistemics
+
+// Each JTB condition is necessary: knowledge entails all three.
+PREMISE knowledge_needs_truth:
+    WHEN claim is_knowledge
+    THEN claim is_true
+
+PREMISE knowledge_needs_belief:
+    WHEN claim is_knowledge
+    THEN claim is_believed
+
+PREMISE knowledge_needs_justification:
+    WHEN claim is_knowledge
+    THEN claim is_justified
+
+// The Gettier defeater (Gettier 1963): a claim can be justified, true, AND believed
+// yet fail to be knowledge when luck — not the evidence — is what makes it true.
+// A "gettiered" claim is therefore NOT knowledge, however impeccable its JTB
+// credentials. This one *derives* a value (non-knowledge), so it is a RULE, not a
+// checked PREMISE — the importing file's `FACT claim is_gettiered` fires it.
+RULE gettier_defeats_knowledge:
+    WHEN claim is_gettiered
+    THEN NOT claim is_knowledge

@@ -1,0 +1,14 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+assertion_line: 313
+expression: "report(r#\"\n        FACT socrates is human\n        NOT socrates is divine\n        RULE mortal:\n            WHEN socrates is human\n            THEN socrates is mortal\n        PROVE socrates is mortal\n        PROVE socrates is divine\n        CHECK socrates\n        \"#)"
+---
+RESULT: CONSISTENT
+  PROVE     d.socrates is mortal
+      PROVED: it follows from the theory   (checked)
+  PROVE     d.socrates is divine
+      REFUTED: its negation follows from the theory   (checked)
+  DERIVED   d.socrates is mortal = TRUE   from mortal (RULE)  [v.vrf:5]
+  ORPHAN    NOT d.socrates is divine — not used by any premise or rule (no effect on the result)
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 0

@@ -18,6 +18,14 @@ pub mod kw {
     pub const NOT: &str = "NOT";
     pub const ASSUME: &str = "ASSUME";
     pub const TRY: &str = "TRY";
+    pub const PROVE: &str = "PROVE";
+    pub const HENCE: &str = "HENCE";
+    pub const FROM: &str = "FROM";
+    pub const MENTIONED: &str = "MENTIONED";
+    pub const TOTAL: &str = "TOTAL";
+    pub const ON: &str = "ON";
+    pub const PREFERS: &str = "PREFERS";
+    pub const OVER: &str = "OVER";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -129,9 +137,27 @@ pub const KEYWORDS: &[Keyword] = &[
         text: kw::TRY,
         top_level: true,
         card: card(
-            "TRY [NOT] <Subject> <predicate> [<object>]",
-            "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
-            "TRY release is_ready",
+            "TRY [NOT] <Subject> <predicate> [<object>] [FOR [NOT] <atom>]",
+            "test a hypothesis without committing it: does asserting this atom close the gap? with FOR <goal>: does it explain the goal — stay consistent AND entail it? (advisory — never changes the verdict)",
+            "TRY release is_ready FOR release unblocked",
+        ),
+    },
+    Keyword {
+        text: kw::PROVE,
+        top_level: true,
+        card: card(
+            "PROVE [NOT] <Subject> <predicate> [<object>]",
+            "ask entailment: does the theory entail this atom? reports PROVED / REFUTED / OPEN (advisory — never changes the verdict)",
+            "PROVE socrates is mortal",
+        ),
+    },
+    Keyword {
+        text: kw::HENCE,
+        top_level: true,
+        card: card(
+            "HENCE [NOT] <Subject> <predicate> [<object>] FROM <ref>[, <ref>]",
+            "a checked derivation step: do the named premises entail this conclusion? each ref is a PREMISE/RULE name, a written fact, or an earlier HENCE conclusion (advisory — a broken step is reported, the verdict never changes)",
+            "HENCE socrates is mortal FROM all_mortal, socrates is human",
         ),
     },
     Keyword {
@@ -198,6 +224,24 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::PREFERS,
+        top_level: true,
+        card: card(
+            "PREFERS <winner-rule> OVER <loser-rule>",
+            "declare priority between two defeasible RULEs ('penguin beats bird'): when both apply, the winner stands and the loser is DEFEATED; a preference cycle is a compile error",
+            "PREFERS penguin_rule OVER bird_rule",
+        ),
+    },
+    Keyword {
+        text: kw::TOTAL,
+        top_level: true,
+        card: card(
+            "TOTAL <relation> ON <set>",
+            "the witness-table check ('every task has an assignee'): each element of <set> must be the subject of at least one FACT pair of <relation>; unserved elements are WARNINGs, named",
+            "TOTAL assigned ON tasks",
+        ),
+    },
+    Keyword {
         text: kw::VAR,
         top_level: true,
         card: card(
@@ -252,12 +296,39 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::MENTIONED,
+        top_level: false,
+        card: card(
+            "PREMISE/RULE <name> FOR EACH <binder> MENTIONED:  then the usual body",
+            "the universal schema: instantiate the body once per subject mentioned by this domain's FACT/NOT/ASSUME lines — 'all men are mortal' reaches every written individual, no SET needed",
+            "RULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal",
+        ),
+    },
+    Keyword {
         text: kw::IN,
         top_level: false,
         card: card(
             "FOR EACH <binder> IN <set>",
             "names the declared SET a FOR EACH quantifier ranges over",
             "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::OVER,
+        top_level: false,
+        card: card(
+            "PREFERS <winner-rule> OVER <loser-rule>",
+            "names the rule whose default the preferred rule suppresses when both are applicable",
+            "PREFERS penguin_rule OVER bird_rule",
+        ),
+    },
+    Keyword {
+        text: kw::ON,
+        top_level: false,
+        card: card(
+            "TOTAL <relation> ON <set>",
+            "names the declared SET whose every element the TOTAL check requires a witness pair for",
+            "TOTAL assigned ON tasks",
         ),
     },
     Keyword {
@@ -357,6 +428,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "EXISTS <binder> WITNESS <term>  then one condition line using the binder",
             "prove EXISTS by naming the one element that satisfies it — needs no SET; grounds to a single atom",
             "EXISTS h WITNESS auth_service\n    h is ready",
+        ),
+    },
+    Keyword {
+        text: kw::FROM,
+        top_level: false,
+        card: card(
+            "HENCE <atom> FROM <ref>[, <ref>]",
+            "names what a HENCE step rests on: PREMISE/RULE names, written facts, or earlier HENCE conclusions, separated by commas",
+            "HENCE socrates is mortal FROM all_mortal, socrates is human",
         ),
     },
     Keyword {

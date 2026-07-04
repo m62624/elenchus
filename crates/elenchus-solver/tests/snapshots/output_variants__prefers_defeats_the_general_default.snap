@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+assertion_line: 448
+expression: "report(r#\"\n        RULE bird_flies:\n            WHEN pengu is bird\n            THEN pengu can_fly\n        RULE penguin_grounded:\n            WHEN pengu is penguin\n            THEN NOT pengu can_fly\n        PREFERS penguin_grounded OVER bird_flies\n        FACT pengu is bird\n        FACT pengu is penguin\n        CHECK\n        \"#)"
+---
+RESULT: CONSISTENT
+  DERIVED   d.pengu can_fly = FALSE   from penguin_grounded (RULE)  [v.vrf:6]
+  DEFEATED  bird_flies (RULE)  [v.vrf:3]   default d.pengu can_fly suppressed by d.pengu can_fly
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived, 1 defeated
+EXIT_CODE: 0

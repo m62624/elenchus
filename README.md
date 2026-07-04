@@ -51,7 +51,7 @@ No ML inside — the engine is a pipeline of small, classic algorithms:
 |-----|-----------|
 | parsing `.vrf` text | parser combinators (nom), one statement per line |
 | syntax errors | every error found in one pass, grouped by keyword; "did you mean" hints via Levenshtein distance |
-| atoms (`app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
+| atoms (e.g. `app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
 | deriving facts from `RULE`s | forward chaining to a fixpoint |
 | truth values | three-valued Kleene logic (TRUE / FALSE / UNKNOWN — "unknown" is not "false") |
 | `CHECK … BIDIRECTIONAL` | a small CDCL SAT solver (same algorithm family as MiniSat / varisat) |
@@ -146,8 +146,16 @@ first principle (`EXCLUSIVE`/`FORBIDS`/`ONEOF`/`ATLEAST`, `EXISTS … IN` a set 
 `EXISTS … WITNESS` a named element, or `WHEN … THEN`); `RULE` derives facts, and
 `RULE … UNLESS` makes it a default with exceptions; `SET` + `FOR EACH` quantify a body
 over a set or relation, and `CLOSE <rel> TRANSITIVE|SYMMETRIC|REFLEXIVE|EQUIVALENCE|SCC`
-closes a relation at compile time; `TRY` reports whether a candidate would pin an open
-model without committing it; `KNOWS`/`BELIEVES` attribute a claim to a named agent
+closes a relation at compile time; `FOR EACH … MENTIONED` is the universal schema
+("all men are mortal" reaches every written individual, no set needed) and
+`TOTAL <rel> ON <set>` checks a witness table (every element has a pair — the ∀∃
+question as data); `TRY` reports whether a candidate would pin an open
+model without committing it, and `TRY … FOR <goal>` asks whether it would *explain*
+the goal (targeted abduction); `PROVE` asks entailment itself — does this follow?
+(PROVED / REFUTED / OPEN) — and `HENCE … FROM …` hands the engine a derivation to
+grade step by step, naming the first broken step; `PREFERS <rule> OVER <rule>`
+ranks two defaults (the loser is DEFEATED, a cycle is a compile error);
+`KNOWS`/`BELIEVES` attribute a claim to a named agent
 (knowledge is factive, belief is not); `IMPORT` reuses another domain (its atoms are
 `<domain>.<atom>`); `CHECK` (optionally `BIDIRECTIONAL`) runs it. See
 [`docs/SPEC.md`](docs/SPEC.md) for the grammar and every construct in full — including

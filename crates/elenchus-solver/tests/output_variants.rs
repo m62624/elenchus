@@ -304,6 +304,163 @@ fn try_leaves_it_still_open() {
     ));
 }
 
+// --- PROVE (entailment / the ⊨ goal) ----------------------------------------
+
+#[test]
+fn prove_proved_and_refuted() {
+    // The theory entails the first goal (a fact + a rule force it) and refutes the
+    // second (its negation is asserted). Both are advisory: verdict CONSISTENT.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        NOT socrates is divine
+        RULE mortal:
+            WHEN socrates is human
+            THEN socrates is mortal
+        PROVE socrates is mortal
+        PROVE socrates is divine
+        CHECK socrates
+        "#
+    ));
+}
+
+#[test]
+fn prove_open_goal() {
+    // Nothing pins the goal either way — the honest three-valued answer is OPEN.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT x a
+        RULE r:
+            WHEN x b
+            THEN x c
+        PROVE x c
+        CHECK x
+        "#
+    ));
+}
+
+#[test]
+fn prove_vacuous_on_inconsistent_theory() {
+    // A contradictory theory entails everything; the goal line says so instead of
+    // pretending the goal was meaningfully PROVED.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT x a
+        NOT x a
+        PROVE x b
+        "#
+    ));
+}
+
+#[test]
+fn prove_negative_goal() {
+    // `PROVE NOT …` asks entailment of the negation; the label keeps the polarity.
+    insta::assert_snapshot!(report(
+        r#"
+        NOT door open
+        PROVE NOT door open
+        CHECK door
+        "#
+    ));
+}
+
+// --- HENCE … FROM (checked derivation / the proof kernel) --------------------
+
+#[test]
+fn hence_chain_holds_then_gap() {
+    // Step 1 is a valid inference from what it cites; step 2 cites only step 1's
+    // conclusion, which does not entail being buried — the gap is named on its
+    // own line. Advisory: the verdict is untouched.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        RULE all_mortal:
+            WHEN socrates is human
+            THEN socrates is mortal
+        HENCE socrates is mortal FROM all_mortal, socrates is human
+        HENCE socrates is buried FROM socrates is mortal
+        CHECK socrates
+        "#
+    ));
+}
+
+// --- FOR EACH <x> MENTIONED (the universal schema) ---------------------------
+
+#[test]
+fn mentioned_schema_derives_for_every_written_individual() {
+    // The classical syllogism with no SET: whoever is written about is covered.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        FACT plato is human
+        NOT rock is human
+        RULE mortal FOR EACH x MENTIONED:
+            WHEN x is human
+            THEN x is mortal
+        CHECK
+        "#
+    ));
+}
+
+// --- TOTAL <relation> ON <set> (Skolem witness tables) ------------------------
+
+#[test]
+fn total_with_missing_witnesses_warns_by_name() {
+    // "Every task has an assignee" as a data check: backup and audit have no
+    // pair, so the WARNING names them and shows the data-shaped fix.
+    insta::assert_snapshot!(report(
+        r#"
+        SET tasks
+            deploy
+            backup
+            audit
+        FACT deploy assigned ana
+        TOTAL assigned ON tasks
+        CHECK
+        "#
+    ));
+}
+
+// --- TRY <H> FOR <G> (targeted abduction) ------------------------------------
+
+#[test]
+fn try_for_explains_and_not_explaining() {
+    // Two candidates for the same goal: the right one explains it, the unrelated
+    // one does not — the engine's answer to "which missing premise explains G?".
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        TRY deploys is_ready FOR deploys unblocked
+        TRY backup done FOR deploys unblocked
+        CHECK
+        "#
+    ));
+}
+
+// --- PREFERS <winner> OVER <loser> (default priorities) -----------------------
+
+#[test]
+fn prefers_defeats_the_general_default() {
+    // Specificity as a declared pair: penguin beats bird, so the general default
+    // is DEFEATED and the specific one derives — no conflict between defaults.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE bird_flies:
+            WHEN pengu is bird
+            THEN pengu can_fly
+        RULE penguin_grounded:
+            WHEN pengu is penguin
+            THEN NOT pengu can_fly
+        PREFERS penguin_grounded OVER bird_flies
+        FACT pengu is bird
+        FACT pengu is penguin
+        CHECK
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        RULE gate:\n            WHEN deploys is_ready\n            THEN deploys unblocked\n        TRY deploys is_ready FOR deploys unblocked\n        TRY backup done FOR deploys unblocked\n        CHECK\n        \"#)"
+---
+RESULT: CONSISTENT
+  TRY       d.deploys is_ready FOR d.deploys unblocked
+      explains the goal: consistent, and theory + hypothesis entails it   (checked)
+  TRY       d.backup done FOR d.deploys unblocked
+      does not explain: the goal still does not follow with the hypothesis   (checked)
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 0

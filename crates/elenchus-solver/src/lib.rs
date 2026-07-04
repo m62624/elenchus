@@ -59,7 +59,7 @@ use elenchus_compiler::Compiled;
 
 use crate::analysis::{orphan_facts, similar_atom_pairs};
 use crate::eval::Eval;
-use crate::unsat::{retract_assumptions, tried_hypotheses};
+use crate::unsat::{check_derivations, prove_goals, retract_assumptions, tried_hypotheses};
 
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
@@ -73,8 +73,8 @@ pub use elenchus_compiler::{
     normalize_import_path, read_data_bindings, read_data_source,
 };
 pub use report::{
-    Conflict, CoreItem, Derived, FalseBelief, Fix, FixKind, OrphanFact, Report, SimilarAtoms,
-    Status, TraceReason, TraceStep, Tried, TryOutcome, Warning,
+    Conflict, CoreItem, Derived, FalseBelief, Fix, FixKind, Hence, OrphanFact, ProveOutcome,
+    Proved, Report, SimilarAtoms, Status, TraceReason, TraceStep, Tried, TryOutcome, Warning,
 };
 pub use v3::V3;
 
@@ -175,6 +175,9 @@ fn solve_impl(c: &Compiled, budget: Option<sat::Budget>) -> Result<Report, sat::
     e.check_premises();
     // Unwitnessed EXISTS → WARNING; must precede `finish` so it can raise the verdict.
     e.flag_unwitnessed_exists();
+    // TOTAL … ON … with unserved elements → WARNING naming them (the witness-table
+    // ∀∃ check, evaluated at compile time). Also before `finish`.
+    e.flag_totality();
     // FACT … BECAUSE justifications (L2): ground FALSE → CONFLICT, UNKNOWN → WARNING.
     // Also before `finish`, and after the forward pass has settled the model.
     e.check_justifications();
@@ -211,6 +214,15 @@ fn solve_impl(c: &Compiled, budget: Option<sat::Budget>) -> Result<Report, sat::
     // asserting it would close the open model, conflict, or leave it open. Post-verdict,
     // one bounded side-solve per hypothesis; never influences status/exit code.
     report.tried = tried_hypotheses(c, budget.as_ref())?;
+    // Advisory only: the entailment (⊨) side-check — for each `PROVE <literal>` goal,
+    // whether the theory entails it (PROVED), its negation (REFUTED), neither (OPEN),
+    // or is itself inconsistent (VACUOUS). Post-verdict, two bounded side-solves per
+    // goal; never influences status/exit code.
+    report.goals = prove_goals(c, budget.as_ref())?;
+    // Advisory only: the checked-derivation (proof kernel) pass — each `HENCE` step
+    // verified separately against exactly what it cites; a broken step is named.
+    // Post-verdict, one bounded side-solve per step; never influences status/exit.
+    report.derivation = check_derivations(c, budget.as_ref())?;
     Ok(report)
 }
 

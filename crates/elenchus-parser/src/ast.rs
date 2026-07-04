@@ -96,6 +96,19 @@ pub enum Quant<'a> {
         /// The declared set this ranges over.
         set: Located<'a, &'a str>,
     },
+    /// `FOR EACH <binder> MENTIONED` — the *universal schema*: range over every
+    /// subject a ground assertion (`FACT`/`NOT`/`ASSUME` with a predicate) of the
+    /// **same domain** mentions. The domain is still named — "everything written
+    /// here" — and is finite and closed the moment compilation ends: the author
+    /// introduces individuals by writing facts about them, so *"all men are
+    /// mortal"* reaches a Socrates nobody enlisted in a `SET`. Still exactly one
+    /// binder; a second variable does not parse. Same-domain scoping means an
+    /// imported file in another domain can never silently grow the schema (only a
+    /// deliberately qualified `FACT other.x …` feeds `other`'s schemas).
+    Mentioned {
+        /// The name bound inside the body (substituted per mentioned subject).
+        binder: Located<'a, &'a str>,
+    },
     /// `FOR EACH <left> <predicate> <right>` — range over the declared `FACT`
     /// pairs of that relation (e.g. every `FACT a linked b`), binding `left` to a
     /// pair's subject and `right` to its object. This is the channel for
@@ -231,13 +244,44 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
-    /// `TRY [NOT] <atom>` — a *hypothesis under test*, never committed. Unlike a
-    /// `FACT`/`ASSUME`, it does not enter the model or affect the verdict; the engine
-    /// runs one side-check and reports whether asserting it would **close** the open
-    /// model, **conflict** with what is established, or leave it **still open** — the
-    /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
-    /// checks it. The `Literal` carries the optional `NOT`.
-    Try(Located<'a, Literal<'a>>),
+    /// `TRY [NOT] <atom> [FOR [NOT] <atom>]` — a *hypothesis under test*, never
+    /// committed. Unlike a `FACT`/`ASSUME`, it does not enter the model or affect
+    /// the verdict; the engine runs bounded side-checks and reports. Without `FOR`
+    /// (plain L5 abduction): would asserting the hypothesis **close** the open
+    /// model, **conflict** with what is established, or leave it **still open**?
+    /// With `FOR <goal>` (targeted abduction): the textbook question *which
+    /// missing premise explains G?* — the hypothesis is accepted only if (a)
+    /// `theory + H` stays consistent and (b) `theory + H` **entails** the goal
+    /// (the PROVE machine). The LLM supplies both candidates; the engine only
+    /// checks. Each `Literal` carries its optional `NOT`.
+    Try {
+        /// The candidate hypothesis, with its optional leading `NOT`.
+        hypo: Located<'a, Literal<'a>>,
+        /// The goal the hypothesis is supposed to explain (`FOR …`), if any.
+        goal: Option<Located<'a, Literal<'a>>>,
+    },
+    /// `PROVE [NOT] <atom>` — an *entailment goal*: does the theory entail this
+    /// literal (⊨)? The sibling of `TRY`: TRY asks *compatibility*, PROVE asks
+    /// *consequence*. Checked refutationally post-verdict (theory ∧ ¬goal
+    /// unsatisfiable → PROVED; theory ∧ goal unsatisfiable → REFUTED; both
+    /// satisfiable → OPEN), so it emits no clause and never enters the model or the
+    /// verdict — the LLM supplies the goal, the engine runs two bounded refutation
+    /// checks. The `Literal` carries the optional `NOT`.
+    Prove(Located<'a, Literal<'a>>),
+    /// `HENCE [NOT] <atom> FROM <ref>[, <ref>]*` — one *checked derivation step*:
+    /// the author claims the named premises entail the conclusion, and the engine
+    /// verifies exactly that claim (one refutation check over the cited clauses).
+    /// Each `ref` is written as a literal; the compiler resolves it to a
+    /// `PREMISE`/`RULE` name of the same source, a written `FACT`/`NOT`/`ASSUME`,
+    /// or the conclusion of an *earlier* `HENCE` (a linear chain — line order
+    /// forbids a cycle by construction). Advisory: a step emits no clause and
+    /// never changes the verdict; a broken step is reported by name.
+    Hence {
+        /// The step's conclusion, with its optional leading `NOT`.
+        conclusion: Located<'a, Literal<'a>>,
+        /// The comma-separated `FROM` references (at least one).
+        from: Vec<Located<'a, Literal<'a>>>,
+    },
     /// `KNOWS <agent> [NOT] <atom>` / `BELIEVES <agent> [NOT] <atom>` — attribute a
     /// claim about the world to a *named agent* (the modal/epistemic L6 layer). The
     /// agent is a bare identifier, a report-side label only: it never becomes an atom
@@ -271,6 +315,34 @@ pub enum Statement<'a> {
         relation: Located<'a, &'a str>,
         /// Which closure to apply.
         kind: CloseKind,
+    },
+    /// `TOTAL <relation> ON <set>` — the Skolem witness-table check (the `∀x ∃y`
+    /// meaning with zero quantifier syntax): every element of the declared `SET`
+    /// must appear as the *subject* of at least one declared pair of `relation`.
+    /// The `∃` is discharged **as data** — ordinary 3-part `FACT`s are the witness
+    /// table — and the engine performs one flat linear scan at compile time.
+    /// Unserved elements are reported by name as WARNINGs (a claimed existence
+    /// with no witness pointed at, like an unwitnessed `EXISTS`).
+    Total {
+        /// The relation whose declared pairs are the witness table.
+        relation: Located<'a, &'a str>,
+        /// The declared `SET` of left elements that must each have a witness.
+        set: Located<'a, &'a str>,
+    },
+    /// `PREFERS <winner> OVER <loser>` — a declared priority between two named
+    /// defeasible `RULE`s of the same source (specificity: *"penguin beats
+    /// bird"*). When both defaults are applicable, the winner stands and the
+    /// loser is suppressed — visible as a `DEFEATED` note, exactly like an
+    /// `UNLESS` defeat (it desugars onto the same exception slot at compile
+    /// time). An undeclared clash keeps today's behavior; a preference cycle is
+    /// a compile error (priorities must be a DAG, like `CLOSE … TRANSITIVE`).
+    /// The checkable seed of Dung argumentation: attack edges are *written*,
+    /// extensions are never computed.
+    Prefers {
+        /// The rule that wins when both are applicable.
+        winner: Located<'a, &'a str>,
+        /// The rule whose default is suppressed by the winner.
+        loser: Located<'a, &'a str>,
     },
     /// `VAR <name> [DEFAULT true|false]` — declare an external boolean **port**: a
     /// single-word proposition whose truth is supplied from outside (CLI/API/data).

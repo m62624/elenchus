@@ -398,17 +398,23 @@ rules, plus `DOMAIN`/`IMPORT`/`AS` for namespacing and reuse.
 | `NOT` | a FALSE assertion | premise (unchecked) |
 | `ASSUME` | a soft, **retractable** assertion (`[NOT]` atom) — a hypothesis | premise (unchecked, soft) |
 | `TRY` | test a hypothesis **without committing it** (`[NOT]` atom): the engine reports whether asserting it would close the open model, conflict, or leave it open — never enters the model or the verdict (abduction, L5) | hypothesis (advisory) |
+| `TRY … FOR …` | **targeted** abduction: accept the hypothesis only if it is consistent with the theory AND `theory + H` entails the goal — the "which missing premise explains G?" question | hypothesis (advisory) |
+| `PROVE` | ask **entailment** (`[NOT]` atom): does the theory entail the goal? PROVED / REFUTED / OPEN (or VACUOUS on an inconsistent theory), checked refutationally, never committed (⊨) | goal (advisory) |
+| `HENCE … FROM …` | one **checked derivation step**: do the cited references (PREMISE/RULE names, written facts, earlier HENCE conclusions) alone entail the conclusion? a broken step is named — natural deduction as a witness | proof step (advisory) |
 | `KNOWS` | attribute **factive** knowledge to an agent (`<Agent> [NOT]` atom): knowledge implies truth, so knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING; knowing both φ and ¬φ is a CONFLICT (epistemic, L6) | attribution (checked) |
 | `BELIEVES` | attribute a **non-factive** belief to an agent (`<Agent> [NOT]` atom): a false belief is reported as an informational note (exit 0, never raises the verdict) but never a CONFLICT — belief may be mistaken (epistemic, L6) | attribution (advisory) |
 | `PREMISE` | a first principle — **checked** | constraint |
 | `RULE` | an inference rule — **produces a fact** (defeasible when it carries `UNLESS`) | rule, forward chaining |
 | `WHEN` / `AND` / `THEN` | implication body (in `PREMISE` and `RULE`) | |
 | `RULE … UNLESS …` | a defeasible exception on a `RULE`: it still derives its `THEN` **unless** the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only | rule + exception |
+| `PREFERS … OVER …` | declared priority between two named `RULE`s ("penguin beats bird"): when both apply, the winner stands and the loser is DEFEATED; a cycle is a compile error | rule priority |
 | `EXCLUSIVE` / `FORBIDS` / `ONEOF` / `ATLEAST` | list constraints (in `PREMISE`) | |
 | `EXISTS … IN …` | at least one element of a `SET` satisfies the condition (a `PREMISE` body; the ∃ dual of `FOR EACH`) | quantification |
 | `EXISTS … WITNESS …` | prove the existential by naming the one element that satisfies it — no `SET`; grounds to a single atom (the open-domain ∃) | quantification |
 | `SET` | declare a finite set of elements to quantify over | quantification |
 | `FOR EACH … IN …` / `FOR EACH … <rel> …` | quantifier on a `PREMISE`/`RULE` header (over a `SET` or a relation's `FACT` pairs) | quantification |
+| `FOR EACH … MENTIONED` | the **universal schema**: instantiate once per subject this domain's `FACT`/`NOT`/`ASSUME` lines mention — "all men are mortal" reaches every written individual, no `SET` needed | quantification |
+| `TOTAL … ON …` | the **witness-table** check (`∀x ∃y` as data): every element of the `SET` must be the subject of at least one `FACT` pair of the relation; unserved elements are WARNINGs, named | quantification |
 | `CLOSE … TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` | close a relation at compile time under the named kind (`TRANSITIVE` requires a DAG: cycle = error) | quantification |
 | `IMPORT` | pull in another domain for reuse (`IMPORT "x.vrf" [AS <alias>]`) | reuse |
 | `AS` | local alias for an imported domain | reuse |
@@ -470,6 +476,17 @@ CHECK <Subject> BIDIRECTIONAL    // enables the backward pass
 
 The difference between `PREMISE` and `RULE` with an identical WHEN/THEN body:
 `PREMISE` **checks** (no convergence → CONFLICT), `RULE` **produces** a new fact.
+A corollary that catches newcomers: if a WHEN/THEN is meant to *establish* its
+consequent (e.g. "gettiered ⇒ not knowledge"), it must be a `RULE` — a `PREMISE`
+with a true antecedent and an otherwise-unset consequent does not derive it, it
+**warns** that nothing determines it. Reach for `RULE` to derive, `PREMISE` to guard.
+
+`CHECK`'s optional argument is a **bare subject name**, never a `domain.`-qualified
+atom (`CHECK claim`, not `CHECK epistemics.claim` — the latter does not parse); it
+just filters the report to that subject. Omit it to check the whole program. A
+subject imported under another domain is still named by its bare subject (`CHECK
+claim` reaches `epistemics.claim`), because a subject is domain-scoped only in its
+atom key, not in the `CHECK` filter.
 
 ## Bounded quantification: `SET`, `FOR EACH`, `CLOSE`
 
@@ -584,6 +601,18 @@ others expect or produce self/back pairs by design. `CLOSE` **replaces** the
 relation's pairs with the closed set, so an edge that drops out of the closure
 (e.g. a one-way edge under `SCC`) is no longer consumed by a `FOR EACH` — by intent.
 
+**A closed pair grounds; it is not a fact.** The pairs `CLOSE` adds are the
+*domain of quantification* — they create `FOR EACH x rel y` instances and serve
+`TOTAL rel ON …` — but the closure does **not** assert the derived pair as a true
+atom. So `FOR EACH x dep y` over a transitively-closed `dep` *does* range over the
+derived `a→c` (its instance body, keyed on the endpoints `x`/`y`, runs), yet
+`PROVE a dep c` reports **OPEN** and a `WHEN a dep c` (or `WHEN x dep y` for the
+derived pair) sees it as UNKNOWN — only a *written* `FACT` pair is a true
+proposition. Rule of thumb: to act on reachability, **quantify over the relation
+and use the endpoints**, never gate a `WHEN`/`PROVE` on an individual *derived*
+pair. A pair whose only consumer is `CLOSE` (nothing quantifies or totals over the
+result) has no effect on the verdict and is correctly flagged `ORPHAN`.
+
 **Feeding a relation across files.** A relation is identified by `(domain,
 predicate)`, and grounding declarations are collected for the *whole* import graph
 before any file grounds. So an importing file can supply edges to an imported
@@ -613,6 +642,159 @@ most one" exist (`ONEOF`/`ATLEAST`/`EXCLUSIVE`), counts beyond one do not. The s
 rule governs the `CLOSE` family: each kind is a single-relation graph op, never a
 join of two relations (which would be a product), so a closure is at worst `O(V³)`
 in the relation's own node count — polynomial, bounded by declared data.
+
+## The proof kernel: `PROVE`, `HENCE`, `MENTIONED`, `TOTAL`, `TRY … FOR`, `PREFERS`
+
+The layers above answer *"is all of this consistent together?"*. Formal logic asks
+more: *does φ follow — and show the derivation*. This family adds exactly that
+vertical — **entailment (⊨) → checked derivation steps → instantiation of
+universals** — as bounded checks over what was *written*, never a search over what
+could be imagined. The division of labor is the hybrid's: **the LLM is the prover**
+(it invents goals, proofs, witnesses, priorities), **the engine is a small trusted
+kernel** that only re-checks each claim, the way a proof assistant's kernel
+re-checks a human's proof. None of these constructs emits a clause into the main
+solve (except the `MENTIONED` schema, which grounds like any `FOR EACH`), so a
+program without them behaves byte-identically.
+
+### `PROVE [NOT] <atom>` — the entailment question
+
+*Does the theory entail this?* Checked refutationally, post-verdict:
+`theory ∧ ¬goal` unsatisfiable → **PROVED**; `theory ∧ goal` unsatisfiable →
+**REFUTED**; both satisfiable → **OPEN** (the honest three-valued answer); both
+unsatisfiable → **VACUOUS** (the theory itself is inconsistent — it entails
+everything, so fix the CONFLICT first). The sibling of `TRY`: `TRY` asks
+*compatibility*, `PROVE` asks *consequence*. Advisory — two bounded side-solves per
+goal, no clause, no verdict change.
+
+```vrf
+FACT socrates is human
+RULE mortal:
+    WHEN socrates is human
+    THEN socrates is mortal
+PROVE socrates is mortal      // → PROVED: it follows from the theory  (checked)
+```
+
+### `HENCE [NOT] <atom> FROM <ref>[, <ref>]*` — a checked derivation step
+
+Natural deduction as a **witness language**: write a proof as a chain of steps, and
+the engine verifies each step *separately* — do the **cited** references alone
+entail the conclusion? — with one refutation solve over exactly the cited clauses
+(never the whole program; strictness is the point). A broken step is reported by
+name: `does not follow from what it cites — the gap is here`.
+
+Each comma-separated `ref` resolves to one of three *already-written* things:
+a **`PREMISE`/`RULE` name** of the same source (the step may use every clause it
+desugared to), a **written `FACT`/`NOT`/`ASSUME`** with the same polarity, or the
+**conclusion of an earlier `HENCE`** (a linear chain — line order makes a cycle
+unrepresentable). Anything else is a compile error with a did-you-mean suggestion:
+a proof step may only rest on what exists. A name is resolved **in the citing
+file only**: a `HENCE` in an importing file cannot cite an *imported* `PREMISE`/
+`RULE` by name — cite instead the qualified fact that principle establishes
+(`HENCE epistemics.claim is_x FROM my_local_rule, some fact`), since a proof owns
+its own steps. Steps are checked locally: a step that
+cites a broken earlier conclusion still gets its own honest verdict, and the reader
+repairs the first broken line. Advisory — no clause, no verdict change; cited facts
+count as consumed (no ORPHAN lint).
+
+```vrf
+FACT socrates is human
+RULE all_mortal:
+    WHEN socrates is human
+    THEN socrates is mortal
+HENCE socrates is mortal FROM all_mortal, socrates is human   // holds (checked)
+HENCE socrates is buried FROM socrates is mortal              // the gap is here
+```
+
+### `FOR EACH <binder> MENTIONED` — the universal schema
+
+Plain `FOR EACH` ranges only over declared `SET`s/relations, so *"all men are
+mortal"* cannot reach a Socrates the author forgot to enlist. A `MENTIONED`
+quantifier on a `PREMISE`/`RULE` header instantiates the body once per **subject
+mentioned by a ground assertion (`FACT`/`NOT`/`ASSUME` with a predicate) of the
+same domain** — the author introduces individuals by writing facts about them. The
+domain is still named ("everything written here"), finite, and closed the moment
+compilation ends; still exactly **one** binder (a second variable does not parse).
+
+Scoping is **same-domain by design**: importing an unrelated file (another
+`DOMAIN`) can never silently grow a schema's population and flip a verdict. Only a
+deliberately qualified `FACT other.x …` feeds `other`'s schemas — the same explicit
+channel that feeds cross-file relations. Bare propositions (`VAR` ports) are not
+individuals.
+
+```vrf
+FACT socrates is human
+FACT plato is human
+RULE mortal FOR EACH x MENTIONED:
+    WHEN x is human
+    THEN x is mortal          // derives for socrates AND plato — no SET needed
+```
+
+### `TOTAL <relation> ON <set>` — Skolem witness tables (∀∃ with zero new nesting)
+
+Classical logic writes *"every task has an assignee"* as a nested `∀x ∃y`. That
+nesting **does not and will not parse**. Instead the author discharges the `∃` **as
+data** — ordinary 3-part facts are the witness table — and the engine performs one
+flat compile-time scan: does every element of the `SET` appear as the *subject* of
+at least one declared pair of the relation? Runs after `CLOSE` and after cross-file
+feeding, so closed and imported qualified pairs serve as witnesses. Unserved
+elements raise a **WARNING naming each one** (claimed existence, no witness pointed
+at — the unwitnessed-`EXISTS` situation) with a data-shaped fix; a fully-served
+check is silent, and witness pairs are consumed (no ORPHAN lint). Naming an
+undeclared set is a compile error.
+
+```vrf
+SET tasks
+    deploy
+    backup
+FACT deploy assigned ana
+TOTAL assigned ON tasks       // WARNING: backup (no assigned witness)
+```
+
+### `TRY <H> FOR <G>` — targeted abduction
+
+Plain `TRY H` answers only compatibility. The `FOR` tail completes the textbook
+abduction question — *which missing premise explains G?* The hypothesis is accepted
+(**explains**) only if (a) `theory + H` stays consistent and (b) `theory + H`
+**entails** `G` (the `PROVE` machine); a compatible H that leaves G unforced is
+**does not explain**, and an H clashing with the theory stays **conflicts** whatever
+the goal. Advisory — two bounded side-solves per targeted line; the goal-less form
+is unchanged.
+
+```vrf
+RULE gate:
+    WHEN deploys is_ready
+    THEN deploys unblocked
+TRY deploys is_ready FOR deploys unblocked   // explains the goal  (checked)
+TRY backup done      FOR deploys unblocked   // does not explain   (checked)
+```
+
+### `PREFERS <winner> OVER <loser>` — declared default priorities
+
+Specificity — *"penguin beats bird"* — as a written pair between two named
+defeasible `RULE`s of the same source. When both defaults are applicable, the
+winner stands and the loser is suppressed, visible as an ordinary **DEFEATED** note:
+the pair desugars onto the same exception slot `UNLESS` uses (the loser gains the
+winner's consequent as an exception), and rules are stably re-ordered winners-first
+so the verdict does not depend on source order. An undeclared clash keeps today's
+behavior; naming anything that is not a defined `RULE` is a compile error; a
+priority **cycle is a compile error** (priorities must be a DAG, like
+`CLOSE … TRANSITIVE`). Chains are declared, not derived: `a OVER b` and `b OVER c`
+does **not** imply `a OVER c` — attack edges are written, never computed. Like
+`UNLESS`, an already-fired default is not retracted when the winner's antecedent
+only becomes derivable later in the same fixpoint — inherent to the monotone
+forward pass.
+
+```vrf
+RULE bird_flies:
+    WHEN pengu is bird
+    THEN pengu can_fly
+RULE penguin_grounded:
+    WHEN pengu is penguin
+    THEN NOT pengu can_fly
+PREFERS penguin_grounded OVER bird_flies
+FACT pengu is bird
+FACT pengu is penguin      // → NOT can_fly derived; bird_flies DEFEATED, no conflict
+```
 
 ## Performance — why the engine cannot blow up
 
@@ -899,7 +1081,9 @@ line        = comment | blank | statement ;
 comment     = "//" , { any-char-except-newline } , NEWLINE ;
 blank       = NEWLINE ;
 
-statement   = domain | import | set | close | fact | negation | assume | var | provide | premise | rule | check ;
+statement   = domain | import | set | close | total | fact | negation | assume | try
+            | prove | hence | knows | believes | prefers | var | provide | premise
+            | rule | check ;
 
 domain      = "DOMAIN" , name , NEWLINE ;      (* required, first statement of a file *)
 import      = "IMPORT" , string , [ "AS" , name ] , NEWLINE ;
@@ -908,9 +1092,21 @@ element_line = identifier , NEWLINE ;
 close       = "CLOSE" , name , closure_kind , NEWLINE ;
 closure_kind = "TRANSITIVE" | "SYMMETRIC" | "REFLEXIVE" | "EQUIVALENCE" | "SCC" ;
             (* only TRANSITIVE requires a DAG; the others allow cycles *)
+total       = "TOTAL" , name , "ON" , name , NEWLINE ;
+            (* witness-table ∀∃: every element of the SET needs a pair of the relation *)
 fact        = "FACT" , atom , [ "BECAUSE" , atom ] , NEWLINE ;  (* optional ground: the justification the engine checks *)
 negation    = "NOT"  , atom , NEWLINE ;
 assume      = "ASSUME" , literal , NEWLINE ;   (* soft: literal allows a leading NOT *)
+try         = "TRY" , literal , [ "FOR" , literal ] , NEWLINE ;
+            (* uncommitted hypothesis; with FOR: targeted abduction (does H explain G?) *)
+prove       = "PROVE" , literal , NEWLINE ;    (* entailment goal: PROVED / REFUTED / OPEN *)
+hence       = "HENCE" , literal , "FROM" , literal , { "," , literal } , NEWLINE ;
+            (* one checked derivation step; each ref names a construct, a written
+               fact, or an earlier HENCE conclusion — nothing else compiles *)
+knows       = "KNOWS" , name , literal , NEWLINE ;     (* factive attribution (L6) *)
+believes    = "BELIEVES" , name , literal , NEWLINE ;  (* non-factive attribution (L6) *)
+prefers     = "PREFERS" , name , "OVER" , name , NEWLINE ;
+            (* priority between two RULEs of this source; a cycle is a compile error *)
 var         = "VAR" , name , [ "DEFAULT" , bool ] , NEWLINE ;  (* external boolean port *)
 provide     = "PROVIDE" , atom , ":" , bool , NEWLINE ;        (* bind a port (bare atom) or assert an atom; atom may carry a domain. prefix *)
 bool        = "true" | "false" ;               (* positional, not reserved as identifiers *)
@@ -918,9 +1114,11 @@ check       = "CHECK" , [ subject ] , [ "BIDIRECTIONAL" ] , NEWLINE ;
 
 premise       = "PREMISE" , name , [ for_each ] , ":" , NEWLINE , ( list_body | exists_body | impl_body ) ;
 rule        = "RULE"  , name , [ for_each ] , ":" , NEWLINE , impl_body ;
-for_each    = "FOR" , "EACH" , name , ( "IN" , name | name , name ) ;
-            (* one binder over a SET, or `<a> <relation> <b>` over a relation's facts;
-               exactly one per header — there is no production for a second *)
+for_each    = "FOR" , "EACH" , name , ( "IN" , name | "MENTIONED" | name , name ) ;
+            (* one binder over a SET, over every subject this domain's ground
+               assertions mention (MENTIONED — the universal schema), or
+               `<a> <relation> <b>` over a relation's facts; exactly one per
+               header — there is no production for a second *)
 
 list_body   = list_op , NEWLINE , atom_line , atom_line , { atom_line } ;  (* >= 2 *)
 list_op     = "EXCLUSIVE" | "FORBIDS" | "ONEOF" | "ATLEAST" ;
@@ -978,13 +1176,14 @@ names are yours.
 How the parser finds the end of an `PREMISE`/`RULE` block: the block continues while
 lines start with body words (`WHEN`/`AND`/`THEN`, a `list_op`, or `EXISTS`) or with
 an identifier (list atoms / a condition line), and ends at the first line with a top-level word
-(`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`FACT`/`NOT`/`VAR`/`PROVIDE`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
+(`DOMAIN`/`IMPORT`/`SET`/`CLOSE`/`TOTAL`/`FACT`/`NOT`/`ASSUME`/`TRY`/`PROVE`/`HENCE`/`KNOWS`/`BELIEVES`/`PREFERS`/`VAR`/`PROVIDE`/`PREMISE`/`RULE`/`CHECK`) or at EOF. An `AND` before `THEN` is
 an antecedent condition; an `AND` after `THEN` is an additional consequent.
 
-Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME VAR
-PROVIDE DEFAULT PREMISE RULE CHECK BIDIRECTIONAL WHEN AND THEN EXCLUSIVE FORBIDS
-ONEOF ATLEAST EXISTS SET FOR EACH IN CLOSE TRANSITIVE SYMMETRIC REFLEXIVE
-EQUIVALENCE SCC`. An identifier may not coincide
+Reserved words (always CAPS, in full): `DOMAIN IMPORT AS FACT NOT ASSUME TRY
+PROVE HENCE FROM KNOWS BELIEVES VAR PROVIDE DEFAULT PREMISE RULE CHECK
+BIDIRECTIONAL WHEN AND THEN UNLESS EXCLUSIVE FORBIDS ONEOF ATLEAST EXISTS WITNESS
+BECAUSE SET FOR EACH IN MENTIONED CLOSE TRANSITIVE SYMMETRIC REFLEXIVE
+EQUIVALENCE SCC TOTAL ON PREFERS OVER`. An identifier may not coincide
 with a reserved word. (`true`/`false` are *not* reserved — they are parsed
 positionally after `VAR … DEFAULT` and `PROVIDE …:`, so they remain usable as
 ordinary names elsewhere.)

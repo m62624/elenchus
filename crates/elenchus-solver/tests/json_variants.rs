@@ -190,6 +190,41 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "try_still_open",
             "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nRULE gate2:\n    WHEN backup done\n    THEN backup safe\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\n",
         ),
+        // PROVE goals (entailment / ⊨): one case per outcome so the populated
+        // `goals` array shape is snapshotted for proved / refuted / open / vacuous.
+        (
+            "prove_proved",
+            "FACT socrates is human\nRULE mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nPROVE socrates is mortal\nCHECK socrates\n",
+        ),
+        (
+            "prove_refuted",
+            "NOT socrates is immortal\nPROVE socrates is immortal\nCHECK socrates\n",
+        ),
+        (
+            "prove_open",
+            "FACT x a\nRULE r:\n    WHEN x b\n    THEN x c\nPROVE x c\nCHECK x\n",
+        ),
+        ("prove_vacuous", "FACT x a\nNOT x a\nPROVE x b\nCHECK x\n"),
+        // TRY … FOR (targeted abduction): both goal outcomes, so the populated
+        // `tried` array shape with a non-null `for` is snapshotted.
+        (
+            "try_for_explains",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY deploys is_ready FOR deploys unblocked\nCHECK\n",
+        ),
+        (
+            "try_for_not_explaining",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY backup done FOR deploys unblocked\nCHECK\n",
+        ),
+        // HENCE steps (checked derivation): a holding step and a gap, so the
+        // populated `derivation` array shape is snapshotted for both verdicts.
+        (
+            "hence_holds",
+            "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nHENCE socrates is mortal FROM all_mortal, socrates is human\nCHECK socrates\n",
+        ),
+        (
+            "hence_gap",
+            "FACT x a\nPREMISE p:\n    WHEN x b\n    THEN x c\nHENCE x c FROM p, x a\nCHECK x\n",
+        ),
         // KNOWS / BELIEVES (modal/epistemic, L6): factive knowledge that is FALSE →
         // CONFLICT, UNKNOWN → WARNING; a per-agent incoherence → CONFLICT; a false
         // belief → the populated `beliefs` array.

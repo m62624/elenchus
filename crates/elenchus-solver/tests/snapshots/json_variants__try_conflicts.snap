@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[{"premise":"gate","kind":"RULE","source":"v.vrf","line":3,"atom":"d.deploys unblocked","value":true}],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[{"premise":null,"kind":"TRY","source":"v.vrf","line":7,"label":"NOT d.deploys is_ready","outcome":"conflicts"}],"beliefs":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[{"premise":"gate","kind":"RULE","source":"v.vrf","line":3,"atom":"d.deploys unblocked","value":true}],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[{"premise":null,"kind":"TRY","source":"v.vrf","line":7,"label":"NOT d.deploys is_ready","for":null,"outcome":"conflicts"}],"goals":[],"derivation":[],"beliefs":[]}

@@ -564,20 +564,86 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Assume(lit)))
 }
 
-/// `TRY [NOT] <atom>` — a hypothesis under test (the abduction voice). Same surface
-/// as `ASSUME` (an optional leading `NOT`, then an atom), but the compiler never
-/// commits it to the model: the engine only reports whether asserting it would close
-/// the open gap.
+/// `TRY [NOT] <atom> [FOR [NOT] <atom>]` — a hypothesis under test (the abduction
+/// voice). Same surface as `ASSUME` (an optional leading `NOT`, then an atom), but
+/// the compiler never commits it to the model. The optional `FOR <goal>` tail asks
+/// the *targeted* question: does this hypothesis explain the goal? (`FOR` is
+/// reserved, so the hypothesis atom can never swallow it as an object.)
 fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::TRY), space1).parse(input)?;
     let at = input;
-    let (input, lit) = promote(
+    let (input, hypo) = promote(
         literal(input),
         at,
         "TRY expects an atom: [NOT] <Subject> <predicate> [<object>]",
     )?;
+    // Optional `FOR <goal>`. Once FOR matches, a missing goal is a hard failure.
+    let (input, saw_for) = opt(preceded(space1, tag(kw::FOR))).parse(input)?;
+    let (input, goal) = match saw_for {
+        Some(_) => {
+            let at = input;
+            let (input, g) = promote(
+                preceded(space1, literal).parse(input),
+                at,
+                "TRY … FOR expects a goal atom: TRY <hypothesis> FOR [NOT] <Subject> <predicate> [<object>]",
+            )?;
+            (input, Some(g))
+        }
+        None => (input, None),
+    };
     let (input, _) = promote(eol(input), input, "unexpected text after the TRY atom")?;
-    Ok((input, Statement::Try(lit)))
+    Ok((input, Statement::Try { hypo, goal }))
+}
+
+/// `PROVE [NOT] <atom>` — an entailment goal (the ⊨ question). Same surface as
+/// `TRY`, but it asks *consequence*, not compatibility; the engine answers with a
+/// post-verdict refutation check and the goal is never committed to the model.
+fn stmt_prove<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PROVE), space1).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "PROVE expects an atom: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the PROVE atom")?;
+    Ok((input, Statement::Prove(lit)))
+}
+
+/// `HENCE [NOT] <atom> FROM <ref>[, <ref>]*` — one checked derivation step. The
+/// conclusion is a literal; `FROM` then lists comma-separated references (each
+/// parsed as a literal — the compiler decides whether a lone word names a
+/// `PREMISE`/`RULE` or an atom). `FROM` is reserved, so the conclusion atom can
+/// never swallow it as an object.
+fn stmt_hence<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::HENCE), space1).parse(input)?;
+    let at = input;
+    let (input, conclusion) = promote(
+        literal(input),
+        at,
+        "HENCE expects a conclusion: HENCE [NOT] <Subject> <predicate> [<object>] FROM <ref>[, <ref>]",
+    )?;
+    let at = input;
+    let (input, _) = promote(
+        (space1, tag(kw::FROM), space1).parse(input),
+        at,
+        "HENCE expects FROM naming what the step rests on: HENCE <atom> FROM <ref>[, <ref>]",
+    )?;
+    let at = input;
+    let (input, first) = promote(
+        literal(input),
+        at,
+        "FROM expects a reference: a PREMISE/RULE name, a written fact, or an earlier HENCE conclusion",
+    )?;
+    let (input, rest) = many0(preceded((space0, char(','), space0), literal)).parse(input)?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the HENCE references (separate them with commas)",
+    )?;
+    let mut from = vec![first];
+    from.extend(rest);
+    Ok((input, Statement::Hence { conclusion, from }))
 }
 
 /// `KNOWS <agent> [NOT] <atom>` — attribute factive knowledge to a named agent (the
@@ -787,6 +853,63 @@ fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Close { relation, kind }))
 }
 
+/// `TOTAL <relation> ON <set>` — the witness-table totality check: every element
+/// of the set must have at least one declared pair of the relation.
+fn stmt_total<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::TOTAL), space1).parse(input)?;
+    let at = input;
+    let (input, relation) = promote(
+        identifier(input),
+        at,
+        "TOTAL expects a relation name, e.g. TOTAL assigned ON tasks",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::ON), space1).parse(input),
+        input,
+        "TOTAL expects ON then a set: TOTAL <relation> ON <set>",
+    )?;
+    let at = input;
+    let (input, set) = promote(
+        identifier(input),
+        at,
+        "TOTAL expects a declared SET name after ON",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'TOTAL <relation> ON <set>'",
+    )?;
+    Ok((input, Statement::Total { relation, set }))
+}
+
+/// `PREFERS <winner> OVER <loser>` — a declared priority between two named RULEs.
+fn stmt_prefers<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PREFERS), space1).parse(input)?;
+    let at = input;
+    let (input, winner) = promote(
+        identifier(input),
+        at,
+        "PREFERS expects a rule name, e.g. PREFERS penguin_rule OVER bird_rule",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::OVER), space1).parse(input),
+        input,
+        "PREFERS expects OVER then the losing rule: PREFERS <winner> OVER <loser>",
+    )?;
+    let at = input;
+    let (input, loser) = promote(
+        identifier(input),
+        at,
+        "PREFERS expects the losing rule name after OVER",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'PREFERS <winner> OVER <loser>'",
+    )?;
+    Ok((input, Statement::Prefers { winner, loser }))
+}
+
 /// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
 /// and the `:`). One of two forms:
 ///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
@@ -820,6 +943,13 @@ fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
         let at = rest;
         let (rest, set) = promote(identifier(rest), at, "expected a set name after IN")?;
         return Ok((rest, Quant::InSet { binder: first, set }));
+    }
+    // `MENTIONED` → the universal schema (over every subject this domain's ground
+    // assertions mention). Tried before the relation form; MENTIONED is reserved,
+    // so it could never be read as a relation name anyway.
+    let mentioned: PResult<'a, Span<'a>> = tag(kw::MENTIONED).parse(input);
+    if let Ok((rest, _)) = mentioned {
+        return Ok((rest, Quant::Mentioned { binder: first }));
     }
     let at = input;
     let (input, predicate) = promote(
@@ -914,11 +1044,15 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_import,
         stmt_set,
         stmt_close,
+        stmt_total,
+        stmt_prefers,
         stmt_var,
         stmt_provide,
         stmt_fact,
         stmt_assume,
         stmt_try,
+        stmt_prove,
+        stmt_hence,
         stmt_knows,
         stmt_believes,
         stmt_premise,

@@ -179,6 +179,25 @@ pub struct Compiled {
     /// asserting it would close the open model, conflict with it, or leave it open.
     /// It emits **no clause and no fact** — it never enters the model or the verdict.
     pub hypotheses: Vec<Hypothesis>,
+    /// One record per `PROVE <literal>` — the entailment (⊨) layer. The engine asks
+    /// refutationally whether the theory entails the goal: `theory ∧ ¬goal`
+    /// unsatisfiable → PROVED, `theory ∧ goal` unsatisfiable → REFUTED, both
+    /// satisfiable → OPEN. It emits **no clause and no fact** — the goal never enters
+    /// the model or the verdict; the check is a bounded post-verdict side-solve.
+    pub goals: Vec<Goal>,
+    /// One step per `HENCE <conclusion> FROM <refs>` — the checked-derivation (proof
+    /// witness) layer, in program order. The solver verifies each step separately:
+    /// do the clauses of the *cited* references alone entail the conclusion (one
+    /// refutation side-solve per step)? A step emits **no clause and no fact** — the
+    /// main solve is untouched; a broken step is reported by name.
+    pub derivations: Vec<Derivation>,
+    /// One record per `TOTAL <relation> ON <set>` — the Skolem witness-table (∀∃)
+    /// layer, checked at compile time by a single linear scan of the declared
+    /// pairs. `missing` lists the set elements with no witness pair; the solver
+    /// raises each non-empty record to a WARNING naming them (a claimed existence
+    /// with no witness, like an unwitnessed `EXISTS`). A fully-served check is
+    /// silent. It emits **no clause** — the pairs are ordinary facts.
+    pub totality: Vec<Totality>,
     /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
     /// layer. The solver checks each attribution against the settled world model:
     /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
@@ -220,15 +239,87 @@ pub struct Justification {
     pub origin: Origin,
 }
 
-/// One `TRY <literal>` hypothesis: the candidate atom (with its polarity) and the
-/// provenance of the `TRY`. The solver adds this single literal to the program and
-/// re-solves, judging the outcome — it is **evaluative, not a constraint**: it emits
-/// no clause and no fact, so it never enters the model or affects the verdict.
+/// One `TRY <literal> [FOR <goal>]` hypothesis: the candidate atom (with its
+/// polarity), the optional targeted goal, and the provenance of the `TRY`. The
+/// solver adds the candidate literal to the program and re-solves, judging the
+/// outcome; with a goal it instead asks the targeted-abduction pair — is
+/// `theory + H` consistent, and does it entail the goal? It is **evaluative, not a
+/// constraint**: it emits no clause and no fact, so it never enters the model or
+/// affects the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hypothesis {
     /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
     pub lit: Lit,
+    /// The `FOR <goal>` literal this hypothesis is supposed to explain, if any.
+    pub goal: Option<Lit>,
     /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+}
+
+/// One `PROVE <literal>` entailment goal: the goal literal (atom id + polarity from
+/// an optional `NOT`) and the provenance of the `PROVE`. The solver answers the ⊨
+/// question with two bounded refutation solves — it is **evaluative, not a
+/// constraint**: it emits no clause and no fact, so it never enters the model or
+/// affects the verdict (the sibling of [`Hypothesis`], asking consequence instead
+/// of compatibility).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Goal {
+    /// The goal literal being asked about (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// Provenance of the `PROVE` (source, line, kind = `PROVE`).
+    pub origin: Origin,
+}
+
+/// How one `HENCE` step's `FROM` reference resolved — the three kinds of
+/// *already-written* things a proof step may rest on (anything else fails
+/// compilation with `UnknownHenceRef`; the engine never guesses).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepRef {
+    /// A named `PREMISE`/`RULE` of the same source: the step may use every clause
+    /// that construct desugared to (a defeasible rule keeps its `UNLESS` escapes).
+    Construct {
+        /// The source the construct is defined in (same as the step's).
+        source: String,
+        /// The construct's name.
+        name: String,
+    },
+    /// A written `FACT`/`NOT`/`ASSUME` with the same polarity as the reference.
+    Fact(Lit),
+    /// The conclusion of an **earlier** `HENCE` step — a linear chain (the index
+    /// into [`Compiled::derivations`] is always smaller than this step's own, so a
+    /// cycle is unrepresentable by line order).
+    Earlier(u32),
+}
+
+/// One `HENCE <conclusion> FROM <refs>` step: the conclusion literal, the resolved
+/// references, and the provenance. The solver checks `clauses(refs) ∧ ¬conclusion`
+/// for unsatisfiability — natural deduction as a *witness language*, where the LLM
+/// writes the proof and the kernel only re-checks each step. **Evaluative, not a
+/// constraint**: no clause, no fact, the main solve and verdict are untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derivation {
+    /// The step's conclusion (atom id + polarity from an optional `NOT`).
+    pub conclusion: Lit,
+    /// What the step claims suffices, in written order.
+    pub refs: Vec<StepRef>,
+    /// Provenance of the `HENCE` (source, line, kind = `HENCE`).
+    pub origin: Origin,
+}
+
+/// One `TOTAL <relation> ON <set>` check, already evaluated at compile time (the
+/// registries of sets and relation pairs are compile-time data, so the scan needs
+/// no solver). The engine never proposes a witness — it only verifies the table
+/// the author supplied (the LLM discharges the `∃` as `FACT` data).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Totality {
+    /// The relation whose declared pairs were scanned.
+    pub relation: String,
+    /// The declared `SET` whose elements each need a witness pair.
+    pub set: String,
+    /// Set elements with **no** pair (`element relation _`) — empty means the
+    /// check is fully served (`total (checked)`).
+    pub missing: Vec<String>,
+    /// Provenance of the `TOTAL` (source, line, kind = `TOTAL`).
     pub origin: Origin,
 }
 
