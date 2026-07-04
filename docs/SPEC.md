@@ -476,6 +476,17 @@ CHECK <Subject> BIDIRECTIONAL    // enables the backward pass
 
 The difference between `PREMISE` and `RULE` with an identical WHEN/THEN body:
 `PREMISE` **checks** (no convergence → CONFLICT), `RULE` **produces** a new fact.
+A corollary that catches newcomers: if a WHEN/THEN is meant to *establish* its
+consequent (e.g. "gettiered ⇒ not knowledge"), it must be a `RULE` — a `PREMISE`
+with a true antecedent and an otherwise-unset consequent does not derive it, it
+**warns** that nothing determines it. Reach for `RULE` to derive, `PREMISE` to guard.
+
+`CHECK`'s optional argument is a **bare subject name**, never a `domain.`-qualified
+atom (`CHECK claim`, not `CHECK epistemics.claim` — the latter does not parse); it
+just filters the report to that subject. Omit it to check the whole program. A
+subject imported under another domain is still named by its bare subject (`CHECK
+claim` reaches `epistemics.claim`), because a subject is domain-scoped only in its
+atom key, not in the `CHECK` filter.
 
 ## Bounded quantification: `SET`, `FOR EACH`, `CLOSE`
 
@@ -590,6 +601,18 @@ others expect or produce self/back pairs by design. `CLOSE` **replaces** the
 relation's pairs with the closed set, so an edge that drops out of the closure
 (e.g. a one-way edge under `SCC`) is no longer consumed by a `FOR EACH` — by intent.
 
+**A closed pair grounds; it is not a fact.** The pairs `CLOSE` adds are the
+*domain of quantification* — they create `FOR EACH x rel y` instances and serve
+`TOTAL rel ON …` — but the closure does **not** assert the derived pair as a true
+atom. So `FOR EACH x dep y` over a transitively-closed `dep` *does* range over the
+derived `a→c` (its instance body, keyed on the endpoints `x`/`y`, runs), yet
+`PROVE a dep c` reports **OPEN** and a `WHEN a dep c` (or `WHEN x dep y` for the
+derived pair) sees it as UNKNOWN — only a *written* `FACT` pair is a true
+proposition. Rule of thumb: to act on reachability, **quantify over the relation
+and use the endpoints**, never gate a `WHEN`/`PROVE` on an individual *derived*
+pair. A pair whose only consumer is `CLOSE` (nothing quantifies or totals over the
+result) has no effect on the verdict and is correctly flagged `ORPHAN`.
+
 **Feeding a relation across files.** A relation is identified by `(domain,
 predicate)`, and grounding declarations are collected for the *whole* import graph
 before any file grounds. So an importing file can supply edges to an imported
@@ -664,7 +687,11 @@ a **`PREMISE`/`RULE` name** of the same source (the step may use every clause it
 desugared to), a **written `FACT`/`NOT`/`ASSUME`** with the same polarity, or the
 **conclusion of an earlier `HENCE`** (a linear chain — line order makes a cycle
 unrepresentable). Anything else is a compile error with a did-you-mean suggestion:
-a proof step may only rest on what exists. Steps are checked locally: a step that
+a proof step may only rest on what exists. A name is resolved **in the citing
+file only**: a `HENCE` in an importing file cannot cite an *imported* `PREMISE`/
+`RULE` by name — cite instead the qualified fact that principle establishes
+(`HENCE epistemics.claim is_x FROM my_local_rule, some fact`), since a proof owns
+its own steps. Steps are checked locally: a step that
 cites a broken earlier conclusion still gets its own honest verdict, and the reader
 repairs the first broken line. Advisory — no clause, no verdict change; cited facts
 count as consumed (no ORPHAN lint).

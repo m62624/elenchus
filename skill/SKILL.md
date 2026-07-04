@@ -122,14 +122,14 @@ completeness exactly.
 | `TRY` | statement | test a hypothesis **without committing it**: would it close the gap, conflict, or leave it open? (advisory — never changes the verdict) |
 | `TRY … FOR …` | statement | **targeted abduction**: accept the hypothesis only if it is consistent AND makes the goal follow ("which missing premise explains G?") |
 | `PROVE` | statement | ask **entailment**: does the theory entail this atom? PROVED / REFUTED / OPEN (advisory) |
-| `HENCE … FROM …` | statement | one **checked derivation step**: do the cited refs (rule/premise names, facts, earlier HENCE conclusions) entail the conclusion? a broken step is named (advisory) |
+| `HENCE … FROM …` | statement | one **checked derivation step**: do the cited refs (**same-file** rule/premise names, facts, earlier HENCE conclusions — an imported premise is cited via its qualified fact, not its name) entail the conclusion? a broken step is named (advisory) |
 | `KNOWS` | statement | attribute **factive** knowledge to an agent: knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING |
 | `BELIEVES` | statement | attribute a **non-factive** belief: a false belief is an informational note, never a CONFLICT |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
 | `RULE … UNLESS …` | `RULE` body (last) | a **defeasible** exception: the rule still derives its `THEN` unless the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only |
 | `PREFERS … OVER …` | statement | priority between two named `RULE`s: when both apply, the winner stands and the loser is DEFEATED; a cycle is a compile error |
-| `CHECK` | statement | run the engine (optionally for one subject) |
+| `CHECK` | statement | run the engine (optionally filtered to one **bare** subject: `CHECK claim`, never `CHECK dom.claim`) |
 | `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
 | `IMPORT` | statement | pull in another `.vrf` source; reference its atoms as `<domain>.<atom>` |
 | `AS` | `IMPORT` modifier | give the imported domain a local alias (`IMPORT "x.vrf" AS y`) |
@@ -148,7 +148,7 @@ completeness exactly.
 | `FOR EACH … <rel> …` | `PREMISE`/`RULE` header | instantiate the body once per declared `FACT` pair of a relation |
 | `FOR EACH … MENTIONED` | `PREMISE`/`RULE` header | the **universal schema**: instantiate once per subject this domain's FACT/NOT/ASSUME lines mention — no `SET` needed |
 | `TOTAL … ON …` | statement | witness-table ∀∃: every element of the `SET` must have a `FACT` pair of the relation; unserved elements are WARNINGs, named |
-| `CLOSE` | statement | `CLOSE <rel> TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` — close a relation at compile time (only `TRANSITIVE` rejects a cycle) |
+| `CLOSE` | statement | `CLOSE <rel> TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` — close a relation at compile time (only `TRANSITIVE` rejects a cycle). A closed/derived pair **grounds** `FOR EACH`/`TOTAL` but is **not a fact**: `PROVE`/`WHEN` on a derived pair sees UNKNOWN — quantify over the relation, don't name a derived pair |
 | `VAR` | statement | declare an **external port** — a one-word proposition supplied from outside (`VAR <name> [DEFAULT true\|false]`) |
 | `PROVIDE` | statement | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) |
 | `DEFAULT` | `VAR` modifier | the fallback value used when nothing is supplied for the port |
