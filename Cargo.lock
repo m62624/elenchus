@@ -318,7 +318,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "elenchus-cli"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "clap",
  "elenchus-compiler",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-compiler"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "elenchus-parser",
  "insta",
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-mcp"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "elenchus-solver",
  "serde_json",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-parser"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "insta",
  "nom",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-solver"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "criterion",
  "elenchus-compiler",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "elenchus-wasm"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "elenchus-solver",
  "js-sys",
