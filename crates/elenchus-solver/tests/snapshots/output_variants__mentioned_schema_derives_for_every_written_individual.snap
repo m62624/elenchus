@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+assertion_line: 392
+expression: "report(r#\"\n        FACT socrates is human\n        FACT plato is human\n        NOT rock is human\n        RULE mortal FOR EACH x MENTIONED:\n            WHEN x is human\n            THEN x is mortal\n        CHECK\n        \"#)"
+---
+RESULT: CONSISTENT
+  DERIVED   d.plato is mortal = TRUE   from mortal (RULE)  [v.vrf:6]
+  DERIVED   d.socrates is mortal = TRUE   from mortal (RULE)  [v.vrf:6]
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 2 derived
+EXIT_CODE: 0

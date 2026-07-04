@@ -70,6 +70,15 @@ pub struct Compiler {
     /// domain of the fact's atom, so a qualified `FACT other.a rel b` feeds the
     /// relation `rel` of `other`, not of the declaring file.
     relations: BTreeMap<(String, String), Vec<(String, String)>>,
+    /// Every subject a ground assertion (`FACT`/`NOT`/`ASSUME` with a predicate)
+    /// mentions, keyed by the atom's *resolved* domain — the grounding domain of a
+    /// `FOR EACH <binder> MENTIONED` universal schema. Same-domain by design: an
+    /// imported file in another domain can never silently grow a schema's domain
+    /// (adding an unrelated file cannot change a verdict); only a deliberately
+    /// qualified `FACT other.x …` feeds `other`'s schemas. Bare propositions
+    /// (`VAR` ports) are not individuals and are excluded. A pre-pass like
+    /// [`Compiler::sets`], so a schema may precede the facts that populate it.
+    mentioned: BTreeMap<String, BTreeSet<String>>,
     /// Edge atoms consumed by a relation `FOR EACH` (e.g. each `a linked b`).
     /// They are *read as data* by the quantifier, so they are not idle facts —
     /// [`Compiler::finalize`] passes them to the report to suppress the ORPHAN
@@ -201,9 +210,26 @@ impl Compiler {
                             .or_default()
                             .push((a.data.subject.to_string(), obj.to_string()));
                     }
+                    self.record_mentioned(&a.data, ctx)?;
                 }
+                Statement::Negation(a) => self.record_mentioned(&a.data, ctx)?,
+                Statement::Assume(l) => self.record_mentioned(&l.data.atom, ctx)?,
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Record a ground assertion's subject as a *mentioned individual* of its
+    /// resolved domain — the population of a `FOR EACH … MENTIONED` schema. A
+    /// bare proposition (no predicate) is a `VAR` port, not an individual.
+    fn record_mentioned(&mut self, a: &Atom, ctx: &DomainCtx) -> Result<(), CompileError> {
+        if a.predicate.is_some() {
+            let dom = ctx.resolve(a.domain)?;
+            self.mentioned
+                .entry(dom)
+                .or_default()
+                .insert(a.subject.to_string());
         }
         Ok(())
     }
@@ -669,6 +695,23 @@ impl Compiler {
                         });
                     }
                 };
+                for el in &elements {
+                    let grounded = subst_body(body, &[(binder.data, el)]);
+                    self.emit_named(source, name, line, &grounded, is_rule, ctx)?;
+                }
+                Ok(())
+            }
+            // `FOR EACH <binder> MENTIONED`: the universal schema — instantiate the
+            // body once per subject this domain's ground assertions mention. The
+            // domain is what was *written here*: finite, closed at end of
+            // compilation, and linear (doubling the program at most doubles the
+            // instances). An empty domain grounds to nothing, like an empty relation.
+            Some(Quant::Mentioned { binder }) => {
+                let elements: Vec<String> = self
+                    .mentioned
+                    .get(&ctx.current)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
                 for el in &elements {
                     let grounded = subst_body(body, &[(binder.data, el)]);
                     self.emit_named(source, name, line, &grounded, is_rule, ctx)?;

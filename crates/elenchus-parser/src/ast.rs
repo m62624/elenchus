@@ -96,6 +96,19 @@ pub enum Quant<'a> {
         /// The declared set this ranges over.
         set: Located<'a, &'a str>,
     },
+    /// `FOR EACH <binder> MENTIONED` — the *universal schema*: range over every
+    /// subject a ground assertion (`FACT`/`NOT`/`ASSUME` with a predicate) of the
+    /// **same domain** mentions. The domain is still named — "everything written
+    /// here" — and is finite and closed the moment compilation ends: the author
+    /// introduces individuals by writing facts about them, so *"all men are
+    /// mortal"* reaches a Socrates nobody enlisted in a `SET`. Still exactly one
+    /// binder; a second variable does not parse. Same-domain scoping means an
+    /// imported file in another domain can never silently grow the schema (only a
+    /// deliberately qualified `FACT other.x …` feeds `other`'s schemas).
+    Mentioned {
+        /// The name bound inside the body (substituted per mentioned subject).
+        binder: Located<'a, &'a str>,
+    },
     /// `FOR EACH <left> <predicate> <right>` — range over the declared `FACT`
     /// pairs of that relation (e.g. every `FACT a linked b`), binding `left` to a
     /// pair's subject and `right` to its object. This is the channel for

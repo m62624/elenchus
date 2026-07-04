@@ -1319,3 +1319,107 @@ fn hence_broken_earlier_step_stays_local() {
     assert!(!r.derivation[0].holds);
     assert!(r.derivation[1].holds);
 }
+
+// --- FOR EACH <x> MENTIONED (the universal schema, F3) -------------------------
+
+#[test]
+fn mentioned_schema_reaches_an_unenlisted_individual() {
+    // "All men are mortal" reaches Socrates although no SET lists him — writing a
+    // fact about him is what makes him an individual of the domain.
+    let r = vs(
+        "FACT socrates is human\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.socrates is mortal" && d.value == Value::True),
+        "{:?}",
+        r.derived
+    );
+}
+
+#[test]
+fn mentioned_includes_not_and_assume_subjects() {
+    // NOT and ASSUME introduce individuals too. Each blocked instance surfaces as
+    // its own WARNING: `known` warns for a (FACT) and c (ASSUME) — TRUE antecedent,
+    // UNKNOWN consequent — while `voided` warns for b (NOT). Three warnings ⇒ all
+    // three subjects were instantiated.
+    let r = vs(
+        "FACT a is thing\nNOT b is thing\nASSUME c is thing\nPREMISE known FOR EACH x MENTIONED:\n    WHEN x is thing\n    THEN x is known\nPREMISE voided FOR EACH y MENTIONED:\n    WHEN NOT y is thing\n    THEN y is voided\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 3, "{:?}", r.warnings);
+}
+
+#[test]
+fn mentioned_schema_grounds_once_per_subject() {
+    // Two individuals, both human: the schema derives mortality for each.
+    let r = vs(
+        "FACT socrates is human\nFACT plato is human\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.derived.len(), 2, "{:?}", r.derived);
+}
+
+#[test]
+fn mentioned_excludes_var_ports() {
+    // A bare proposition (a VAR port) is not an individual: only `x` is mentioned,
+    // so exactly one instance grounds and exactly one derivation happens.
+    let r = vs(
+        "VAR db_ready DEFAULT true\nFACT x is human\nRULE mortal FOR EACH s MENTIONED:\n    WHEN s is human\n    THEN s is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.derived.len(), 1, "{:?}", r.derived);
+}
+
+#[test]
+fn mentioned_empty_domain_grounds_to_nothing() {
+    // No ground assertion mentions anyone — the schema grounds to zero instances,
+    // like a FOR EACH over an empty relation. VARs alone name no individual.
+    let r = vs(
+        "VAR flag DEFAULT true\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.derived.is_empty() && r.warnings.is_empty());
+}
+
+#[test]
+fn mentioned_is_same_domain_only() {
+    // The schema lives in the template's domain. The entry file's *bare* fact
+    // belongs to the entry domain and must NOT grow the template's schema; the
+    // *qualified* fact deliberately feeds it. Exactly one derivation: tmpl.sock.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.sock is human\nFACT local is human\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(
+        r.derived
+            .iter()
+            .map(|d| d.atom.as_str())
+            .collect::<Vec<_>>(),
+        vec!["tmpl.sock is mortal"],
+        "{:?}",
+        r.derived
+    );
+}
+
+#[test]
+fn mentioned_schema_redefinition_with_different_quant_is_an_error() {
+    // The quantifier participates in the redefinition hash: the same name with a
+    // MENTIONED quantifier vs a plain body is a real redefinition.
+    let err = vs(
+        "FACT a is thing\nRULE r FOR EACH x MENTIONED:\n    WHEN x is thing\n    THEN x is fine\nRULE r:\n    WHEN a is thing\n    THEN a is fine\n",
+    )
+    .unwrap_err();
+    assert!(matches!(err, CompileError::PremiseRedefinition { .. }));
+}

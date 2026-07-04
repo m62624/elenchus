@@ -384,6 +384,24 @@ fn hence_chain_holds_then_gap() {
     ));
 }
 
+// --- FOR EACH <x> MENTIONED (the universal schema) ---------------------------
+
+#[test]
+fn mentioned_schema_derives_for_every_written_individual() {
+    // The classical syllogism with no SET: whoever is written about is covered.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        FACT plato is human
+        NOT rock is human
+        RULE mortal FOR EACH x MENTIONED:
+            WHEN x is human
+            THEN x is mortal
+        CHECK
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

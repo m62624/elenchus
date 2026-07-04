@@ -872,6 +872,13 @@ fn for_each<'a>(input: Span<'a>) -> PResult<'a, Quant<'a>> {
         let (rest, set) = promote(identifier(rest), at, "expected a set name after IN")?;
         return Ok((rest, Quant::InSet { binder: first, set }));
     }
+    // `MENTIONED` → the universal schema (over every subject this domain's ground
+    // assertions mention). Tried before the relation form; MENTIONED is reserved,
+    // so it could never be read as a relation name anyway.
+    let mentioned: PResult<'a, Span<'a>> = tag(kw::MENTIONED).parse(input);
+    if let Ok((rest, _)) = mentioned {
+        return Ok((rest, Quant::Mentioned { binder: first }));
+    }
     let at = input;
     let (input, predicate) = promote(
         identifier(input),

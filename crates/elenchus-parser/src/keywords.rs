@@ -21,6 +21,7 @@ pub mod kw {
     pub const PROVE: &str = "PROVE";
     pub const HENCE: &str = "HENCE";
     pub const FROM: &str = "FROM";
+    pub const MENTIONED: &str = "MENTIONED";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -270,6 +271,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "FOR EACH <binder> IN <set>",
             "part of the FOR EACH ... IN quantifier on a PREMISE/RULE header",
             "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::MENTIONED,
+        top_level: false,
+        card: card(
+            "PREMISE/RULE <name> FOR EACH <binder> MENTIONED:  then the usual body",
+            "the universal schema: instantiate the body once per subject mentioned by this domain's FACT/NOT/ASSUME lines — 'all men are mortal' reaches every written individual, no SET needed",
+            "RULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal",
         ),
     },
     Keyword {

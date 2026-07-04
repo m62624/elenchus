@@ -116,6 +116,7 @@ pub(crate) struct RawRule {
 pub(crate) fn quant_sig(q: &Quant) -> String {
     match q {
         Quant::InSet { binder, set } => alloc::format!("|FOREACH {} IN {}", binder.data, set.data),
+        Quant::Mentioned { binder } => alloc::format!("|FOREACH {} MENTIONED", binder.data),
         Quant::Relation {
             left,
             predicate,
