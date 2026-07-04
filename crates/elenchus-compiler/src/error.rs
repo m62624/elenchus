@@ -94,6 +94,35 @@ pub enum CompileError {
         /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
         suggestion: String,
     },
+    /// A `PREFERS <winner> OVER <loser>` named something that is not a defined
+    /// `RULE` of the same source — either an unknown name (a typo) or a `PREMISE`
+    /// (priorities only make sense between defeasible defaults, which derive).
+    #[error("{file}:{line}: PREFERS names '{name}', which is not a defined RULE{suggestion}")]
+    UnknownRuleName {
+        /// The source the offending `PREFERS` is in.
+        file: String,
+        /// 1-based line of the `PREFERS`.
+        line: u32,
+        /// The name that matched no `RULE`.
+        name: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
+    /// The declared `PREFERS` pairs form a cycle: some rule transitively beats
+    /// itself. Priorities must be a DAG — the same fence `CLOSE … TRANSITIVE`
+    /// enforces on relations (Law 1: the unbounded case is rejected, not chased).
+    #[error(
+        "{file}:{line}: PREFERS forms a priority cycle among rules: {names} \
+         — priorities must be a DAG"
+    )]
+    PreferenceCycle {
+        /// The source the offending `PREFERS` is in.
+        file: String,
+        /// 1-based line of a `PREFERS` on the cycle.
+        line: u32,
+        /// The rule names on the cycle, comma-joined.
+        names: String,
+    },
     /// A `TOTAL <relation> ON <set>` named a set that was never declared with
     /// `SET`. Usually a typo; the suggestion offers the nearest declared set.
     #[error("{file}:{line}: TOTAL checks '{set}', which is not a declared SET{suggestion}")]

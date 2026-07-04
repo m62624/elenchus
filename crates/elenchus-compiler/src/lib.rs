@@ -104,6 +104,7 @@ pub fn compile_source_with(
     let mut c = Compiler::new();
     c.add_source(source, src)?;
     c.resolve_derivations()?;
+    c.apply_preferences()?;
     c.check_totality()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;
@@ -153,6 +154,7 @@ pub fn compile_with<R: Resolver>(
         c.add_resolved(file)?;
     }
     c.resolve_derivations()?;
+    c.apply_preferences()?;
     c.check_totality()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;

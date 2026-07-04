@@ -329,6 +329,21 @@ pub enum Statement<'a> {
         /// The declared `SET` of left elements that must each have a witness.
         set: Located<'a, &'a str>,
     },
+    /// `PREFERS <winner> OVER <loser>` — a declared priority between two named
+    /// defeasible `RULE`s of the same source (specificity: *"penguin beats
+    /// bird"*). When both defaults are applicable, the winner stands and the
+    /// loser is suppressed — visible as a `DEFEATED` note, exactly like an
+    /// `UNLESS` defeat (it desugars onto the same exception slot at compile
+    /// time). An undeclared clash keeps today's behavior; a preference cycle is
+    /// a compile error (priorities must be a DAG, like `CLOSE … TRANSITIVE`).
+    /// The checkable seed of Dung argumentation: attack edges are *written*,
+    /// extensions are never computed.
+    Prefers {
+        /// The rule that wins when both are applicable.
+        winner: Located<'a, &'a str>,
+        /// The rule whose default is suppressed by the winner.
+        loser: Located<'a, &'a str>,
+    },
     /// `VAR <name> [DEFAULT true|false]` — declare an external boolean **port**: a
     /// single-word proposition whose truth is supplied from outside (CLI/API/data).
     /// `<name>` doubles as the proposition usable in bodies (`WHEN <name> THEN …`)

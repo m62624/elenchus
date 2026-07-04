@@ -118,6 +118,9 @@ pub struct Compiler {
     raw_totals: Vec<(String, String, String, Origin)>,
     /// Evaluated totality records, carried to the IR (the solver only reports).
     totality: Vec<Totality>,
+    /// `PREFERS <winner> OVER <loser>` pairs as written: `(source, winner, loser,
+    /// line)`. Desugared by [`Compiler::apply_preferences`] once every rule is in.
+    raw_prefs: Vec<(String, String, String, u32)>,
     /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
     /// clause, no fact); the solver checks each against the world model per agent.
     attributions: Vec<RawAttribution>,
@@ -327,6 +330,17 @@ impl Compiler {
             // Declared in the `collect_decls` / `apply_closures` pre-passes;
             // nothing to emit here.
             Statement::Set { .. } | Statement::Close { .. } => {}
+            // A preference names two bare rule labels, so it always ranks rules of
+            // its own source (labels are per-source; a foreign rule is
+            // unrepresentable here). Deferred — the rules may be defined later.
+            Statement::Prefers { winner, loser } => {
+                self.raw_prefs.push((
+                    source.to_string(),
+                    winner.data.to_string(),
+                    loser.data.to_string(),
+                    winner.span.location_line(),
+                ));
+            }
             // A totality check names a bare relation and set, so it always checks
             // its own domain's registries (a foreign one is unrepresentable here).
             // Deferred to `check_totality` — the pairs may come from later files.
@@ -693,6 +707,126 @@ impl Compiler {
                 origin,
             });
         }
+        Ok(())
+    }
+
+    /// Desugar every `PREFERS <winner> OVER <loser>` onto the existing `UNLESS`
+    /// exception slot: each loser instance gains the winner's consequent literals
+    /// as exceptions, so when the winner actually fires (its consequent becomes
+    /// established) the loser's default is suppressed by the ordinary defeasible
+    /// gate — and shows up as `DEFEATED`, exactly like an `UNLESS`. The solver is
+    /// untouched.
+    ///
+    /// Validation first: both names must be defined `RULE`s of the same source
+    /// ([`CompileError::UnknownRuleName`]), and the pairs must form a DAG
+    /// ([`CompileError::PreferenceCycle`] — the `CLOSE … TRANSITIVE` fence).
+    /// Finally the rules are **stably re-ordered** winners-first (by preference
+    /// rank), so a winner fires in the same forward-chaining sweep *before* its
+    /// loser is considered, whatever their source order. A program with no
+    /// `PREFERS` is untouched — same rules, same order, byte-identical output.
+    /// Like `UNLESS`, an already-fired default is not retracted if the winner's
+    /// antecedent only becomes derivable later — inherent to the monotone L3 pass.
+    pub(crate) fn apply_preferences(&mut self) -> Result<(), CompileError> {
+        if self.raw_prefs.is_empty() {
+            return Ok(());
+        }
+        let prefs = core::mem::take(&mut self.raw_prefs);
+        // (1) Both names of every pair must be defined RULEs of their source.
+        for (source, winner, loser, line) in &prefs {
+            for name in [winner, loser] {
+                let is_rule = self.rules.iter().any(|r| {
+                    r.origin.source == *source && r.origin.premise.as_deref() == Some(name)
+                });
+                if !is_rule {
+                    let names: Vec<&str> = self
+                        .rules
+                        .iter()
+                        .filter(|r| r.origin.source == *source)
+                        .filter_map(|r| r.origin.premise.as_deref())
+                        .collect();
+                    return Err(CompileError::UnknownRuleName {
+                        file: source.clone(),
+                        line: *line,
+                        name: name.clone(),
+                        suggestion: did_you_mean(name, &names),
+                    });
+                }
+            }
+        }
+        // (2) Priority ranks via longest-path relaxation over the winner→loser
+        // edges; a rank that keeps growing past the node count is a cycle.
+        let mut rank: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+        for (source, winner, loser, _) in &prefs {
+            rank.entry((source, winner)).or_insert(0);
+            rank.entry((source, loser)).or_insert(0);
+        }
+        let nodes = rank.len() as u32;
+        for pass in 0..=nodes {
+            let mut changed = false;
+            for (source, winner, loser, line) in &prefs {
+                let w = rank[&(source.as_str(), winner.as_str())];
+                let l = rank
+                    .get_mut(&(source.as_str(), loser.as_str()))
+                    .expect("seeded above");
+                if *l <= w {
+                    *l = w + 1;
+                    changed = true;
+                }
+                if pass == nodes && changed {
+                    // Still relaxing after |nodes| passes → a cycle exists; name
+                    // every rule that is part of one (rank exceeded the maximum a
+                    // DAG allows).
+                    let names: Vec<&str> = rank
+                        .iter()
+                        .filter(|&(_, &r)| r >= nodes)
+                        .map(|((_, n), _)| *n)
+                        .collect();
+                    return Err(CompileError::PreferenceCycle {
+                        file: source.clone(),
+                        line: *line,
+                        names: names.join(", "),
+                    });
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // (3) Desugar: every loser instance gains every winner instance's
+        // consequent literals as exceptions (deduped — declaring a pair twice is
+        // idempotent).
+        for (source, winner, loser, _) in &prefs {
+            let winner_cons: Vec<RawLit> = self
+                .rules
+                .iter()
+                .filter(|r| {
+                    r.origin.source == *source && r.origin.premise.as_deref() == Some(winner)
+                })
+                .flat_map(|r| r.consequent.iter().cloned())
+                .collect();
+            for r in self.rules.iter_mut().filter(|r| {
+                r.origin.source == *source && r.origin.premise.as_deref() == Some(loser)
+            }) {
+                for c in &winner_cons {
+                    if !r
+                        .exceptions
+                        .iter()
+                        .any(|e| e.key == c.key && e.negated == c.negated)
+                    {
+                        r.exceptions.push(c.clone());
+                    }
+                }
+            }
+        }
+        // (4) Winners fire first: stable sort by rank (rules outside any
+        // preference keep rank 0 and their relative order).
+        self.rules.sort_by_key(|r| {
+            r.origin
+                .premise
+                .as_deref()
+                .and_then(|n| rank.get(&(r.origin.source.as_str(), n)).copied())
+                .unwrap_or(0)
+        });
         Ok(())
     }
 

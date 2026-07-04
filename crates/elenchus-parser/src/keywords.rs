@@ -24,6 +24,8 @@ pub mod kw {
     pub const MENTIONED: &str = "MENTIONED";
     pub const TOTAL: &str = "TOTAL";
     pub const ON: &str = "ON";
+    pub const PREFERS: &str = "PREFERS";
+    pub const OVER: &str = "OVER";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -222,6 +224,15 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::PREFERS,
+        top_level: true,
+        card: card(
+            "PREFERS <winner-rule> OVER <loser-rule>",
+            "declare priority between two defeasible RULEs ('penguin beats bird'): when both apply, the winner stands and the loser is DEFEATED; a preference cycle is a compile error",
+            "PREFERS penguin_rule OVER bird_rule",
+        ),
+    },
+    Keyword {
         text: kw::TOTAL,
         top_level: true,
         card: card(
@@ -300,6 +311,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "FOR EACH <binder> IN <set>",
             "names the declared SET a FOR EACH quantifier ranges over",
             "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::OVER,
+        top_level: false,
+        card: card(
+            "PREFERS <winner-rule> OVER <loser-rule>",
+            "names the rule whose default the preferred rule suppresses when both are applicable",
+            "PREFERS penguin_rule OVER bird_rule",
         ),
     },
     Keyword {

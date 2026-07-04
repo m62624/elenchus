@@ -439,6 +439,28 @@ fn try_for_explains_and_not_explaining() {
     ));
 }
 
+// --- PREFERS <winner> OVER <loser> (default priorities) -----------------------
+
+#[test]
+fn prefers_defeats_the_general_default() {
+    // Specificity as a declared pair: penguin beats bird, so the general default
+    // is DEFEATED and the specific one derives — no conflict between defaults.
+    insta::assert_snapshot!(report(
+        r#"
+        RULE bird_flies:
+            WHEN pengu is bird
+            THEN pengu can_fly
+        RULE penguin_grounded:
+            WHEN pengu is penguin
+            THEN NOT pengu can_fly
+        PREFERS penguin_grounded OVER bird_flies
+        FACT pengu is bird
+        FACT pengu is penguin
+        CHECK
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

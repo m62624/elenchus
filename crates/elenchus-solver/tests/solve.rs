@@ -1581,3 +1581,132 @@ fn try_for_with_negated_goal() {
     assert_eq!(r.tried[0].outcome, TryOutcome::Explains);
     assert_eq!(r.tried[0].goal.as_deref(), Some("NOT t.lamp on"));
 }
+
+// --- PREFERS <winner> OVER <loser> (default priorities, F7) --------------------
+
+#[test]
+fn prefers_penguin_beats_bird() {
+    // Specificity: both defaults are applicable, the declared winner stands, the
+    // loser is suppressed and visible as DEFEATED — no conflict.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.pengu can_fly" && d.value == Value::False),
+        "{:?}",
+        r.derived
+    );
+    assert_eq!(r.defeated.len(), 1);
+    assert_eq!(r.defeated[0].origin.premise.as_deref(), Some("bird_flies"));
+}
+
+#[test]
+fn prefers_works_whatever_the_source_order() {
+    // The loser is written FIRST: without the winners-first re-ordering it would
+    // fire in the same sweep before the winner. The verdict must be identical to
+    // the winner-first spelling.
+    let r = vs(
+        "PREFERS penguin_grounded OVER bird_flies\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nRULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_loser_still_fires_when_winner_is_inapplicable() {
+    // Not a penguin: the winner never fires, so the default stands untouched.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN tweety is bird\n    THEN tweety can_fly\nRULE penguin_grounded:\n    WHEN tweety is penguin\n    THEN NOT tweety can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT tweety is bird\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(
+        r.derived
+            .iter()
+            .any(|d| d.atom == "t.tweety can_fly" && d.value == Value::True)
+    );
+    assert!(r.defeated.is_empty());
+}
+
+#[test]
+fn prefers_chain_ranks_transitively() {
+    // a beats b, b beats c: with all three applicable only `a`'s consequent
+    // lands; b is defeated by a, and c by b's... b never fired, so c's exception
+    // (b's consequent) is not established — c fires too. Declared, not derived:
+    // to silence c under a, the author writes PREFERS a OVER c as well (attack
+    // edges are written, never computed — the Dung seed).
+    let r = vs(
+        "RULE a:\n    WHEN x is thing\n    THEN x mode alpha\nRULE b:\n    WHEN x is thing\n    THEN x mode beta\nRULE c:\n    WHEN x is thing\n    THEN x mode gamma\nPREFERS a OVER b\nPREFERS b OVER c\nFACT x is thing\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    let modes: Vec<&str> = r.derived.iter().map(|d| d.atom.as_str()).collect();
+    assert!(modes.contains(&"t.x mode alpha"), "{modes:?}");
+    assert!(!modes.contains(&"t.x mode beta"), "{modes:?}");
+    assert!(modes.contains(&"t.x mode gamma"), "{modes:?}");
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_cycle_is_a_compile_error() {
+    let err = vs(
+        "RULE a:\n    WHEN x p\n    THEN x q\nRULE b:\n    WHEN x p\n    THEN NOT x q\nPREFERS a OVER b\nPREFERS b OVER a\nFACT x p\n",
+    )
+    .unwrap_err();
+    assert!(matches!(err, CompileError::PreferenceCycle { .. }), "{err}");
+}
+
+#[test]
+fn prefers_unknown_or_premise_name_is_an_error() {
+    // A PREMISE is not a RULE (it checks, it does not derive) — priorities only
+    // rank defeasible defaults.
+    let err = vs(
+        "RULE a:\n    WHEN x p\n    THEN x q\nPREMISE guard:\n    WHEN x p\n    THEN x q\nPREFERS a OVER guard\nFACT x p\n",
+    )
+    .unwrap_err();
+    match err {
+        CompileError::UnknownRuleName { name, .. } => assert_eq!(name, "guard"),
+        other => panic!("expected UnknownRuleName, got {other}"),
+    }
+    // And a typo'd rule name gets a suggestion.
+    let err = vs("RULE alpha:\n    WHEN x p\n    THEN x q\nRULE beta:\n    WHEN x p\n    THEN NOT x q\nPREFERS alpa OVER beta\n")
+        .unwrap_err();
+    match err {
+        CompileError::UnknownRuleName {
+            name, suggestion, ..
+        } => {
+            assert_eq!(name, "alpa");
+            assert!(suggestion.contains("alpha"), "{suggestion}");
+        }
+        other => panic!("expected UnknownRuleName, got {other}"),
+    }
+}
+
+#[test]
+fn prefers_with_quantified_winner_covers_every_instance() {
+    // The winner is a FOR EACH rule: every instance's consequent joins the
+    // loser's exceptions, so whichever instance fires suppresses the default.
+    let r = vs(
+        "SET birds\n    pengu\nRULE grounded FOR EACH b IN birds:\n    WHEN b is penguin\n    THEN NOT b can_fly\nRULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nPREFERS grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.conflicts);
+    assert_eq!(r.defeated.len(), 1);
+}
+
+#[test]
+fn prefers_backward_pass_stays_consistent() {
+    // BIDIRECTIONAL exercises the CNF path: the loser's clause carries the
+    // winner's consequent as an escape literal, so the SAT view agrees with the
+    // forward pass — no phantom joint unsatisfiability.
+    let r = vs(
+        "RULE bird_flies:\n    WHEN pengu is bird\n    THEN pengu can_fly\nRULE penguin_grounded:\n    WHEN pengu is penguin\n    THEN NOT pengu can_fly\nPREFERS penguin_grounded OVER bird_flies\nFACT pengu is bird\nFACT pengu is penguin\nCHECK BIDIRECTIONAL\n",
+    )
+    .unwrap();
+    assert_ne!(r.status, Status::Conflict, "{:?}", r.conflicts);
+}

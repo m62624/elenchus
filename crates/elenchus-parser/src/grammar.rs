@@ -882,6 +882,34 @@ fn stmt_total<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Total { relation, set }))
 }
 
+/// `PREFERS <winner> OVER <loser>` — a declared priority between two named RULEs.
+fn stmt_prefers<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PREFERS), space1).parse(input)?;
+    let at = input;
+    let (input, winner) = promote(
+        identifier(input),
+        at,
+        "PREFERS expects a rule name, e.g. PREFERS penguin_rule OVER bird_rule",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::OVER), space1).parse(input),
+        input,
+        "PREFERS expects OVER then the losing rule: PREFERS <winner> OVER <loser>",
+    )?;
+    let at = input;
+    let (input, loser) = promote(
+        identifier(input),
+        at,
+        "PREFERS expects the losing rule name after OVER",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'PREFERS <winner> OVER <loser>'",
+    )?;
+    Ok((input, Statement::Prefers { winner, loser }))
+}
+
 /// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
 /// and the `:`). One of two forms:
 ///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
@@ -1017,6 +1045,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_set,
         stmt_close,
         stmt_total,
+        stmt_prefers,
         stmt_var,
         stmt_provide,
         stmt_fact,

@@ -85,6 +85,7 @@ fn statement_line(s: &Statement) -> u32 {
         Statement::Close { relation, .. } | Statement::Total { relation, .. } => {
             relation.span.location_line()
         }
+        Statement::Prefers { winner, .. } => winner.span.location_line(),
         Statement::Var { name, .. } => name.span.location_line(),
         Statement::Provide { atom, .. } => atom.span.location_line(),
         Statement::Premise { name, .. } | Statement::Rule { name, .. } => name.span.location_line(),

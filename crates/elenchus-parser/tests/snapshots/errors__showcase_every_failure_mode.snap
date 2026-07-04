@@ -1,5 +1,6 @@
 ---
 source: crates/elenchus-parser/tests/errors.rs
+assertion_line: 253
 expression: "err(include_str!(\"fixtures/showcase.vrf\"))"
 ---
 RESULT: 17 syntax errors
@@ -105,13 +106,14 @@ statement  (2 problems)
       CHECK [<subject>] [BIDIRECTIONAL]
       SET <name>  then one element per line (>= 1)
       CLOSE <relation> TRANSITIVE
+      PREFERS <winner-rule> OVER <loser-rule>
       TOTAL <relation> ON <set>
       VAR <name> [DEFAULT true|false]
       PROVIDE [<domain>.]<port|atom>: true|false
       IMPORT "<path>" [AS <alias>]
-    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, TOTAL, VAR, PROVIDE, or IMPORT
+    line 82, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, PREFERS, TOTAL, VAR, PROVIDE, or IMPORT
       | %%% this line starts no keyword
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, TOTAL, VAR, PROVIDE, or IMPORT
+    line 84, col 1 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, PREFERS, TOTAL, VAR, PROVIDE, or IMPORT
       | 123 numbers cannot start a statement
       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
