@@ -205,6 +205,16 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "FACT x a\nRULE r:\n    WHEN x b\n    THEN x c\nPROVE x c\nCHECK x\n",
         ),
         ("prove_vacuous", "FACT x a\nNOT x a\nPROVE x b\nCHECK x\n"),
+        // HENCE steps (checked derivation): a holding step and a gap, so the
+        // populated `derivation` array shape is snapshotted for both verdicts.
+        (
+            "hence_holds",
+            "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nHENCE socrates is mortal FROM all_mortal, socrates is human\nCHECK socrates\n",
+        ),
+        (
+            "hence_gap",
+            "FACT x a\nPREMISE p:\n    WHEN x b\n    THEN x c\nHENCE x c FROM p, x a\nCHECK x\n",
+        ),
         // KNOWS / BELIEVES (modal/epistemic, L6): factive knowledge that is FALSE →
         // CONFLICT, UNKNOWN → WARNING; a per-agent incoherence → CONFLICT; a false
         // belief → the populated `beliefs` array.

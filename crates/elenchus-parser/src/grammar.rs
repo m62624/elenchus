@@ -595,6 +595,42 @@ fn stmt_prove<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Prove(lit)))
 }
 
+/// `HENCE [NOT] <atom> FROM <ref>[, <ref>]*` — one checked derivation step. The
+/// conclusion is a literal; `FROM` then lists comma-separated references (each
+/// parsed as a literal — the compiler decides whether a lone word names a
+/// `PREMISE`/`RULE` or an atom). `FROM` is reserved, so the conclusion atom can
+/// never swallow it as an object.
+fn stmt_hence<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::HENCE), space1).parse(input)?;
+    let at = input;
+    let (input, conclusion) = promote(
+        literal(input),
+        at,
+        "HENCE expects a conclusion: HENCE [NOT] <Subject> <predicate> [<object>] FROM <ref>[, <ref>]",
+    )?;
+    let at = input;
+    let (input, _) = promote(
+        (space1, tag(kw::FROM), space1).parse(input),
+        at,
+        "HENCE expects FROM naming what the step rests on: HENCE <atom> FROM <ref>[, <ref>]",
+    )?;
+    let at = input;
+    let (input, first) = promote(
+        literal(input),
+        at,
+        "FROM expects a reference: a PREMISE/RULE name, a written fact, or an earlier HENCE conclusion",
+    )?;
+    let (input, rest) = many0(preceded((space0, char(','), space0), literal)).parse(input)?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after the HENCE references (separate them with commas)",
+    )?;
+    let mut from = vec![first];
+    from.extend(rest);
+    Ok((input, Statement::Hence { conclusion, from }))
+}
+
 /// `KNOWS <agent> [NOT] <atom>` — attribute factive knowledge to a named agent (the
 /// epistemic L6 voice). The agent is a bare identifier; the rest is an ordinary
 /// literal. Knowledge is factive, so the engine later checks the atom against the
@@ -935,6 +971,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_assume,
         stmt_try,
         stmt_prove,
+        stmt_hence,
         stmt_knows,
         stmt_believes,
         stmt_premise,

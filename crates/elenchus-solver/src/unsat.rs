@@ -1,12 +1,14 @@
 //! The minimal-unsat-core search: which named constructs / facts are jointly
 //! responsible for an unsatisfiable system, via SAT under assumptions.
 use crate::cnf::{build_cnf, clause_lit, fact_lit, rule_consequent_clause};
-use crate::report::{CoreItem, Fix, FixKind, ProveOutcome, Proved, Tried, TryOutcome, label};
+use crate::report::{
+    CoreItem, Fix, FixKind, Hence, ProveOutcome, Proved, Tried, TryOutcome, label,
+};
 use crate::sat;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use elenchus_compiler::{Compiled, Origin, Value};
+use elenchus_compiler::{Compiled, Lit, Origin, StepRef, Value};
 
 /// The minimal set of `ASSUME` hypotheses to retract so an
 /// otherwise-consistent program stops contradicting itself.
@@ -400,6 +402,86 @@ pub(crate) fn prove_goals(
             origin: g.origin.clone(),
             label: text,
             outcome,
+        });
+    }
+    Ok(out)
+}
+
+/// A literal rendered with its surface polarity (`NOT …` when negated) — the
+/// shared spelling for HENCE conclusions and references.
+fn lit_label(c: &Compiled, l: &Lit) -> String {
+    let name = label(c, l.atom);
+    if l.negated {
+        alloc::format!("NOT {name}")
+    } else {
+        name
+    }
+}
+
+/// The checked-derivation (proof kernel) pass: verify each `HENCE <conclusion>
+/// FROM <refs>` step separately — do the clauses of the *cited* references alone
+/// entail the conclusion? One refutation solve per step over a CNF containing
+/// exactly: every clause of each cited `PREMISE`/`RULE` (a defeasible rule keeps
+/// its `UNLESS` escapes), one unit per cited fact, one unit per cited earlier
+/// conclusion (each step is checked *locally* — a broken earlier step is visible
+/// on its own line, and citing its conclusion does not silently re-break later
+/// steps), plus the negated conclusion. UNSAT → the step holds; SAT → the gap is
+/// here. Purely advisory — no step is committed, the main solve is untouched, and
+/// cost is O(steps written) × one bounded solve (Law 5: the engine never completes
+/// a proof or picks premises).
+pub(crate) fn check_derivations(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<Hence>, sat::BudgetExhausted> {
+    if c.derivations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<Hence> = Vec::with_capacity(c.derivations.len());
+    for d in &c.derivations {
+        let mut cnf = sat::Cnf::new(c.atoms.len());
+        let mut from = Vec::with_capacity(d.refs.len());
+        for r in &d.refs {
+            match r {
+                StepRef::Construct { source, name } => {
+                    for cl in c.clauses.iter().filter(|cl| {
+                        cl.origin.source == *source && cl.origin.premise.as_deref() == Some(name)
+                    }) {
+                        cnf.add_clause(cl.lits.iter().map(clause_lit).collect());
+                    }
+                    for rl in c.rules.iter().filter(|rl| {
+                        rl.origin.source == *source && rl.origin.premise.as_deref() == Some(name)
+                    }) {
+                        for cons in &rl.consequent {
+                            cnf.add_clause(rule_consequent_clause(rl, cons));
+                        }
+                    }
+                    from.push(name.clone());
+                }
+                StepRef::Fact(l) => {
+                    cnf.add_clause(vec![sat::SatLit::new(l.atom, !l.negated)]);
+                    from.push(lit_label(c, l));
+                }
+                StepRef::Earlier(i) => {
+                    let concl = &c.derivations[*i as usize].conclusion;
+                    cnf.add_clause(vec![sat::SatLit::new(concl.atom, !concl.negated)]);
+                    from.push(lit_label(c, concl));
+                }
+            }
+        }
+        // The refutation target: assert the conclusion's negation.
+        cnf.add_clause(vec![sat::SatLit::new(
+            d.conclusion.atom,
+            d.conclusion.negated,
+        )]);
+        // Verdict-only (UNSAT = the step holds), so the turbo profile is sound.
+        let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
+        inc.set_budget(budget.cloned());
+        let holds = matches!(inc.solve(&[])?, sat::Solved::Unsat(_));
+        out.push(Hence {
+            origin: d.origin.clone(),
+            conclusion: lit_label(c, &d.conclusion),
+            from,
+            holds,
         });
     }
     Ok(out)

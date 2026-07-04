@@ -230,6 +230,27 @@ impl Report {
             };
             emit!(out, ITEM, "{verdict}   (checked)")?;
         }
+        // The checked-derivation (proof kernel) voice: each `HENCE` step with the
+        // engine's per-step verdict — the first `does not follow` line is the gap.
+        // Advisory — steps were never committed, the result above is untouched.
+        for h in &self.derivation {
+            emit!(
+                out,
+                SECTION,
+                "HENCE     {} FROM {}",
+                h.conclusion,
+                h.from.join(", ")
+            )?;
+            if h.holds {
+                emit!(out, ITEM, "holds: the cited premises entail it   (checked)")?;
+            } else {
+                emit!(
+                    out,
+                    ITEM,
+                    "does not follow from what it cites — the gap is here   (checked)"
+                )?;
+            }
+        }
         // The entailment (⊨) voice: each `PROVE <literal>` goal, with the engine's
         // refutation-checked verdict on whether the theory entails it. Advisory —
         // the goal was never committed, so this never changed the result above.

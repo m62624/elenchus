@@ -1,6 +1,5 @@
 ---
 source: crates/elenchus-compiler/tests/ir.rs
-assertion_line: 50
 expression: c
 ---
 Compiled {
@@ -433,5 +432,6 @@ Compiled {
     justifications: [],
     hypotheses: [],
     goals: [],
+    derivations: [],
     attributions: [],
 }

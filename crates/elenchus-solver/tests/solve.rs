@@ -1210,3 +1210,112 @@ fn prove_never_commits_the_goal() {
     // constraint *forces* x b even though the forward pass could not confirm it.
     assert_eq!(with.goals[0].outcome, ProveOutcome::Proved);
 }
+
+// --- HENCE … FROM (checked derivation / the proof kernel, F2) -----------------
+
+#[test]
+fn hence_valid_step_holds() {
+    // Modus ponens as a witness: the cited premise + cited fact entail the
+    // conclusion, so the step holds. Advisory: the verdict is what it would be
+    // without the HENCE line.
+    let r = vs(
+        "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nHENCE socrates is mortal FROM all_mortal, socrates is human\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.derivation.len(), 1);
+    assert!(r.derivation[0].holds);
+    assert_eq!(r.derivation[0].conclusion, "t.socrates is mortal");
+    assert_eq!(
+        r.derivation[0].from,
+        vec!["all_mortal".to_string(), "t.socrates is human".to_string()]
+    );
+    assert_eq!(r.derivation[0].origin.kind, kw::HENCE);
+}
+
+#[test]
+fn hence_gap_is_named_per_step() {
+    // The cited premise talks about `x b`, not `x a` — the conclusion does not
+    // follow from what the step cites, even though the program is consistent.
+    let r =
+        vs("FACT x a\nPREMISE p:\n    WHEN x b\n    THEN x c\nHENCE x c FROM p, x a\nCHECK x\n")
+            .unwrap();
+    assert!(!r.derivation[0].holds);
+    assert_eq!(r.status, Status::Warning); // p is blocked by UNKNOWN x b — unrelated to HENCE
+}
+
+#[test]
+fn hence_may_cite_an_earlier_hence_conclusion() {
+    // A linear chain: step 2 rests on step 1's conclusion (never on the whole
+    // program). Both steps hold; each was checked separately.
+    let r = vs(
+        "FACT socrates is human\nRULE all_mortal:\n    WHEN socrates is human\n    THEN socrates is mortal\nRULE mortal_dies:\n    WHEN socrates is mortal\n    THEN socrates will_die\nHENCE socrates is mortal FROM all_mortal, socrates is human\nHENCE socrates will_die FROM mortal_dies, socrates is mortal\nCHECK socrates\n",
+    )
+    .unwrap();
+    assert_eq!(r.derivation.len(), 2);
+    assert!(r.derivation[0].holds && r.derivation[1].holds);
+    assert_eq!(r.derivation[1].from[1], "t.socrates is mortal");
+}
+
+#[test]
+fn hence_may_cite_a_construct_written_later() {
+    // Resolution is deferred until the whole program is read, so citing a premise
+    // defined further down the file works.
+    let r = vs("FACT x a\nHENCE x b FROM ab, x a\nRULE ab:\n    WHEN x a\n    THEN x b\nCHECK x\n")
+        .unwrap();
+    assert!(r.derivation[0].holds);
+}
+
+#[test]
+fn hence_not_conclusion_and_negated_ref() {
+    // Polarity flows through both slots: a NOT conclusion checked against a
+    // written NOT fact.
+    let r = vs("NOT door open\nHENCE NOT door open FROM NOT door open\nCHECK door\n").unwrap();
+    assert!(r.derivation[0].holds);
+    assert_eq!(r.derivation[0].conclusion, "NOT t.door open");
+    assert_eq!(r.derivation[0].from, vec!["NOT t.door open".to_string()]);
+}
+
+#[test]
+fn hence_unknown_reference_is_a_compile_error_with_suggestion() {
+    // Citing a name that is neither a construct, a written fact, nor an earlier
+    // conclusion fails compilation — the engine refuses to guess (Law 5).
+    let err = vs(
+        "FACT x a\nRULE all_mortal:\n    WHEN x a\n    THEN x b\nHENCE x b FROM all_mortel\nCHECK x\n",
+    )
+    .unwrap_err();
+    match err {
+        CompileError::UnknownHenceRef {
+            line,
+            reference,
+            suggestion,
+            ..
+        } => {
+            assert_eq!(line, 6);
+            assert_eq!(reference, "all_mortel");
+            assert!(suggestion.contains("all_mortal"), "{suggestion}");
+        }
+        other => panic!("expected UnknownHenceRef, got {other}"),
+    }
+}
+
+#[test]
+fn hence_cited_fact_is_not_an_orphan() {
+    // A fact used only as proof data would otherwise be flagged ORPHAN; citing it
+    // in a HENCE counts as consumption.
+    let r = vs("FACT x a\nHENCE x a FROM x a\nCHECK x\n").unwrap();
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+    assert!(r.derivation[0].holds);
+}
+
+#[test]
+fn hence_broken_earlier_step_stays_local() {
+    // Step 1 is a gap; step 2 cites its conclusion and is checked *locally* (the
+    // chain is a witness, not a proof search): step 2 holds on its own line while
+    // step 1's line names the gap — the reader repairs the first broken step.
+    let r = vs(
+        "FACT x a\nHENCE x b FROM x a\nRULE bc:\n    WHEN x b\n    THEN x c\nHENCE x c FROM bc, x b\nCHECK x\n",
+    )
+    .unwrap();
+    assert!(!r.derivation[0].holds);
+    assert!(r.derivation[1].holds);
+}

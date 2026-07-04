@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[{"premise":"all_mortal","kind":"RULE","source":"v.vrf","line":3,"atom":"d.socrates is mortal","value":true}],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"goals":[],"derivation":[{"premise":null,"kind":"HENCE","source":"v.vrf","line":6,"conclusion":"d.socrates is mortal","from":["all_mortal","d.socrates is human"],"holds":true}],"beliefs":[]}

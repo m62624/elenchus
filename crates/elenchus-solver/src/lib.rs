@@ -59,7 +59,7 @@ use elenchus_compiler::Compiled;
 
 use crate::analysis::{orphan_facts, similar_atom_pairs};
 use crate::eval::Eval;
-use crate::unsat::{prove_goals, retract_assumptions, tried_hypotheses};
+use crate::unsat::{check_derivations, prove_goals, retract_assumptions, tried_hypotheses};
 
 /// Re-exported so library users handling a [`CompileError::Parse`] can render the
 /// syntax diagnostics with their own error limit (e.g. CLI `--max-errors`).
@@ -73,8 +73,8 @@ pub use elenchus_compiler::{
     normalize_import_path, read_data_bindings, read_data_source,
 };
 pub use report::{
-    Conflict, CoreItem, Derived, FalseBelief, Fix, FixKind, OrphanFact, ProveOutcome, Proved,
-    Report, SimilarAtoms, Status, TraceReason, TraceStep, Tried, TryOutcome, Warning,
+    Conflict, CoreItem, Derived, FalseBelief, Fix, FixKind, Hence, OrphanFact, ProveOutcome,
+    Proved, Report, SimilarAtoms, Status, TraceReason, TraceStep, Tried, TryOutcome, Warning,
 };
 pub use v3::V3;
 
@@ -216,6 +216,10 @@ fn solve_impl(c: &Compiled, budget: Option<sat::Budget>) -> Result<Report, sat::
     // or is itself inconsistent (VACUOUS). Post-verdict, two bounded side-solves per
     // goal; never influences status/exit code.
     report.goals = prove_goals(c, budget.as_ref())?;
+    // Advisory only: the checked-derivation (proof kernel) pass — each `HENCE` step
+    // verified separately against exactly what it cites; a broken step is named.
+    // Post-verdict, one bounded side-solve per step; never influences status/exit.
+    report.derivation = check_derivations(c, budget.as_ref())?;
     Ok(report)
 }
 

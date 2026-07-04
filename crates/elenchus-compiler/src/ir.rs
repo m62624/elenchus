@@ -185,6 +185,12 @@ pub struct Compiled {
     /// satisfiable → OPEN. It emits **no clause and no fact** — the goal never enters
     /// the model or the verdict; the check is a bounded post-verdict side-solve.
     pub goals: Vec<Goal>,
+    /// One step per `HENCE <conclusion> FROM <refs>` — the checked-derivation (proof
+    /// witness) layer, in program order. The solver verifies each step separately:
+    /// do the clauses of the *cited* references alone entail the conclusion (one
+    /// refutation side-solve per step)? A step emits **no clause and no fact** — the
+    /// main solve is untouched; a broken step is reported by name.
+    pub derivations: Vec<Derivation>,
     /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
     /// layer. The solver checks each attribution against the settled world model:
     /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
@@ -249,6 +255,42 @@ pub struct Goal {
     /// The goal literal being asked about (atom id + polarity from an optional `NOT`).
     pub lit: Lit,
     /// Provenance of the `PROVE` (source, line, kind = `PROVE`).
+    pub origin: Origin,
+}
+
+/// How one `HENCE` step's `FROM` reference resolved — the three kinds of
+/// *already-written* things a proof step may rest on (anything else fails
+/// compilation with `UnknownHenceRef`; the engine never guesses).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepRef {
+    /// A named `PREMISE`/`RULE` of the same source: the step may use every clause
+    /// that construct desugared to (a defeasible rule keeps its `UNLESS` escapes).
+    Construct {
+        /// The source the construct is defined in (same as the step's).
+        source: String,
+        /// The construct's name.
+        name: String,
+    },
+    /// A written `FACT`/`NOT`/`ASSUME` with the same polarity as the reference.
+    Fact(Lit),
+    /// The conclusion of an **earlier** `HENCE` step — a linear chain (the index
+    /// into [`Compiled::derivations`] is always smaller than this step's own, so a
+    /// cycle is unrepresentable by line order).
+    Earlier(u32),
+}
+
+/// One `HENCE <conclusion> FROM <refs>` step: the conclusion literal, the resolved
+/// references, and the provenance. The solver checks `clauses(refs) ∧ ¬conclusion`
+/// for unsatisfiability — natural deduction as a *witness language*, where the LLM
+/// writes the proof and the kernel only re-checks each step. **Evaluative, not a
+/// constraint**: no clause, no fact, the main solve and verdict are untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derivation {
+    /// The step's conclusion (atom id + polarity from an optional `NOT`).
+    pub conclusion: Lit,
+    /// What the step claims suffices, in written order.
+    pub refs: Vec<StepRef>,
+    /// Provenance of the `HENCE` (source, line, kind = `HENCE`).
     pub origin: Origin,
 }
 

@@ -32,6 +32,7 @@ impl Report {
             + self.placeholders.len()
             + self.tried.len()
             + self.goals.len()
+            + self.derivation.len()
             + self.beliefs.len();
         let mut s = String::with_capacity(256 + entries * 64);
         let _ = write!(s, "{{\"status\":");
@@ -223,6 +224,19 @@ impl Report {
             };
             s.push_str(",\"outcome\":");
             outcome.write_json(&mut s);
+            s.push('}');
+        }
+        s.push_str("],\"derivation\":[");
+        for (i, h) in self.derivation.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_origin(&h.origin, &mut s);
+            s.push_str(",\"conclusion\":");
+            h.conclusion.write_json(&mut s);
+            s.push_str(",\"from\":");
+            h.from.write_json(&mut s);
+            let _ = write!(s, ",\"holds\":{}", h.holds);
             s.push('}');
         }
         s.push_str("],\"beliefs\":[");

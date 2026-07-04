@@ -19,6 +19,8 @@ pub mod kw {
     pub const ASSUME: &str = "ASSUME";
     pub const TRY: &str = "TRY";
     pub const PROVE: &str = "PROVE";
+    pub const HENCE: &str = "HENCE";
+    pub const FROM: &str = "FROM";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -142,6 +144,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "PROVE [NOT] <Subject> <predicate> [<object>]",
             "ask entailment: does the theory entail this atom? reports PROVED / REFUTED / OPEN (advisory — never changes the verdict)",
             "PROVE socrates is mortal",
+        ),
+    },
+    Keyword {
+        text: kw::HENCE,
+        top_level: true,
+        card: card(
+            "HENCE [NOT] <Subject> <predicate> [<object>] FROM <ref>[, <ref>]",
+            "a checked derivation step: do the named premises entail this conclusion? each ref is a PREMISE/RULE name, a written fact, or an earlier HENCE conclusion (advisory — a broken step is reported, the verdict never changes)",
+            "HENCE socrates is mortal FROM all_mortal, socrates is human",
         ),
     },
     Keyword {
@@ -367,6 +378,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "EXISTS <binder> WITNESS <term>  then one condition line using the binder",
             "prove EXISTS by naming the one element that satisfies it — needs no SET; grounds to a single atom",
             "EXISTS h WITNESS auth_service\n    h is ready",
+        ),
+    },
+    Keyword {
+        text: kw::FROM,
+        top_level: false,
+        card: card(
+            "HENCE <atom> FROM <ref>[, <ref>]",
+            "names what a HENCE step rests on: PREMISE/RULE names, written facts, or earlier HENCE conclusions, separated by commas",
+            "HENCE socrates is mortal FROM all_mortal, socrates is human",
         ),
     },
     Keyword {

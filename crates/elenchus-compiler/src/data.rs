@@ -79,6 +79,7 @@ fn statement_line(s: &Statement) -> u32 {
         Statement::Negation(a) => a.span.location_line(),
         Statement::Assume(l) | Statement::Try(l) | Statement::Prove(l) => l.span.location_line(),
         Statement::Knows { agent, .. } => agent.span.location_line(),
+        Statement::Hence { conclusion, .. } => conclusion.span.location_line(),
         Statement::Set { name, .. } => name.span.location_line(),
         Statement::Close { relation, .. } => relation.span.location_line(),
         Statement::Var { name, .. } => name.span.location_line(),

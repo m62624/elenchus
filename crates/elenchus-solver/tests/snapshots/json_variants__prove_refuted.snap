@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[{"premise":null,"kind":"NOT","source":"v.vrf","line":2,"atom":"d.socrates is immortal","value":false}],"unused_imports":[],"placeholders":[],"tried":[],"goals":[{"premise":null,"kind":"PROVE","source":"v.vrf","line":3,"label":"d.socrates is immortal","outcome":"refuted"}],"beliefs":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[{"premise":null,"kind":"NOT","source":"v.vrf","line":2,"atom":"d.socrates is immortal","value":false}],"unused_imports":[],"placeholders":[],"tried":[],"goals":[{"premise":null,"kind":"PROVE","source":"v.vrf","line":3,"label":"d.socrates is immortal","outcome":"refuted"}],"derivation":[],"beliefs":[]}

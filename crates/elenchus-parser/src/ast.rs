@@ -246,6 +246,20 @@ pub enum Statement<'a> {
     /// verdict — the LLM supplies the goal, the engine runs two bounded refutation
     /// checks. The `Literal` carries the optional `NOT`.
     Prove(Located<'a, Literal<'a>>),
+    /// `HENCE [NOT] <atom> FROM <ref>[, <ref>]*` — one *checked derivation step*:
+    /// the author claims the named premises entail the conclusion, and the engine
+    /// verifies exactly that claim (one refutation check over the cited clauses).
+    /// Each `ref` is written as a literal; the compiler resolves it to a
+    /// `PREMISE`/`RULE` name of the same source, a written `FACT`/`NOT`/`ASSUME`,
+    /// or the conclusion of an *earlier* `HENCE` (a linear chain — line order
+    /// forbids a cycle by construction). Advisory: a step emits no clause and
+    /// never changes the verdict; a broken step is reported by name.
+    Hence {
+        /// The step's conclusion, with its optional leading `NOT`.
+        conclusion: Located<'a, Literal<'a>>,
+        /// The comma-separated `FROM` references (at least one).
+        from: Vec<Located<'a, Literal<'a>>>,
+    },
     /// `KNOWS <agent> [NOT] <atom>` / `BELIEVES <agent> [NOT] <atom>` — attribute a
     /// claim about the world to a *named agent* (the modal/epistemic L6 layer). The
     /// agent is a bare identifier, a report-side label only: it never becomes an atom

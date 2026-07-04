@@ -16,14 +16,16 @@ use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Goal, Hypothesis, Justification,
-    Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Derivation, Fact, Goal, Hypothesis,
+    Justification, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, StepRef,
+    UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawAttribution, RawClause, RawFact, RawGoal, RawHypothesis, RawJustification, RawLit, RawRule,
-    canonical_body, clause_sig, key_sig, list_kind, quant_sig, raw_lits,
+    RawAttribution, RawClause, RawDerivation, RawFact, RawGoal, RawHenceRef, RawHypothesis,
+    RawJustification, RawLit, RawRule, RawStepRef, ResolvedDerivation, canonical_body, clause_sig,
+    key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
 
@@ -95,6 +97,12 @@ pub struct Compiler {
     /// `PROVE <literal>` entailment goals. Never committed to the model (no clause,
     /// no fact); the solver answers each with two refutation side-solves.
     goals: Vec<RawGoal>,
+    /// `HENCE … FROM …` steps as written, references unresolved. Turned into
+    /// [`Compiler::derivations`] by [`Compiler::resolve_derivations`] once every
+    /// named construct and fact of the program is known.
+    raw_derivations: Vec<RawDerivation>,
+    /// Resolved `HENCE` steps (the checked-proof witness chain), in program order.
+    derivations: Vec<ResolvedDerivation>,
     /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
     /// clause, no fact); the solver checks each against the world model per agent.
     attributions: Vec<RawAttribution>,
@@ -266,6 +274,9 @@ impl Compiler {
             }
             Statement::Prove(l) => {
                 self.add_goal(source, l, ctx)?;
+            }
+            Statement::Hence { conclusion, from } => {
+                self.add_derivation(source, conclusion, from, ctx)?;
             }
             Statement::Knows {
                 agent,
@@ -450,6 +461,127 @@ impl Compiler {
                 kind: kw::PROVE,
             },
         });
+        Ok(())
+    }
+
+    /// Record a `HENCE <conclusion> FROM <refs>` step with its references still
+    /// unresolved — a reference may cite a construct or fact written *later* in
+    /// the file, so resolution is deferred to [`Compiler::resolve_derivations`].
+    /// Only the conclusion atom is interned here (it must have a SAT variable in
+    /// the step's side-solve); a reference must match something already interned.
+    fn add_derivation(
+        &mut self,
+        source: &str,
+        conclusion: &Located<Literal>,
+        from: &[Located<Literal>],
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let conclusion_key = ctx.key(&conclusion.data.atom)?;
+        self.intern(&conclusion_key);
+        let mut refs = Vec::with_capacity(from.len());
+        for r in from {
+            let a = &r.data.atom;
+            // A single bare unqualified positive word may name a PREMISE/RULE;
+            // anything longer, negated, or domain-qualified can only be an atom.
+            let word = (!r.data.negated && a.domain.is_none() && a.predicate.is_none())
+                .then(|| a.subject.to_string());
+            let key = ctx.key(a)?;
+            let mut label = String::new();
+            if r.data.negated {
+                label.push_str(kw::NOT);
+                label.push(' ');
+            }
+            if let Some(d) = a.domain {
+                label.push_str(d);
+                label.push('.');
+            }
+            label.push_str(a.subject);
+            for part in [a.predicate, a.object].into_iter().flatten() {
+                label.push(' ');
+                label.push_str(part);
+            }
+            refs.push(RawHenceRef {
+                word,
+                key,
+                negated: r.data.negated,
+                label,
+            });
+        }
+        self.raw_derivations.push(RawDerivation {
+            conclusion_key,
+            conclusion_negated: conclusion.data.negated,
+            refs,
+            origin: Origin {
+                source: source.to_string(),
+                line: conclusion.span.location_line(),
+                premise: None,
+                kind: kw::HENCE,
+            },
+        });
+        Ok(())
+    }
+
+    /// Resolve every `HENCE` step's `FROM` references, in program order. Each
+    /// reference must name something *already written*: a `PREMISE`/`RULE` of the
+    /// same source, a written `FACT`/`NOT`/`ASSUME` with the same polarity, or the
+    /// conclusion of an **earlier** `HENCE` (a linear chain — line order forbids a
+    /// cycle by construction). Anything else is [`CompileError::UnknownHenceRef`]:
+    /// the engine refuses to guess what a proof step rests on (Law 5). Must run
+    /// after every source is accumulated and before [`Compiler::finalize`]; cited
+    /// facts are marked consumed (they are read as proof data, not idle).
+    pub(crate) fn resolve_derivations(&mut self) -> Result<(), CompileError> {
+        for d in core::mem::take(&mut self.raw_derivations) {
+            let mut refs = Vec::with_capacity(d.refs.len());
+            for r in d.refs {
+                let is_name = r.word.as_ref().is_some_and(|w| {
+                    self.defined
+                        .contains_key(&(d.origin.source.clone(), w.clone()))
+                });
+                let resolved =
+                    if is_name {
+                        RawStepRef::Construct {
+                            source: d.origin.source.clone(),
+                            name: r.word.expect("checked by is_name"),
+                        }
+                    } else if self
+                        .facts
+                        .iter()
+                        .any(|f| f.key == r.key && (matches!(f.value, Value::True) != r.negated))
+                    {
+                        // Cited as proof data — keep the fact out of the ORPHAN lint.
+                        self.relation_consumed.insert(r.key.clone());
+                        RawStepRef::Fact {
+                            key: r.key,
+                            negated: r.negated,
+                        }
+                    } else if let Some(i) = self.derivations.iter().position(|e| {
+                        e.conclusion_key == r.key && e.conclusion_negated == r.negated
+                    }) {
+                        RawStepRef::Earlier(i as u32)
+                    } else {
+                        let names: Vec<&str> = self
+                            .defined
+                            .keys()
+                            .filter(|(s, _)| *s == d.origin.source)
+                            .map(|(_, n)| n.as_str())
+                            .collect();
+                        let suggestion = did_you_mean(&r.label, &names);
+                        return Err(CompileError::UnknownHenceRef {
+                            file: d.origin.source.clone(),
+                            line: d.origin.line,
+                            reference: r.label,
+                            suggestion,
+                        });
+                    };
+                refs.push(resolved);
+            }
+            self.derivations.push(ResolvedDerivation {
+                conclusion_key: d.conclusion_key,
+                conclusion_negated: d.conclusion_negated,
+                refs,
+                origin: d.origin,
+            });
+        }
         Ok(())
     }
 
@@ -1219,6 +1351,32 @@ impl Compiler {
             })
             .collect();
 
+        let derivations = self
+            .derivations
+            .into_iter()
+            .map(|d| Derivation {
+                conclusion: Lit {
+                    atom: id_of(&d.conclusion_key),
+                    negated: d.conclusion_negated,
+                },
+                refs: d
+                    .refs
+                    .into_iter()
+                    .map(|r| match r {
+                        RawStepRef::Construct { source, name } => {
+                            StepRef::Construct { source, name }
+                        }
+                        RawStepRef::Fact { key, negated } => StepRef::Fact(Lit {
+                            atom: id_of(&key),
+                            negated,
+                        }),
+                        RawStepRef::Earlier(i) => StepRef::Earlier(i),
+                    })
+                    .collect(),
+                origin: d.origin,
+            })
+            .collect();
+
         let goals = self
             .goals
             .into_iter()
@@ -1259,6 +1417,7 @@ impl Compiler {
             justifications,
             hypotheses,
             goals,
+            derivations,
             attributions,
         }
     }

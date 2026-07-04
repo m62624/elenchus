@@ -94,6 +94,25 @@ pub enum CompileError {
         /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
         suggestion: String,
     },
+    /// A `HENCE … FROM` reference matched nothing written: not a `PREMISE`/`RULE`
+    /// name of the same source, not a written `FACT`/`NOT`/`ASSUME` with that
+    /// polarity, and not an earlier `HENCE` conclusion. A proof step may only rest
+    /// on what exists — the engine refuses to guess (usually a typo'd name or a
+    /// fact that was never asserted).
+    #[error(
+        "{file}:{line}: HENCE cites '{reference}', which is not a PREMISE/RULE name, \
+         a written fact, or an earlier HENCE conclusion{suggestion}"
+    )]
+    UnknownHenceRef {
+        /// The source the offending `HENCE` is in.
+        file: String,
+        /// 1-based line of the `HENCE`.
+        line: u32,
+        /// The reference as written (e.g. `mortality` or `NOT x b`).
+        reference: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
     /// `CLOSE <relation> TRANSITIVE` found a cycle: a node transitively reaches
     /// itself. Transitive closure requires a DAG (e.g. a dependency graph).
     #[error(

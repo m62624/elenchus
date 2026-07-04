@@ -47,6 +47,44 @@ pub(crate) struct RawGoal {
     pub(crate) origin: Origin,
 }
 
+/// One unresolved `FROM` reference of a `HENCE` step. `word` is the surface word
+/// when the reference is a single bare unqualified positive word (a candidate
+/// `PREMISE`/`RULE` name); `key` is the reference read as an atom under the
+/// declaring file's context, for the fact / earlier-conclusion matches.
+pub(crate) struct RawHenceRef {
+    pub(crate) word: Option<String>,
+    pub(crate) key: AtomKey,
+    pub(crate) negated: bool,
+    /// The reference as written, for the `UnknownHenceRef` error.
+    pub(crate) label: String,
+}
+
+/// A `HENCE` step as written, before its references are resolved (resolution is
+/// deferred so a reference may cite a construct or fact written later in the file).
+pub(crate) struct RawDerivation {
+    pub(crate) conclusion_key: AtomKey,
+    pub(crate) conclusion_negated: bool,
+    pub(crate) refs: Vec<RawHenceRef>,
+    pub(crate) origin: Origin,
+}
+
+/// A resolved `FROM` reference keyed by atom identity (pre-interning counterpart
+/// of [`crate::ir::StepRef`]).
+pub(crate) enum RawStepRef {
+    Construct { source: String, name: String },
+    Fact { key: AtomKey, negated: bool },
+    Earlier(u32),
+}
+
+/// A resolved `HENCE` step keyed by atom identity (pre-interning counterpart of
+/// [`crate::ir::Derivation`]).
+pub(crate) struct ResolvedDerivation {
+    pub(crate) conclusion_key: AtomKey,
+    pub(crate) conclusion_negated: bool,
+    pub(crate) refs: Vec<RawStepRef>,
+    pub(crate) origin: Origin,
+}
+
 /// A `KNOWS`/`BELIEVES` attribution keyed by atom identity (pre-interning
 /// counterpart of [`crate::ir::Attribution`]).
 pub(crate) struct RawAttribution {

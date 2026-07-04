@@ -64,9 +64,9 @@ pub use data::{read_data_bindings, read_data_source};
 pub use elenchus_parser::{Diagnostics, kw};
 pub use error::{CompileError, UnknownValue, levenshtein};
 pub use ir::{
-    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Goal, Hypothesis, Justification,
-    KIND_UNSAT, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnusedImport,
-    UnwitnessedExists, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Derivation, Fact, Goal, Hypothesis,
+    Justification, KIND_UNSAT, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule,
+    StepRef, UnusedImport, UnwitnessedExists, Value,
 };
 #[cfg(feature = "std")]
 pub use resolver::FileResolver;
@@ -103,6 +103,7 @@ pub fn compile_source_with(
 ) -> Result<Compiled, CompileError> {
     let mut c = Compiler::new();
     c.add_source(source, src)?;
+    c.resolve_derivations()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;
     let mut compiled = c.finalize();
@@ -150,6 +151,7 @@ pub fn compile_with<R: Resolver>(
     for file in &files {
         c.add_resolved(file)?;
     }
+    c.resolve_derivations()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;
     let mut compiled = c.finalize();

@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":null,"kind":"KNOWS","source":"v.vrf","line":3,"atoms":["alice cannot know d.door locked — it is FALSE"],"trace":[{"atom":"d.door locked","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":2,"from":[]}]}],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"goals":[],"beliefs":[]}
+{"status":"CONFLICT","exit_code":2,"conflicts":[{"premise":null,"kind":"KNOWS","source":"v.vrf","line":3,"atoms":["alice cannot know d.door locked — it is FALSE"],"trace":[{"atom":"d.door locked","value":false,"how":"asserted","premise":null,"kind":"NOT","source":"v.vrf","line":2,"from":[]}]}],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[],"goals":[],"derivation":[],"beliefs":[]}

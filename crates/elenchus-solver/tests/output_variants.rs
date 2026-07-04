@@ -364,6 +364,26 @@ fn prove_negative_goal() {
     ));
 }
 
+// --- HENCE … FROM (checked derivation / the proof kernel) --------------------
+
+#[test]
+fn hence_chain_holds_then_gap() {
+    // Step 1 is a valid inference from what it cites; step 2 cites only step 1's
+    // conclusion, which does not entail being buried — the gap is named on its
+    // own line. Advisory: the verdict is untouched.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        RULE all_mortal:
+            WHEN socrates is human
+            THEN socrates is mortal
+        HENCE socrates is mortal FROM all_mortal, socrates is human
+        HENCE socrates is buried FROM socrates is mortal
+        CHECK socrates
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

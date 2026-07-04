@@ -2,4 +2,4 @@
 source: crates/elenchus-solver/tests/json_variants.rs
 expression: json
 ---
-{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[{"premise":null,"kind":"FACT","source":"v.vrf","line":2,"atom":"d.x a","value":true}],"unused_imports":[],"placeholders":[],"tried":[],"goals":[{"premise":null,"kind":"PROVE","source":"v.vrf","line":6,"label":"d.x c","outcome":"open"}],"beliefs":[]}
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[{"premise":null,"kind":"FACT","source":"v.vrf","line":2,"atom":"d.x a","value":true}],"unused_imports":[],"placeholders":[],"tried":[],"goals":[{"premise":null,"kind":"PROVE","source":"v.vrf","line":6,"label":"d.x c","outcome":"open"}],"derivation":[],"beliefs":[]}

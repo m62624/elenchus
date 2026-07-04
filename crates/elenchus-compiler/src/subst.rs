@@ -119,6 +119,12 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
         Statement::Assume(l) | Statement::Try(l) | Statement::Prove(l) => add(&l.data.atom),
         // The agent is a bare label (no domain); only the claimed atom carries one.
         Statement::Knows { hypo, .. } => add(&hypo.data.atom),
+        // The conclusion and every FROM reference may carry a `domain.` prefix (a
+        // bare name reference simply contributes `None`, which is inert here).
+        Statement::Hence { conclusion, from } => {
+            add(&conclusion.data.atom);
+            from.iter().for_each(|r| add(&r.data.atom));
+        }
         Statement::Premise { body, .. } | Statement::Rule { body, .. } => match body {
             Body::List { atoms, .. } => atoms.iter().for_each(|a| add(&a.data)),
             Body::Impl {

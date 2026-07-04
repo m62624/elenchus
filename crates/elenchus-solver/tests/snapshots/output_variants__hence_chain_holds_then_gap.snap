@@ -1,0 +1,12 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        FACT socrates is human\n        RULE all_mortal:\n            WHEN socrates is human\n            THEN socrates is mortal\n        HENCE socrates is mortal FROM all_mortal, socrates is human\n        HENCE socrates is buried FROM socrates is mortal\n        CHECK socrates\n        \"#)"
+---
+RESULT: CONSISTENT
+  HENCE     d.socrates is mortal FROM all_mortal, d.socrates is human
+      holds: the cited premises entail it   (checked)
+  HENCE     d.socrates is buried FROM d.socrates is mortal
+      does not follow from what it cites — the gap is here   (checked)
+  DERIVED   d.socrates is mortal = TRUE   from all_mortal (RULE)  [v.vrf:4]
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 1 derived
+EXIT_CODE: 0
