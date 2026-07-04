@@ -119,9 +119,16 @@ completeness exactly.
 | `FACT … BECAUSE …` | statement | assert an atom TRUE **and name its ground**; the engine checks the ground holds (FALSE → CONFLICT, UNKNOWN → WARNING) |
 | `NOT` | statement / literal prefix | assert an atom FALSE (or negate a literal in a body) |
 | `ASSUME` | statement | a **soft, retractable** hypothesis (`[NOT] atom`) — acts like a fact, but on a clash the engine says which to drop |
+| `TRY` | statement | test a hypothesis **without committing it**: would it close the gap, conflict, or leave it open? (advisory — never changes the verdict) |
+| `TRY … FOR …` | statement | **targeted abduction**: accept the hypothesis only if it is consistent AND makes the goal follow ("which missing premise explains G?") |
+| `PROVE` | statement | ask **entailment**: does the theory entail this atom? PROVED / REFUTED / OPEN (advisory) |
+| `HENCE … FROM …` | statement | one **checked derivation step**: do the cited refs (rule/premise names, facts, earlier HENCE conclusions) entail the conclusion? a broken step is named (advisory) |
+| `KNOWS` | statement | attribute **factive** knowledge to an agent: knowing an established-FALSE atom is a CONFLICT, an UNKNOWN one a WARNING |
+| `BELIEVES` | statement | attribute a **non-factive** belief: a false belief is an informational note, never a CONFLICT |
 | `PREMISE` | statement | a **checked** first principle (violation → CONFLICT) |
 | `RULE` | statement | an implication that **derives** new facts (forward chaining) |
 | `RULE … UNLESS …` | `RULE` body (last) | a **defeasible** exception: the rule still derives its `THEN` unless the named exception is *established* TRUE (FALSE/UNKNOWN lets the default stand); repeatable, RULE-only |
+| `PREFERS … OVER …` | statement | priority between two named `RULE`s: when both apply, the winner stands and the loser is DEFEATED; a cycle is a compile error |
 | `CHECK` | statement | run the engine (optionally for one subject) |
 | `BIDIRECTIONAL` | `CHECK` modifier | also run the backward SAT pass (finds UNDERDETERMINED + joint-unsat) |
 | `IMPORT` | statement | pull in another `.vrf` source; reference its atoms as `<domain>.<atom>` |
@@ -139,6 +146,8 @@ completeness exactly.
 | `SET` | statement | declare a finite set of elements to quantify over (one element per line) |
 | `FOR EACH … IN …` | `PREMISE`/`RULE` header | instantiate the body once per element of a `SET`, binding a name |
 | `FOR EACH … <rel> …` | `PREMISE`/`RULE` header | instantiate the body once per declared `FACT` pair of a relation |
+| `FOR EACH … MENTIONED` | `PREMISE`/`RULE` header | the **universal schema**: instantiate once per subject this domain's FACT/NOT/ASSUME lines mention — no `SET` needed |
+| `TOTAL … ON …` | statement | witness-table ∀∃: every element of the `SET` must have a `FACT` pair of the relation; unserved elements are WARNINGs, named |
 | `CLOSE` | statement | `CLOSE <rel> TRANSITIVE\|SYMMETRIC\|REFLEXIVE\|EQUIVALENCE\|SCC` — close a relation at compile time (only `TRANSITIVE` rejects a cycle) |
 | `VAR` | statement | declare an **external port** — a one-word proposition supplied from outside (`VAR <name> [DEFAULT true\|false]`) |
 | `PROVIDE` | statement | bind a `VAR` port's value from data (`PROVIDE <name>: true\|false`) |
@@ -219,13 +228,74 @@ ASSUME NOT rel has_rollback
 - **not `ASSUME`** — an `ASSUME` **is committed**: it enters the model, fires rules, and
   can flip the verdict (and be `RETRACT`ed). A `TRY` does none of that — it only asks a
   question. Reach for `TRY` to probe, `ASSUME` to actually suppose.
-- **form** — `TRY <atom>` · `TRY NOT <atom>`
+- **form** — `TRY [NOT] <atom>` · `TRY [NOT] <atom> FOR [NOT] <atom>`
 ```vrf
 RULE gate:
     WHEN deploys is_ready
     THEN deploys unblocked
 CHECK BIDIRECTIONAL           // UNDERDETERMINED: is_ready is free
 TRY deploys is_ready          // → closes the gap: the model is now pinned  (checked)
+```
+
+### `TRY … FOR …` — does this hypothesis **explain** that goal? (targeted abduction)
+- **is** — the textbook abduction question, checked: the engine accepts the hypothesis
+  only if it is (a) **consistent** with the theory AND (b) `theory + H` **entails** the
+  goal. Verdicts: `explains the goal` / `does not explain` / `conflicts`. Advisory —
+  nothing is committed, the verdict is untouched.
+- **use when** — you have a target conclusion and candidate missing premises: "which
+  of these would actually make G follow?". You supply candidates; the engine grades
+  each one instead of you eyeballing the chain.
+- **not plain `TRY`** — plain `TRY` asks only *compatibility/pinning*; `FOR` adds
+  *sufficiency for a named goal*.
+- **form** — `TRY [NOT] <atom> FOR [NOT] <atom>`
+```vrf
+RULE gate:
+    WHEN deploys is_ready
+    THEN deploys unblocked
+TRY deploys is_ready FOR deploys unblocked   // → explains the goal  (checked)
+TRY backup done      FOR deploys unblocked   // → does not explain   (checked)
+```
+
+### `PROVE` — ask entailment: does this **follow**? (the ⊨ question)
+- **is** — the question of formal logic itself, checked refutationally against the
+  whole theory (facts + premises + rules): **PROVED** (it follows), **REFUTED** (its
+  negation follows), **OPEN** (neither is pinned — the honest three-valued answer),
+  or **VACUOUS** (the theory itself is inconsistent; fix the CONFLICT first).
+  Advisory — the goal is never committed, verdict and exit code untouched.
+- **use when** — you don't just want "no contradictions", you want *"does my
+  conclusion actually follow from these premises?"* — checking a claimed consequence,
+  a spec property, a step of an argument.
+- **not `TRY`** — `TRY` asks *may this be added*; `PROVE` asks *is this forced*.
+- **form** — `PROVE [NOT] <atom>`
+```vrf
+FACT socrates is human
+RULE mortal:
+    WHEN socrates is human
+    THEN socrates is mortal
+PROVE socrates is mortal      // → PROVED: it follows from the theory  (checked)
+```
+
+### `HENCE … FROM …` — hand in a derivation, get every step graded
+- **is** — a **checked proof step**: you claim the named references entail the
+  conclusion, and the engine verifies *exactly that* — one refutation check over only
+  the cited clauses, never the whole program. A chain of `HENCE` lines is a proof the
+  engine grades line by line; the first `does not follow` names the gap. Advisory.
+- **refs** — each comma-separated reference must be *already written*: a
+  `PREMISE`/`RULE` **name** (same file), a written **fact** (`FACT`/`NOT`/`ASSUME`,
+  matching polarity), or the **conclusion of an earlier `HENCE`** (chains compose;
+  a cycle is impossible by line order). Anything else is a compile error with a
+  did-you-mean — the engine never guesses what a proof rests on.
+- **use when** — you (the model) wrote a multi-step argument and want each inference
+  checked mechanically instead of trusting your own chain — the core "LLM proves,
+  engine verifies" loop.
+- **form** — `HENCE [NOT] <atom> FROM <ref>[, <ref>]*`
+```vrf
+FACT socrates is human
+RULE all_mortal:
+    WHEN socrates is human
+    THEN socrates is mortal
+HENCE socrates is mortal FROM all_mortal, socrates is human  // holds  (checked)
+HENCE socrates is buried FROM socrates is mortal             // the gap is here
 ```
 
 ### `KNOWS` / `BELIEVES` — what an agent knows or believes (epistemic)
@@ -390,6 +460,30 @@ RULE fly:
     UNLESS x is penguin      // a penguin is a bird, yet does not fly — no conflict
 ```
 
+### `PREFERS <winner> OVER <loser>` — which default wins (priorities)
+- **is** — a declared priority between two named `RULE`s of the same file:
+  "penguin-rule beats bird-rule". When **both** are applicable the winner derives
+  and the loser is suppressed — reported as `DEFEATED`, never a CONFLICT. Works in
+  either source order.
+- **use when** — two defaults clash (a specific rule vs a general one) and you know
+  which should win; instead of hand-writing `UNLESS` exceptions, declare the
+  ranking once.
+- **not derived** — priorities are pairs you *write*: `a OVER b` and `b OVER c` do
+  **not** imply `a OVER c` (add the pair if you mean it). A cycle is a compile
+  error; naming a `PREMISE` or a typo'd rule is a compile error with a suggestion.
+- **form** — `PREFERS <rule-name> OVER <rule-name>` (both `RULE`s of this file).
+```vrf
+RULE bird_flies:
+    WHEN pengu is bird
+    THEN pengu can_fly
+RULE penguin_grounded:
+    WHEN pengu is penguin
+    THEN NOT pengu can_fly
+PREFERS penguin_grounded OVER bird_flies
+FACT pengu is bird
+FACT pengu is penguin    // → NOT can_fly derived; bird_flies DEFEATED — no conflict
+```
+
 ### `SET` + `FOR EACH … IN …` — write a premise once, apply per element
 - **is** — `SET` declares a finite list; `FOR EACH <binder> IN <set>` on a header
   instantiates the whole body once per element, substituting the binder. "For all".
@@ -425,6 +519,42 @@ PREMISE diff FOR EACH x linked y:    // neighbours can't share a colour
 - **cross-file** — a relation is `(domain, predicate)`: an importing file feeds an
   imported template's relation with qualified facts (`FACT tmpl.a linked b`) — see
   the `IMPORT` card's template-library example. Bare facts stay in your own domain.
+
+### `FOR EACH <binder> MENTIONED` — "all men are mortal", no SET needed
+- **is** — the **universal schema**: instantiate the body once per subject this
+  domain's `FACT`/`NOT`/`ASSUME` lines mention. Writing a fact about someone is
+  what makes them an individual — the rule reaches a Socrates nobody enlisted.
+- **use when** — a law should cover *every individual you wrote about*, including
+  ones added later, without maintaining a `SET` by hand.
+- **scope** — same-domain only: an imported file (another `DOMAIN`) never silently
+  grows the schema; a qualified `FACT tmpl.x …` from an importer deliberately does.
+  `VAR` ports are not individuals. Still exactly **one** binder — no nesting parses.
+- **form** — `PREMISE/RULE <name> FOR EACH <binder> MENTIONED:` + body.
+```vrf
+FACT socrates is human
+FACT plato is human
+RULE mortal FOR EACH x MENTIONED:
+    WHEN x is human
+    THEN x is mortal          // derives for both — and for anyone added tomorrow
+```
+
+### `TOTAL <relation> ON <set>` — "every task has an assignee" (witness table)
+- **is** — the ∀∃ check with zero nesting: every element of the `SET` must be the
+  **subject** of at least one `FACT` pair of the relation. The `∃` is discharged
+  **as data** — the facts are the witness table; the engine only scans it.
+- **use when** — a coverage claim over declared items: every task assigned, every
+  service owned, every input handled. Unserved elements come back **by name** as a
+  WARNING with a `FACT <el> <rel> <witness>`-shaped fix; fully served is silent.
+- **counts closed & fed pairs** — runs after `CLOSE` and after cross-file feeding,
+  so closure-produced and imported qualified pairs serve as witnesses.
+- **form** — `TOTAL <relation> ON <set>` (a declared `SET`; unknown set = error).
+```vrf
+SET tasks
+    deploy
+    backup
+FACT deploy assigned ana
+TOTAL assigned ON tasks       // WARNING: backup (no assigned witness)
+```
 
 ### `CLOSE <relation> <kind>` — close a relation at compile time
 - **is** — a graph closure over the relation's `FACT` pairs at **compile time** (no
@@ -1014,7 +1144,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.14.0 -->
+<!-- skill-version: 0.15.0 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see

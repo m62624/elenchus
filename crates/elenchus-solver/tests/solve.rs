@@ -1710,3 +1710,27 @@ fn prefers_backward_pass_stays_consistent() {
     .unwrap();
     assert_ne!(r.status, Status::Conflict, "{:?}", r.conflicts);
 }
+
+// --- the proof kernel × IMPORT: qualified references work across files ---------
+
+#[test]
+fn hence_and_prove_reach_imported_atoms_by_qualified_name() {
+    // The entry file proves against, and derives from, the template's atoms via
+    // the ordinary `domain.` qualification — the proof-kernel layer needs no new
+    // import machinery. The HENCE cites a qualified fact of ANOTHER domain (facts
+    // match by atom identity, not by source), and PROVE asks about a derived
+    // template atom.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nRULE mortal FOR EACH x MENTIONED:\n    WHEN x is human\n    THEN x is mortal\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.sock is human\nPROVE tmpl.sock is mortal\nHENCE tmpl.sock is human FROM tmpl.sock is human\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved, "{:?}", r.goals);
+    assert!(r.derivation[0].holds, "{:?}", r.derivation);
+    assert_eq!(r.derivation[0].conclusion, "tmpl.sock is human");
+}
