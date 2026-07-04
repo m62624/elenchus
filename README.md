@@ -51,7 +51,7 @@ No ML inside — the engine is a pipeline of small, classic algorithms:
 |-----|-----------|
 | parsing `.vrf` text | parser combinators (nom), one statement per line |
 | syntax errors | every error found in one pass, grouped by keyword; "did you mean" hints via Levenshtein distance |
-| atoms (`app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
+| atoms (e.g. `app uses orm_v2`) | interning — each atom becomes a number once, all later comparisons are integer comparisons |
 | deriving facts from `RULE`s | forward chaining to a fixpoint |
 | truth values | three-valued Kleene logic (TRUE / FALSE / UNKNOWN — "unknown" is not "false") |
 | `CHECK … BIDIRECTIONAL` | a small CDCL SAT solver (same algorithm family as MiniSat / varisat) |
