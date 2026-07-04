@@ -838,6 +838,35 @@ fn stmt_close<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Close { relation, kind }))
 }
 
+/// `TOTAL <relation> ON <set>` — the witness-table totality check: every element
+/// of the set must have at least one declared pair of the relation.
+fn stmt_total<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::TOTAL), space1).parse(input)?;
+    let at = input;
+    let (input, relation) = promote(
+        identifier(input),
+        at,
+        "TOTAL expects a relation name, e.g. TOTAL assigned ON tasks",
+    )?;
+    let (input, _) = promote(
+        (space1, tag(kw::ON), space1).parse(input),
+        input,
+        "TOTAL expects ON then a set: TOTAL <relation> ON <set>",
+    )?;
+    let at = input;
+    let (input, set) = promote(
+        identifier(input),
+        at,
+        "TOTAL expects a declared SET name after ON",
+    )?;
+    let (input, _) = promote(
+        eol(input),
+        input,
+        "unexpected text after 'TOTAL <relation> ON <set>'",
+    )?;
+    Ok((input, Statement::Total { relation, set }))
+}
+
 /// The optional quantifier tail on a `PREMISE`/`RULE` header (between the name
 /// and the `:`). One of two forms:
 ///   `FOR EACH <binder> IN <set>`         — over a declared SET, or
@@ -972,6 +1001,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_import,
         stmt_set,
         stmt_close,
+        stmt_total,
         stmt_var,
         stmt_provide,
         stmt_fact,

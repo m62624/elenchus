@@ -245,6 +245,7 @@ fn build_compiled(n: usize, fact_choice: &[u8], raw: &[Vec<(u32, bool)>]) -> Com
         hypotheses: Vec::new(),
         goals: Vec::new(),
         derivations: Vec::new(),
+        totality: Vec::new(),
         attributions: Vec::new(),
     }
 }

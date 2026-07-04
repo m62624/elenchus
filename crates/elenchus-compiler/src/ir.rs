@@ -191,6 +191,13 @@ pub struct Compiled {
     /// refutation side-solve per step)? A step emits **no clause and no fact** — the
     /// main solve is untouched; a broken step is reported by name.
     pub derivations: Vec<Derivation>,
+    /// One record per `TOTAL <relation> ON <set>` — the Skolem witness-table (∀∃)
+    /// layer, checked at compile time by a single linear scan of the declared
+    /// pairs. `missing` lists the set elements with no witness pair; the solver
+    /// raises each non-empty record to a WARNING naming them (a claimed existence
+    /// with no witness, like an unwitnessed `EXISTS`). A fully-served check is
+    /// silent. It emits **no clause** — the pairs are ordinary facts.
+    pub totality: Vec<Totality>,
     /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
     /// layer. The solver checks each attribution against the settled world model:
     /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
@@ -291,6 +298,23 @@ pub struct Derivation {
     /// What the step claims suffices, in written order.
     pub refs: Vec<StepRef>,
     /// Provenance of the `HENCE` (source, line, kind = `HENCE`).
+    pub origin: Origin,
+}
+
+/// One `TOTAL <relation> ON <set>` check, already evaluated at compile time (the
+/// registries of sets and relation pairs are compile-time data, so the scan needs
+/// no solver). The engine never proposes a witness — it only verifies the table
+/// the author supplied (the LLM discharges the `∃` as `FACT` data).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Totality {
+    /// The relation whose declared pairs were scanned.
+    pub relation: String,
+    /// The declared `SET` whose elements each need a witness pair.
+    pub set: String,
+    /// Set elements with **no** pair (`element relation _`) — empty means the
+    /// check is fully served (`total (checked)`).
+    pub missing: Vec<String>,
+    /// Provenance of the `TOTAL` (source, line, kind = `TOTAL`).
     pub origin: Origin,
 }
 

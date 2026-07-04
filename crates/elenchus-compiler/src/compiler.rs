@@ -18,7 +18,7 @@ use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggest
 use crate::ir::{
     AtomId, AtomKey, Attribution, Check, Clause, Compiled, Derivation, Fact, Goal, Hypothesis,
     Justification, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, StepRef,
-    UnwitnessedExists, Value,
+    Totality, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
@@ -112,6 +112,12 @@ pub struct Compiler {
     raw_derivations: Vec<RawDerivation>,
     /// Resolved `HENCE` steps (the checked-proof witness chain), in program order.
     derivations: Vec<ResolvedDerivation>,
+    /// `TOTAL <relation> ON <set>` checks as written: `(domain, relation, set,
+    /// origin)`. Evaluated by [`Compiler::check_totality`] once the set and
+    /// relation registries are complete.
+    raw_totals: Vec<(String, String, String, Origin)>,
+    /// Evaluated totality records, carried to the IR (the solver only reports).
+    totality: Vec<Totality>,
     /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
     /// clause, no fact); the solver checks each against the world model per agent.
     attributions: Vec<RawAttribution>,
@@ -321,6 +327,22 @@ impl Compiler {
             // Declared in the `collect_decls` / `apply_closures` pre-passes;
             // nothing to emit here.
             Statement::Set { .. } | Statement::Close { .. } => {}
+            // A totality check names a bare relation and set, so it always checks
+            // its own domain's registries (a foreign one is unrepresentable here).
+            // Deferred to `check_totality` — the pairs may come from later files.
+            Statement::Total { relation, set } => {
+                self.raw_totals.push((
+                    ctx.current.clone(),
+                    relation.data.to_string(),
+                    set.data.to_string(),
+                    Origin {
+                        source: source.to_string(),
+                        line: relation.span.location_line(),
+                        premise: None,
+                        kind: kw::TOTAL,
+                    },
+                ));
+            }
             // A port declaration: record it under this file's domain (the first
             // declaration of a `(domain, name)` wins). It is resolved against
             // external values later, in `resolve_ports`.
@@ -606,6 +628,56 @@ impl Compiler {
                 conclusion_negated: d.conclusion_negated,
                 refs,
                 origin: d.origin,
+            });
+        }
+        Ok(())
+    }
+
+    /// Evaluate every `TOTAL <relation> ON <set>`: one linear scan of the declared
+    /// pairs per check — does every element of the set appear as a pair's subject?
+    /// The `∀x ∃y` meaning with zero quantifier syntax: the `∃` was discharged as
+    /// `FACT` data by the author, and the engine only verifies the table (it never
+    /// proposes a witness — Law 5). Runs after all sources are accumulated (the
+    /// registries are complete, closures applied); witness pairs are marked
+    /// consumed so the ORPHAN lint stays quiet about them.
+    pub(crate) fn check_totality(&mut self) -> Result<(), CompileError> {
+        for (domain, relation, set, origin) in core::mem::take(&mut self.raw_totals) {
+            let Some(elements) = self.sets.get(&(domain.clone(), set.clone())) else {
+                let suggestion = nearest_set_suggestion(&set, &domain, &self.sets);
+                return Err(CompileError::UnknownTotalSet {
+                    file: origin.source,
+                    line: origin.line,
+                    set,
+                    suggestion,
+                });
+            };
+            let pairs = self
+                .relations
+                .get(&(domain.clone(), relation.clone()))
+                .cloned()
+                .unwrap_or_default();
+            let mut missing = Vec::new();
+            for el in elements {
+                let mut served = false;
+                for (subj, obj) in pairs.iter().filter(|(subj, _)| subj == el) {
+                    served = true;
+                    // The witness pair is read as data by this check, not idle.
+                    self.relation_consumed.insert(AtomKey {
+                        domain: domain.clone(),
+                        subject: subj.clone(),
+                        predicate: Some(relation.clone()),
+                        object: Some(obj.clone()),
+                    });
+                }
+                if !served {
+                    missing.push(el.clone());
+                }
+            }
+            self.totality.push(Totality {
+                relation,
+                set,
+                missing,
+                origin,
             });
         }
         Ok(())
@@ -1461,6 +1533,7 @@ impl Compiler {
             hypotheses,
             goals,
             derivations,
+            totality: self.totality,
             attributions,
         }
     }

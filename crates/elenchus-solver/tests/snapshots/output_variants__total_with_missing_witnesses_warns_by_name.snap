@@ -1,0 +1,10 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+expression: "report(r#\"\n        SET tasks\n            deploy\n            backup\n            audit\n        FACT deploy assigned ana\n        TOTAL assigned ON tasks\n        CHECK\n        \"#)"
+---
+RESULT: WARNING
+  WARNING   - (TOTAL)  [v.vrf:8]
+      blocked by: backup (no assigned witness), audit (no assigned witness)
+      fix: supply the missing witnesses as data: FACT backup assigned <witness>  (one per unserved element)
+SUMMARY: 0 conflicts, 0 underdetermined, 1 warnings, 0 derived
+EXIT_CODE: 1

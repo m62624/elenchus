@@ -440,6 +440,33 @@ impl<'a> Eval<'a> {
         }
     }
 
+    /// Turn each unserved `TOTAL <relation> ON <set>` record (evaluated at compile
+    /// time) into a WARNING naming the elements with no witness pair — the author
+    /// claimed "every element has one" (∀∃) but pointed at no witness for these,
+    /// exactly the unwitnessed-`EXISTS` situation. A fully-served check is silent
+    /// (like a satisfied premise). Must run *before* [`Eval::finish`] so it can
+    /// raise the verdict CONSISTENT → WARNING.
+    pub(crate) fn flag_totality(&mut self) {
+        for t in &self.c.totality {
+            if t.missing.is_empty() {
+                continue;
+            }
+            self.warnings.push(Warning {
+                origin: t.origin.clone(),
+                blocked_by: t
+                    .missing
+                    .iter()
+                    .map(|el| alloc::format!("{el} (no {} witness)", t.relation))
+                    .collect(),
+                hint: Some(alloc::format!(
+                    "supply the missing witnesses as data: FACT {el} {rel} <witness>  (one per unserved element)",
+                    el = t.missing[0],
+                    rel = t.relation
+                )),
+            });
+        }
+    }
+
     /// Check each `FACT … BECAUSE <ground>` justification against the settled forward
     /// model — the L2 "how do you know?" layer. The ground's value decides the
     /// verdict: FALSE means the stated reason does not hold (**CONFLICT**), UNKNOWN

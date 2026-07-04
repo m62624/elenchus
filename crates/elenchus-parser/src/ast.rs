@@ -307,6 +307,19 @@ pub enum Statement<'a> {
         /// Which closure to apply.
         kind: CloseKind,
     },
+    /// `TOTAL <relation> ON <set>` — the Skolem witness-table check (the `∀x ∃y`
+    /// meaning with zero quantifier syntax): every element of the declared `SET`
+    /// must appear as the *subject* of at least one declared pair of `relation`.
+    /// The `∃` is discharged **as data** — ordinary 3-part `FACT`s are the witness
+    /// table — and the engine performs one flat linear scan at compile time.
+    /// Unserved elements are reported by name as WARNINGs (a claimed existence
+    /// with no witness pointed at, like an unwitnessed `EXISTS`).
+    Total {
+        /// The relation whose declared pairs are the witness table.
+        relation: Located<'a, &'a str>,
+        /// The declared `SET` of left elements that must each have a witness.
+        set: Located<'a, &'a str>,
+    },
     /// `VAR <name> [DEFAULT true|false]` — declare an external boolean **port**: a
     /// single-word proposition whose truth is supplied from outside (CLI/API/data).
     /// `<name>` doubles as the proposition usable in bodies (`WHEN <name> THEN …`)

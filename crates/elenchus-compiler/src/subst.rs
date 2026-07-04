@@ -144,6 +144,7 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
         | Statement::Check { .. }
         | Statement::Set { .. }
         | Statement::Close { .. }
+        | Statement::Total { .. }
         | Statement::Var { .. }
         | Statement::Provide { .. } => {}
     }

@@ -175,6 +175,9 @@ fn solve_impl(c: &Compiled, budget: Option<sat::Budget>) -> Result<Report, sat::
     e.check_premises();
     // Unwitnessed EXISTS → WARNING; must precede `finish` so it can raise the verdict.
     e.flag_unwitnessed_exists();
+    // TOTAL … ON … with unserved elements → WARNING naming them (the witness-table
+    // ∀∃ check, evaluated at compile time). Also before `finish`.
+    e.flag_totality();
     // FACT … BECAUSE justifications (L2): ground FALSE → CONFLICT, UNKNOWN → WARNING.
     // Also before `finish`, and after the forward pass has settled the model.
     e.check_justifications();

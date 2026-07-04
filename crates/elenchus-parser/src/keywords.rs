@@ -22,6 +22,8 @@ pub mod kw {
     pub const HENCE: &str = "HENCE";
     pub const FROM: &str = "FROM";
     pub const MENTIONED: &str = "MENTIONED";
+    pub const TOTAL: &str = "TOTAL";
+    pub const ON: &str = "ON";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -220,6 +222,15 @@ pub const KEYWORDS: &[Keyword] = &[
         ),
     },
     Keyword {
+        text: kw::TOTAL,
+        top_level: true,
+        card: card(
+            "TOTAL <relation> ON <set>",
+            "the witness-table check ('every task has an assignee'): each element of <set> must be the subject of at least one FACT pair of <relation>; unserved elements are WARNINGs, named",
+            "TOTAL assigned ON tasks",
+        ),
+    },
+    Keyword {
         text: kw::VAR,
         top_level: true,
         card: card(
@@ -289,6 +300,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "FOR EACH <binder> IN <set>",
             "names the declared SET a FOR EACH quantifier ranges over",
             "FOR EACH t IN tasks",
+        ),
+    },
+    Keyword {
+        text: kw::ON,
+        top_level: false,
+        card: card(
+            "TOTAL <relation> ON <set>",
+            "names the declared SET whose every element the TOTAL check requires a witness pair for",
+            "TOTAL assigned ON tasks",
         ),
     },
     Keyword {

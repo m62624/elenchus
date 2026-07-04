@@ -289,5 +289,6 @@ Compiled {
     hypotheses: [],
     goals: [],
     derivations: [],
+    totality: [],
     attributions: [],
 }

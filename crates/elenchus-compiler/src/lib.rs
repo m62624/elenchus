@@ -66,7 +66,7 @@ pub use error::{CompileError, UnknownValue, levenshtein};
 pub use ir::{
     AtomId, AtomKey, Attribution, Check, Clause, Compiled, Derivation, Fact, Goal, Hypothesis,
     Justification, KIND_UNSAT, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule,
-    StepRef, UnusedImport, UnwitnessedExists, Value,
+    StepRef, Totality, UnusedImport, UnwitnessedExists, Value,
 };
 #[cfg(feature = "std")]
 pub use resolver::FileResolver;
@@ -104,6 +104,7 @@ pub fn compile_source_with(
     let mut c = Compiler::new();
     c.add_source(source, src)?;
     c.resolve_derivations()?;
+    c.check_totality()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;
     let mut compiled = c.finalize();
@@ -152,6 +153,7 @@ pub fn compile_with<R: Resolver>(
         c.add_resolved(file)?;
     }
     c.resolve_derivations()?;
+    c.check_totality()?;
     c.validate_closed_world()?;
     let placeholders = c.resolve_ports(inputs)?;
     let mut compiled = c.finalize();

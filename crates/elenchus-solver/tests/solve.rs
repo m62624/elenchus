@@ -1423,3 +1423,102 @@ fn mentioned_schema_redefinition_with_different_quant_is_an_error() {
     .unwrap_err();
     assert!(matches!(err, CompileError::PremiseRedefinition { .. }));
 }
+
+// --- TOTAL <relation> ON <set> (Skolem witness tables, F4) ---------------------
+
+#[test]
+fn total_fully_served_is_silent_and_consumes_pairs() {
+    // Every task has an assignee pair — the ∀∃ claim is discharged by data. No
+    // warning, and the witness pairs are not ORPHANs (they are read by the check).
+    let r = vs(
+        "SET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nFACT backup assigned bob\nTOTAL assigned ON tasks\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert!(r.warnings.is_empty());
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+}
+
+#[test]
+fn total_missing_witness_is_a_warning_naming_the_element() {
+    // `backup` has no assignee: WARNING, the unserved element named, with a
+    // data-shaped fix (the LLM supplies the witness, the engine re-checks).
+    let r = vs(
+        "SET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nTOTAL assigned ON tasks\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].origin.kind, kw::TOTAL);
+    assert_eq!(
+        r.warnings[0].blocked_by,
+        vec!["backup (no assigned witness)"]
+    );
+    assert!(
+        r.warnings[0]
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("FACT backup assigned"),
+        "{:?}",
+        r.warnings[0].hint
+    );
+}
+
+#[test]
+fn total_over_an_empty_relation_names_every_element() {
+    // No pair declared at all (or a typo'd relation): everything is unserved.
+    let r = vs("SET tasks\n    deploy\n    backup\nTOTAL assigned ON tasks\nCHECK\n").unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings[0].blocked_by.len(), 2);
+}
+
+#[test]
+fn total_counts_closed_pairs() {
+    // CLOSE runs before the totality scan, so closure-produced pairs serve too:
+    // `a dep b` + `b dep c` close to `a dep c` — every element of `starts` then
+    // has a `dep` pair as subject except `c` (a leaf), which is named.
+    let r = vs(
+        "SET starts\n    a\n    b\n    c\nFACT a dep b\nFACT b dep c\nCLOSE dep TRANSITIVE\nTOTAL dep ON starts\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Warning);
+    assert_eq!(r.warnings[0].blocked_by, vec!["c (no dep witness)"]);
+}
+
+#[test]
+fn total_unknown_set_is_a_compile_error_with_suggestion() {
+    let err = vs("SET tasks\n    deploy\nFACT deploy assigned ana\nTOTAL assigned ON taks\n")
+        .unwrap_err();
+    match err {
+        CompileError::UnknownTotalSet {
+            line,
+            set,
+            suggestion,
+            ..
+        } => {
+            assert_eq!(line, 5);
+            assert_eq!(set, "taks");
+            assert!(suggestion.contains("tasks"), "{suggestion}");
+        }
+        other => panic!("expected UnknownTotalSet, got {other}"),
+    }
+}
+
+#[test]
+fn total_is_fed_by_a_qualified_cross_file_pair() {
+    // The witness table may live in the importing file: a qualified pair feeds
+    // the template's relation before the template's TOTAL is evaluated.
+    let mut res = MemoryResolver::new();
+    res.add(
+        "tmpl.vrf",
+        "DOMAIN tmpl\nSET tasks\n    deploy\n    backup\nFACT deploy assigned ana\nTOTAL assigned ON tasks\n",
+    )
+    .add(
+        "entry.vrf",
+        "DOMAIN entry\nIMPORT \"tmpl.vrf\"\nFACT tmpl.backup assigned bob\nCHECK\n",
+    );
+    let r = verify("entry.vrf", &res).unwrap();
+    assert_eq!(r.status, Status::Consistent, "{:?}", r.warnings);
+    assert!(r.warnings.is_empty());
+}

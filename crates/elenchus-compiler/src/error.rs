@@ -94,6 +94,19 @@ pub enum CompileError {
         /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
         suggestion: String,
     },
+    /// A `TOTAL <relation> ON <set>` named a set that was never declared with
+    /// `SET`. Usually a typo; the suggestion offers the nearest declared set.
+    #[error("{file}:{line}: TOTAL checks '{set}', which is not a declared SET{suggestion}")]
+    UnknownTotalSet {
+        /// The source the offending `TOTAL` is in.
+        file: String,
+        /// 1-based line of the `TOTAL`.
+        line: u32,
+        /// The undeclared set name that was referenced.
+        set: String,
+        /// ` — did you mean \`x\`?`, or empty when nothing is close enough.
+        suggestion: String,
+    },
     /// A `HENCE … FROM` reference matched nothing written: not a `PREMISE`/`RULE`
     /// name of the same source, not a written `FACT`/`NOT`/`ASSUME` with that
     /// polarity, and not an earlier `HENCE` conclusion. A proof step may only rest

@@ -402,6 +402,25 @@ fn mentioned_schema_derives_for_every_written_individual() {
     ));
 }
 
+// --- TOTAL <relation> ON <set> (Skolem witness tables) ------------------------
+
+#[test]
+fn total_with_missing_witnesses_warns_by_name() {
+    // "Every task has an assignee" as a data check: backup and audit have no
+    // pair, so the WARNING names them and shows the data-shaped fix.
+    insta::assert_snapshot!(report(
+        r#"
+        SET tasks
+            deploy
+            backup
+            audit
+        FACT deploy assigned ana
+        TOTAL assigned ON tasks
+        CHECK
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

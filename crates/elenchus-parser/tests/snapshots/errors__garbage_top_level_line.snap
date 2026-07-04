@@ -20,9 +20,10 @@ statement  (1 problem)
       CHECK [<subject>] [BIDIRECTIONAL]
       SET <name>  then one element per line (>= 1)
       CLOSE <relation> TRANSITIVE
+      TOTAL <relation> ON <set>
       VAR <name> [DEFAULT true|false]
       PROVIDE [<domain>.]<port|atom>: true|false
       IMPORT "<path>" [AS <alias>]
-    line 3, col 9 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, VAR, PROVIDE, or IMPORT
+    line 3, col 9 - expected a statement — a line must start with DOMAIN, FACT, NOT, ASSUME, TRY, PROVE, HENCE, KNOWS, BELIEVES, PREMISE, RULE, CHECK, SET, CLOSE, TOTAL, VAR, PROVIDE, or IMPORT
       |         %%% not a statement
       |         ^^^^^^^^^^^^^^^^^^^
