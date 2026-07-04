@@ -1,0 +1,61 @@
+// The Gettier problem, cross-examined by the engine.
+//
+// Smith has strong evidence that Jones will get the job, and has counted that Jones
+// has ten coins. So Smith is JUSTIFIED in believing "the man who gets the job has
+// ten coins." The belief turns out TRUE — but because *Smith* gets the job and Smith
+// happens to also have ten coins. Justified, true, believed — yet it was luck, not
+// the evidence, that made it true. The classic verdict: this is NOT knowledge.
+//
+// The vetted JTB library (epistemics.vrf) is imported; this file only supplies the
+// case. The model writes facts, the library supplies the principles — and the
+// engine derives, mechanically, that the case falls short of knowledge.
+//
+// Expected result: CONSISTENT. `NOT is_knowledge` is DERIVED (from the imported
+// gettier_defeats_knowledge premise), PROVED, and the local HENCE step holds.
+
+DOMAIN gettier
+
+IMPORT "epistemics.vrf"
+
+// Smith's evidence, and the lucky fact that he — not Jones — got the job.
+FACT smith counted_the_coins
+FACT smith got_the_job
+
+// The three JTB credentials, written as facts about the imported claim atom.
+// The claim is true BECAUSE Smith got the job (the lucky truth-maker, NOT the
+// evidence) — BECAUSE names that ground and the engine checks it actually holds.
+FACT epistemics.claim is_true BECAUSE smith got_the_job
+FACT epistemics.claim is_believed
+
+// ...but the evidence pointed at Jones, so luck bridged the gap: a Gettier case.
+FACT epistemics.claim is_gettiered
+
+// Justification is not asserted raw — it is DERIVED from the evidence by a local
+// principle, so we can show the checked derivation step below.
+RULE evidence_justifies:
+    WHEN smith counted_the_coins
+    THEN epistemics.claim is_justified
+
+// The epistemic voices. Belief is non-factive (reported, never a conflict);
+// knowledge is factive (knowing an established-FALSE atom would be a CONFLICT).
+BELIEVES smith epistemics.claim is_true         // Smith holds the belief — and it's true
+KNOWS    smith smith counted_the_coins          // and he knows his own evidence
+
+// The claim cannot be both true and false at once.
+PREMISE not_both_ways:
+    EXCLUSIVE
+        epistemics.claim is_true
+        epistemics.claim is_false
+
+// Proof kernel — ask the theory directly: does it entail this is NOT knowledge?
+PROVE NOT epistemics.claim is_knowledge
+
+// ...and show the local one-step derivation of the justification condition,
+// checked ref by ref (the RULE plus the written evidence fact).
+HENCE epistemics.claim is_justified FROM evidence_justifies, smith counted_the_coins
+
+// Targeted abduction: does the coin-counting explain the justification? (yes —
+// the theory plus that hypothesis entails is_justified.)
+TRY smith counted_the_coins FOR epistemics.claim is_justified
+
+CHECK BIDIRECTIONAL

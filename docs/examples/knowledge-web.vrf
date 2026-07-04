@@ -1,0 +1,115 @@
+// A knowledge-propagation web for an incident response team — the structural
+// half of the language, in one coherent scenario. Who was told what, who is
+// accountable, who may access the incident, and who holds the root cause.
+//
+// This example is about *structure*, so it exercises the set/relation/quantifier
+// machinery: SET, CLOSE, TOTAL, FOR EACH ... IN, FOR EACH ... MENTIONED,
+// EXISTS/WITNESS, ONEOF, ATLEAST, FORBIDS, UNLESS, PREFERS, ASSUME, VAR.
+//
+// Expected result: CONSISTENT — every constraint holds; the derivations below
+// show the closures, the quantified rules firing, and a preference resolving a
+// clash. Free atoms (who else was paged, etc.) stay UNKNOWN, as they should.
+
+DOMAIN team
+
+SET agents
+    ana
+    ben
+    cal
+
+// --- Knowledge flows along "told", declared transitive with CLOSE: ana told ben
+//     and ben told cal complete to ana told cal (a DAG — CLOSE … TRANSITIVE
+//     forbids cycles). Each written edge briefs the next agent into the loop. ---
+FACT ana told ben
+FACT ben told cal
+CLOSE told TRANSITIVE
+
+RULE direct_reach:
+    WHEN ana told ben
+    THEN ben in_loop
+RULE relay_reach:
+    WHEN ben told cal
+    THEN cal in_loop
+
+// --- Every agent must have a briefing source. `briefed_by` pairs are the witness
+//     table; TOTAL checks each element of `agents` appears as a subject. ---
+FACT ana briefed_by ana          // ana is the origin — her own source
+FACT ben briefed_by ana
+FACT cal briefed_by ben
+TOTAL briefed_by ON agents
+
+// --- A universal over the declared set: every briefed agent is accountable. ---
+RULE accountable FOR EACH x IN agents:
+    WHEN x is_briefed
+    THEN x accountable
+
+// --- A universal over everyone MENTIONED anywhere (open — no SET needed): an
+//     on-call agent gets clearance. ---
+RULE has_clearance FOR EACH y MENTIONED:
+    WHEN y on_call
+    THEN y has_clearance
+
+FACT ana is_briefed
+FACT ana on_call
+
+// --- Exactly one incident commander. ---
+PREMISE one_commander:
+    ONEOF
+        ana is_commander
+        ben is_commander
+        cal is_commander
+FACT ana is_commander
+
+// --- At least one responder is paged. ---
+PREMISE someone_paged:
+    ATLEAST
+        ana paged
+        ben paged
+        cal paged
+FACT ben paged
+
+// --- An existential over an OPEN population: some agent holds the root cause.
+//     The author names the WITNESS; the engine checks it actually holds. ---
+FACT ana holds_root_cause
+PREMISE cause_is_held:
+    EXISTS h WITNESS ana
+        h holds_root_cause
+
+// --- Two default clearance rules clash for an on-call agent. PREFERS declares
+//     which wins: on-call access is restricted, overriding the broad default. ---
+RULE broad_access:
+    WHEN ana on_call
+    THEN ana full_access
+RULE oncall_is_restricted:
+    WHEN ana on_call
+    THEN NOT ana full_access
+PREFERS oncall_is_restricted OVER broad_access
+
+// --- Trusted by default, UNLESS explicitly flagged (a defeasible rule). ben is
+//     flagged, so his default trust is retracted; ana keeps hers. ---
+RULE trusted_by_default FOR EACH z IN agents:
+    WHEN z accountable
+    THEN z trusted
+    UNLESS z flagged
+FACT ben accountable
+FACT ben flagged
+
+// --- A guard: the commander must not be a flagged agent. ---
+PREMISE clean_commander:
+    FORBIDS
+        ana is_commander
+        ana flagged
+
+// --- A retractable working hypothesis, put to work by a rule so it is not idle. ---
+ASSUME cal available
+RULE standby:
+    WHEN cal available
+    THEN cal can_respond
+
+// --- A toggle port with a default (shows up as a PARAM in the report). ---
+VAR maintenance_mode DEFAULT false
+
+// --- Plain abduction (no goal): is "cal available" consistent with everything? ---
+TRY cal available
+
+CHECK
