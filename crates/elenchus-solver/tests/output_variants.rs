@@ -304,6 +304,66 @@ fn try_leaves_it_still_open() {
     ));
 }
 
+// --- PROVE (entailment / the ⊨ goal) ----------------------------------------
+
+#[test]
+fn prove_proved_and_refuted() {
+    // The theory entails the first goal (a fact + a rule force it) and refutes the
+    // second (its negation is asserted). Both are advisory: verdict CONSISTENT.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT socrates is human
+        NOT socrates is divine
+        RULE mortal:
+            WHEN socrates is human
+            THEN socrates is mortal
+        PROVE socrates is mortal
+        PROVE socrates is divine
+        CHECK socrates
+        "#
+    ));
+}
+
+#[test]
+fn prove_open_goal() {
+    // Nothing pins the goal either way — the honest three-valued answer is OPEN.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT x a
+        RULE r:
+            WHEN x b
+            THEN x c
+        PROVE x c
+        CHECK x
+        "#
+    ));
+}
+
+#[test]
+fn prove_vacuous_on_inconsistent_theory() {
+    // A contradictory theory entails everything; the goal line says so instead of
+    // pretending the goal was meaningfully PROVED.
+    insta::assert_snapshot!(report(
+        r#"
+        FACT x a
+        NOT x a
+        PROVE x b
+        "#
+    ));
+}
+
+#[test]
+fn prove_negative_goal() {
+    // `PROVE NOT …` asks entailment of the negation; the label keeps the polarity.
+    insta::assert_snapshot!(report(
+        r#"
+        NOT door open
+        PROVE NOT door open
+        CHECK door
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]

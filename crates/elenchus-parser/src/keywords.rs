@@ -18,6 +18,7 @@ pub mod kw {
     pub const NOT: &str = "NOT";
     pub const ASSUME: &str = "ASSUME";
     pub const TRY: &str = "TRY";
+    pub const PROVE: &str = "PROVE";
     pub const KNOWS: &str = "KNOWS";
     pub const BELIEVES: &str = "BELIEVES";
     pub const PREMISE: &str = "PREMISE";
@@ -132,6 +133,15 @@ pub const KEYWORDS: &[Keyword] = &[
             "TRY [NOT] <Subject> <predicate> [<object>]",
             "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
             "TRY release is_ready",
+        ),
+    },
+    Keyword {
+        text: kw::PROVE,
+        top_level: true,
+        card: card(
+            "PROVE [NOT] <Subject> <predicate> [<object>]",
+            "ask entailment: does the theory entail this atom? reports PROVED / REFUTED / OPEN (advisory — never changes the verdict)",
+            "PROVE socrates is mortal",
         ),
     },
     Keyword {

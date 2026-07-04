@@ -77,7 +77,7 @@ fn statement_line(s: &Statement) -> u32 {
         Statement::Import { path, .. } => path.span.location_line(),
         Statement::Fact { atom, .. } => atom.span.location_line(),
         Statement::Negation(a) => a.span.location_line(),
-        Statement::Assume(l) | Statement::Try(l) => l.span.location_line(),
+        Statement::Assume(l) | Statement::Try(l) | Statement::Prove(l) => l.span.location_line(),
         Statement::Knows { agent, .. } => agent.span.location_line(),
         Statement::Set { name, .. } => name.span.location_line(),
         Statement::Close { relation, .. } => relation.span.location_line(),

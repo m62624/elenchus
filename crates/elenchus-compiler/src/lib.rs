@@ -64,7 +64,7 @@ pub use data::{read_data_bindings, read_data_source};
 pub use elenchus_parser::{Diagnostics, kw};
 pub use error::{CompileError, UnknownValue, levenshtein};
 pub use ir::{
-    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Hypothesis, Justification,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Goal, Hypothesis, Justification,
     KIND_UNSAT, Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnusedImport,
     UnwitnessedExists, Value,
 };

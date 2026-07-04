@@ -580,6 +580,21 @@ fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Try(lit)))
 }
 
+/// `PROVE [NOT] <atom>` — an entailment goal (the ⊨ question). Same surface as
+/// `TRY`, but it asks *consequence*, not compatibility; the engine answers with a
+/// post-verdict refutation check and the goal is never committed to the model.
+fn stmt_prove<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
+    let (input, _) = (tag(kw::PROVE), space1).parse(input)?;
+    let at = input;
+    let (input, lit) = promote(
+        literal(input),
+        at,
+        "PROVE expects an atom: [NOT] <Subject> <predicate> [<object>]",
+    )?;
+    let (input, _) = promote(eol(input), input, "unexpected text after the PROVE atom")?;
+    Ok((input, Statement::Prove(lit)))
+}
+
 /// `KNOWS <agent> [NOT] <atom>` — attribute factive knowledge to a named agent (the
 /// epistemic L6 voice). The agent is a bare identifier; the rest is an ordinary
 /// literal. Knowledge is factive, so the engine later checks the atom against the
@@ -919,6 +934,7 @@ fn statement<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
         stmt_fact,
         stmt_assume,
         stmt_try,
+        stmt_prove,
         stmt_knows,
         stmt_believes,
         stmt_premise,

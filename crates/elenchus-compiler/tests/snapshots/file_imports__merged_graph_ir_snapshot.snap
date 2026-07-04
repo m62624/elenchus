@@ -1,5 +1,6 @@
 ---
 source: crates/elenchus-compiler/tests/file_imports.rs
+assertion_line: 72
 expression: c
 ---
 Compiled {
@@ -287,5 +288,6 @@ Compiled {
     unwitnessed_exists: [],
     justifications: [],
     hypotheses: [],
+    goals: [],
     attributions: [],
 }

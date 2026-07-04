@@ -1,6 +1,6 @@
 //! The human-readable report rendering (the `Display for Report` path).
 use super::json::status_name;
-use super::{CoreItem, FixKind, Report, Status, TraceReason, TraceStep, TryOutcome};
+use super::{CoreItem, FixKind, ProveOutcome, Report, Status, TraceReason, TraceStep, TryOutcome};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -227,6 +227,21 @@ impl Report {
                 TryOutcome::Closes => "closes the gap: the model is now pinned",
                 TryOutcome::Conflicts => "conflicts: it clashes with what is already established",
                 TryOutcome::StillOpen => "still open: it does not pin the model",
+            };
+            emit!(out, ITEM, "{verdict}   (checked)")?;
+        }
+        // The entailment (⊨) voice: each `PROVE <literal>` goal, with the engine's
+        // refutation-checked verdict on whether the theory entails it. Advisory —
+        // the goal was never committed, so this never changed the result above.
+        for g in &self.goals {
+            emit!(out, SECTION, "PROVE     {}", g.label)?;
+            let verdict = match g.outcome {
+                ProveOutcome::Proved => "PROVED: it follows from the theory",
+                ProveOutcome::Refuted => "REFUTED: its negation follows from the theory",
+                ProveOutcome::Open => "OPEN: the theory pins neither it nor its negation",
+                ProveOutcome::Vacuous => {
+                    "VACUOUS: the theory is inconsistent — it entails everything"
+                }
             };
             emit!(out, ITEM, "{verdict}   (checked)")?;
         }

@@ -238,6 +238,14 @@ pub enum Statement<'a> {
     /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
     /// checks it. The `Literal` carries the optional `NOT`.
     Try(Located<'a, Literal<'a>>),
+    /// `PROVE [NOT] <atom>` — an *entailment goal*: does the theory entail this
+    /// literal (⊨)? The sibling of `TRY`: TRY asks *compatibility*, PROVE asks
+    /// *consequence*. Checked refutationally post-verdict (theory ∧ ¬goal
+    /// unsatisfiable → PROVED; theory ∧ goal unsatisfiable → REFUTED; both
+    /// satisfiable → OPEN), so it emits no clause and never enters the model or the
+    /// verdict — the LLM supplies the goal, the engine runs two bounded refutation
+    /// checks. The `Literal` carries the optional `NOT`.
+    Prove(Located<'a, Literal<'a>>),
     /// `KNOWS <agent> [NOT] <atom>` / `BELIEVES <agent> [NOT] <atom>` — attribute a
     /// claim about the world to a *named agent* (the modal/epistemic L6 layer). The
     /// agent is a bare identifier, a report-side label only: it never becomes an atom

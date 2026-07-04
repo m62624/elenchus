@@ -179,6 +179,12 @@ pub struct Compiled {
     /// asserting it would close the open model, conflict with it, or leave it open.
     /// It emits **no clause and no fact** — it never enters the model or the verdict.
     pub hypotheses: Vec<Hypothesis>,
+    /// One record per `PROVE <literal>` — the entailment (⊨) layer. The engine asks
+    /// refutationally whether the theory entails the goal: `theory ∧ ¬goal`
+    /// unsatisfiable → PROVED, `theory ∧ goal` unsatisfiable → REFUTED, both
+    /// satisfiable → OPEN. It emits **no clause and no fact** — the goal never enters
+    /// the model or the verdict; the check is a bounded post-verdict side-solve.
+    pub goals: Vec<Goal>,
     /// One record per `KNOWS`/`BELIEVES <agent> <literal>` — the modal/epistemic (L6)
     /// layer. The solver checks each attribution against the settled world model:
     /// factive knowledge (`KNOWS`) that is FALSE → CONFLICT (you cannot know a
@@ -229,6 +235,20 @@ pub struct Hypothesis {
     /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
     pub lit: Lit,
     /// Provenance of the `TRY` (source, line, kind = `TRY`).
+    pub origin: Origin,
+}
+
+/// One `PROVE <literal>` entailment goal: the goal literal (atom id + polarity from
+/// an optional `NOT`) and the provenance of the `PROVE`. The solver answers the ⊨
+/// question with two bounded refutation solves — it is **evaluative, not a
+/// constraint**: it emits no clause and no fact, so it never enters the model or
+/// affects the verdict (the sibling of [`Hypothesis`], asking consequence instead
+/// of compatibility).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Goal {
+    /// The goal literal being asked about (atom id + polarity from an optional `NOT`).
+    pub lit: Lit,
+    /// Provenance of the `PROVE` (source, line, kind = `PROVE`).
     pub origin: Origin,
 }
 

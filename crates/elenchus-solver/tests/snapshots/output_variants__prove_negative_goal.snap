@@ -1,0 +1,11 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+assertion_line: 358
+expression: "report(r#\"\n        NOT door open\n        PROVE NOT door open\n        CHECK door\n        \"#)"
+---
+RESULT: CONSISTENT
+  PROVE     NOT d.door open
+      PROVED: it follows from the theory   (checked)
+  ORPHAN    NOT d.door open — not used by any premise or rule (no effect on the result)
+SUMMARY: 0 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 0

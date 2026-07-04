@@ -16,13 +16,13 @@ use crate::closure::close;
 use crate::domain::DomainCtx;
 use crate::error::{CompileError, UnknownValue, did_you_mean, nearest_set_suggestion};
 use crate::ir::{
-    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Hypothesis, Justification, Lit,
-    Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
+    AtomId, AtomKey, Attribution, Check, Clause, Compiled, Fact, Goal, Hypothesis, Justification,
+    Lit, Origin, PlaceholderInfo, PlaceholderStatus, PortBinding, Rule, UnwitnessedExists, Value,
 };
 use crate::ports::{PortDecl, PortRef, parse_port_ref};
 use crate::resolver::{ResolvedFile, extract_domain, parse_tagged};
 use crate::sig::{
-    RawAttribution, RawClause, RawFact, RawHypothesis, RawJustification, RawLit, RawRule,
+    RawAttribution, RawClause, RawFact, RawGoal, RawHypothesis, RawJustification, RawLit, RawRule,
     canonical_body, clause_sig, key_sig, list_kind, quant_sig, raw_lits,
 };
 use crate::subst::{subst_atom, subst_body};
@@ -92,6 +92,9 @@ pub struct Compiler {
     /// `TRY <literal>` hypotheses. Never committed to the model (no clause, no fact);
     /// the solver runs one side-solve per hypothesis and reports the outcome.
     hypotheses: Vec<RawHypothesis>,
+    /// `PROVE <literal>` entailment goals. Never committed to the model (no clause,
+    /// no fact); the solver answers each with two refutation side-solves.
+    goals: Vec<RawGoal>,
     /// `KNOWS`/`BELIEVES <agent> <literal>` attributions. Inert for the SAT core (no
     /// clause, no fact); the solver checks each against the world model per agent.
     attributions: Vec<RawAttribution>,
@@ -261,6 +264,9 @@ impl Compiler {
             Statement::Try(l) => {
                 self.add_hypothesis(source, l, ctx)?;
             }
+            Statement::Prove(l) => {
+                self.add_goal(source, l, ctx)?;
+            }
             Statement::Knows {
                 agent,
                 hypo,
@@ -417,6 +423,31 @@ impl Compiler {
                 line: lit.span.location_line(),
                 premise: None,
                 kind: kw::TRY,
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a `PROVE <literal>` entailment goal. Like a `TRY` hypothesis, the goal
+    /// atom is interned so it has a SAT variable in the side-solves, but no fact and
+    /// no clause are emitted — the goal never enters the model or the verdict; the
+    /// solver only asks refutationally whether the theory entails it.
+    fn add_goal(
+        &mut self,
+        source: &str,
+        lit: &Located<Literal>,
+        ctx: &DomainCtx,
+    ) -> Result<(), CompileError> {
+        let key = ctx.key(&lit.data.atom)?;
+        self.intern(&key);
+        self.goals.push(RawGoal {
+            key,
+            negated: lit.data.negated,
+            origin: Origin {
+                source: source.to_string(),
+                line: lit.span.location_line(),
+                premise: None,
+                kind: kw::PROVE,
             },
         });
         Ok(())
@@ -1188,6 +1219,18 @@ impl Compiler {
             })
             .collect();
 
+        let goals = self
+            .goals
+            .into_iter()
+            .map(|g| Goal {
+                lit: Lit {
+                    atom: id_of(&g.key),
+                    negated: g.negated,
+                },
+                origin: g.origin,
+            })
+            .collect();
+
         let attributions = self
             .attributions
             .into_iter()
@@ -1215,6 +1258,7 @@ impl Compiler {
             unwitnessed_exists: self.unwitnessed_exists,
             justifications,
             hypotheses,
+            goals,
             attributions,
         }
     }

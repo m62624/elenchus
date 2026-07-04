@@ -156,6 +156,13 @@ pub struct Report {
     /// hypothesis is never committed, so this **never affects [`Report::status`] or
     /// [`Report::exit_code`]** — purely informational (like DERIVED/DEFEATED).
     pub tried: Vec<Tried>,
+    /// One record per `PROVE <literal>` goal: whether the theory **entails** the
+    /// goal (PROVED), entails its negation (REFUTED), pins neither (OPEN), or is
+    /// itself inconsistent (VACUOUS — an inconsistent theory entails everything).
+    /// The entailment (⊨) voice. The goal is never committed, so this **never
+    /// affects [`Report::status`] or [`Report::exit_code`]** — purely informational
+    /// (like TRY/DERIVED).
+    pub goals: Vec<Proved>,
     /// One record per `BELIEVES <agent> <literal>` whose claim the settled world model
     /// establishes FALSE — a *false belief* (the epistemic L6 layer). Belief is
     /// non-factive (unlike `KNOWS`), so this is **never a CONFLICT**; it is a visible but
@@ -197,6 +204,37 @@ pub struct Tried {
     pub label: String,
     /// The engine's checked verdict on asserting this candidate.
     pub outcome: TryOutcome,
+}
+
+/// The engine's verdict on one `PROVE <literal>` goal — the answer to the
+/// entailment (⊨) question, decided by two refutation side-solves (`theory ∧
+/// ¬goal` and `theory ∧ goal`); the goal is never committed to the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProveOutcome {
+    /// `theory ∧ ¬goal` is unsatisfiable — the goal follows from the theory.
+    Proved,
+    /// `theory ∧ goal` is unsatisfiable — the goal's *negation* follows.
+    Refuted,
+    /// Both are satisfiable — the theory pins neither the goal nor its negation
+    /// (the honest three-valued answer).
+    Open,
+    /// Both are unsatisfiable — the theory itself is inconsistent, so it entails
+    /// everything; the goal says nothing until the CONFLICT is repaired.
+    Vacuous,
+}
+
+/// One `PROVE <literal>` goal and the engine's checked entailment verdict on it.
+/// Purely advisory: the goal is never committed, so it never changes the verdict
+/// or exit code — it only reports whether the goal *follows*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proved {
+    /// Provenance of the `PROVE` (source, line, kind = `PROVE`).
+    pub origin: Origin,
+    /// The ready-to-print goal literal (e.g. `d.socrates is mortal` or
+    /// `NOT d.socrates is mortal`).
+    pub label: String,
+    /// The engine's checked entailment verdict on the goal.
+    pub outcome: ProveOutcome,
 }
 
 /// One `BELIEVES <agent> <literal>` whose claim the settled world model establishes

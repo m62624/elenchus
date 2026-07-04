@@ -1,0 +1,14 @@
+---
+source: crates/elenchus-solver/tests/output_variants.rs
+assertion_line: 346
+expression: "report(r#\"\n        FACT x a\n        NOT x a\n        PROVE x b\n        \"#)"
+---
+RESULT: CONFLICT
+  CONFLICT  - (FACT)  [v.vrf:3]
+      d.x a (asserted both TRUE and FALSE)
+  PROVE     d.x b
+      VACUOUS: the theory is inconsistent — it entails everything   (checked)
+  ORPHAN    FACT d.x a — not used by any premise or rule (no effect on the result)
+  ORPHAN    NOT d.x a — not used by any premise or rule (no effect on the result)
+SUMMARY: 1 conflicts, 0 underdetermined, 0 warnings, 0 derived
+EXIT_CODE: 2

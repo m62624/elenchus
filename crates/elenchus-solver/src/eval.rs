@@ -629,6 +629,7 @@ impl<'a> Eval<'a> {
             unused_imports: Vec::new(), // copied from the IR by `solve` (advisory)
             placeholders: Vec::new(), // copied from the IR by `solve` (advisory)
             tried: Vec::new(),   // filled by `solve` (advisory, post-verdict)
+            goals: Vec::new(),   // filled by `solve` (advisory, post-verdict)
             beliefs: self.false_beliefs,
         })
     }

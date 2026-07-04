@@ -1,7 +1,7 @@
 //! The minimal-unsat-core search: which named constructs / facts are jointly
 //! responsible for an unsatisfiable system, via SAT under assumptions.
 use crate::cnf::{build_cnf, clause_lit, fact_lit, rule_consequent_clause};
-use crate::report::{CoreItem, Fix, FixKind, Tried, TryOutcome, label};
+use crate::report::{CoreItem, Fix, FixKind, ProveOutcome, Proved, Tried, TryOutcome, label};
 use crate::sat;
 use alloc::string::String;
 use alloc::vec;
@@ -355,6 +355,54 @@ pub(crate) fn minimal_unsat_core(
 /// Sort key giving conflicts/warnings a stable, source-then-line order.
 pub(crate) fn key(o: &Origin) -> (String, u32) {
     (o.source.clone(), o.line)
+}
+
+/// The entailment (⊨) side-check: for each `PROVE <literal>` goal, ask
+/// refutationally whether the theory entails it. `theory ∧ ¬goal` unsatisfiable →
+/// [`ProveOutcome::Proved`]; `theory ∧ goal` unsatisfiable →
+/// [`ProveOutcome::Refuted`]; both satisfiable → [`ProveOutcome::Open`] (the honest
+/// three-valued answer); both unsatisfiable → [`ProveOutcome::Vacuous`] (the theory
+/// itself is inconsistent, so it entails everything). Purely advisory — the goal is
+/// never committed; cost is exactly two bounded solves per *written* goal, and the
+/// engine never picks goals itself (Law 5).
+pub(crate) fn prove_goals(
+    c: &Compiled,
+    budget: Option<&sat::Budget>,
+) -> Result<Vec<Proved>, sat::BudgetExhausted> {
+    if c.goals.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (cnf, _) = build_cnf(c);
+    // Every query below is verdict-only (no model contents reach the report), so
+    // the turbo profile is sound from the first solve. One incremental solver
+    // answers both refutation questions for every goal.
+    let mut inc = sat::Incremental::with_config(&cnf, sat::SolverConfig::TURBO);
+    inc.set_budget(budget.cloned());
+    let mut out = Vec::with_capacity(c.goals.len());
+    for g in &c.goals {
+        // The goal literal as written (positive unless `PROVE NOT …`).
+        let lit = sat::SatLit::new(g.lit.atom, !g.lit.negated);
+        let neg_unsat = matches!(inc.solve(&[lit.negate()])?, sat::Solved::Unsat(_));
+        let pos_unsat = matches!(inc.solve(&[lit])?, sat::Solved::Unsat(_));
+        let outcome = match (neg_unsat, pos_unsat) {
+            (true, false) => ProveOutcome::Proved,
+            (false, true) => ProveOutcome::Refuted,
+            (false, false) => ProveOutcome::Open,
+            (true, true) => ProveOutcome::Vacuous,
+        };
+        let name = label(c, g.lit.atom);
+        let text = if g.lit.negated {
+            alloc::format!("NOT {name}")
+        } else {
+            name
+        };
+        out.push(Proved {
+            origin: g.origin.clone(),
+            label: text,
+            outcome,
+        });
+    }
+    Ok(out)
 }
 
 /// The abduction (L5) side-check: for each `TRY <literal>` hypothesis, judge whether

@@ -1147,3 +1147,66 @@ fn fed_transitive_closure_reaches_the_verdict() {
         rep.conflicts
     );
 }
+
+// --- PROVE (entailment / the ⊨ goal, F1) -------------------------------------
+
+#[test]
+fn prove_entailed_goal_is_proved() {
+    // A fact plus a rule force the goal: theory ∧ ¬goal is unsatisfiable.
+    let r = vs(
+        "FACT s is human\nRULE mortal:\n    WHEN s is human\n    THEN s is mortal\nPROVE s is mortal\nCHECK s\n",
+    )
+    .unwrap();
+    assert_eq!(r.status, Status::Consistent); // advisory: the goal never raises it
+    assert_eq!(r.goals.len(), 1);
+    assert_eq!(r.goals[0].label, "t.s is mortal");
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved);
+    assert_eq!(r.goals[0].origin.kind, kw::PROVE);
+}
+
+#[test]
+fn prove_contradicted_goal_is_refuted() {
+    // The theory establishes the goal's negation: theory ∧ goal is unsatisfiable.
+    let r = vs("NOT s is immortal\nPROVE s is immortal\nCHECK s\n").unwrap();
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Refuted);
+}
+
+#[test]
+fn prove_unpinned_goal_is_open() {
+    // Nothing determines the goal either way — the honest three-valued answer.
+    let r = vs("FACT x a\nPROVE x b\nCHECK x\n").unwrap();
+    assert_eq!(r.status, Status::Consistent);
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Open);
+}
+
+#[test]
+fn prove_on_inconsistent_theory_is_vacuous() {
+    // Both refutation calls come back unsatisfiable: the theory itself is broken,
+    // so the goal line says VACUOUS instead of a misleading PROVED.
+    let r = vs("FACT x a\nNOT x a\nPROVE x b\n").unwrap();
+    assert_eq!(r.status, Status::Conflict); // the conflict is the theory's, not the goal's
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Vacuous);
+}
+
+#[test]
+fn prove_not_carries_polarity_in_label_and_check() {
+    // `PROVE NOT g` asks whether ¬g follows; here it does (g is asserted FALSE).
+    let r = vs("NOT door open\nPROVE NOT door open\nCHECK door\n").unwrap();
+    assert_eq!(r.goals[0].label, "NOT t.door open");
+    assert_eq!(r.goals[0].outcome, ProveOutcome::Proved);
+}
+
+#[test]
+fn prove_never_commits_the_goal() {
+    // The goal atom stays UNKNOWN in the model: no DERIVED, no WARNING from it, and
+    // a premise blocked by that atom still warns exactly as without the PROVE.
+    let with =
+        vs("FACT x a\nPREMISE p:\n    WHEN x a\n    THEN x b\nPROVE x b\nCHECK x\n").unwrap();
+    let without = vs("FACT x a\nPREMISE p:\n    WHEN x a\n    THEN x b\nCHECK x\n").unwrap();
+    assert_eq!(with.status, without.status);
+    assert_eq!(with.warnings.len(), without.warnings.len());
+    assert_eq!(with.goals.len(), 1);
+    // Refutational reading: theory ∧ ¬(x b) violates the premise ⇒ PROVED — the
+    // constraint *forces* x b even though the forward pass could not confirm it.
+    assert_eq!(with.goals[0].outcome, ProveOutcome::Proved);
+}
