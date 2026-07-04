@@ -199,10 +199,17 @@ impl Report {
             json_origin(&t.origin, &mut s);
             s.push_str(",\"label\":");
             t.label.write_json(&mut s);
+            s.push_str(",\"for\":");
+            match &t.goal {
+                Some(g) => g.write_json(&mut s),
+                None => s.push_str("null"),
+            }
             let outcome = match t.outcome {
                 TryOutcome::Closes => "closes",
                 TryOutcome::Conflicts => "conflicts",
                 TryOutcome::StillOpen => "still_open",
+                TryOutcome::Explains => "explains",
+                TryOutcome::NotExplaining => "not_explaining",
             };
             s.push_str(",\"outcome\":");
             outcome.write_json(&mut s);

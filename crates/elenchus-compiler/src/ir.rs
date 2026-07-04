@@ -239,14 +239,19 @@ pub struct Justification {
     pub origin: Origin,
 }
 
-/// One `TRY <literal>` hypothesis: the candidate atom (with its polarity) and the
-/// provenance of the `TRY`. The solver adds this single literal to the program and
-/// re-solves, judging the outcome — it is **evaluative, not a constraint**: it emits
-/// no clause and no fact, so it never enters the model or affects the verdict.
+/// One `TRY <literal> [FOR <goal>]` hypothesis: the candidate atom (with its
+/// polarity), the optional targeted goal, and the provenance of the `TRY`. The
+/// solver adds the candidate literal to the program and re-solves, judging the
+/// outcome; with a goal it instead asks the targeted-abduction pair — is
+/// `theory + H` consistent, and does it entail the goal? It is **evaluative, not a
+/// constraint**: it emits no clause and no fact, so it never enters the model or
+/// affects the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hypothesis {
     /// The candidate literal being tested (atom id + polarity from an optional `NOT`).
     pub lit: Lit,
+    /// The `FOR <goal>` literal this hypothesis is supposed to explain, if any.
+    pub goal: Option<Lit>,
     /// Provenance of the `TRY` (source, line, kind = `TRY`).
     pub origin: Origin,
 }

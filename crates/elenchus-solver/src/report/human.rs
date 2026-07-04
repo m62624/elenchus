@@ -222,11 +222,20 @@ impl Report {
         // checked verdict on whether asserting it would close the open gap. Advisory —
         // the candidate was never committed, so this never changed the result above.
         for t in &self.tried {
-            emit!(out, SECTION, "TRY       {}", t.label)?;
+            match &t.goal {
+                Some(g) => emit!(out, SECTION, "TRY       {} FOR {}", t.label, g)?,
+                None => emit!(out, SECTION, "TRY       {}", t.label)?,
+            }
             let verdict = match t.outcome {
                 TryOutcome::Closes => "closes the gap: the model is now pinned",
                 TryOutcome::Conflicts => "conflicts: it clashes with what is already established",
                 TryOutcome::StillOpen => "still open: it does not pin the model",
+                TryOutcome::Explains => {
+                    "explains the goal: consistent, and theory + hypothesis entails it"
+                }
+                TryOutcome::NotExplaining => {
+                    "does not explain: the goal still does not follow with the hypothesis"
+                }
             };
             emit!(out, ITEM, "{verdict}   (checked)")?;
         }

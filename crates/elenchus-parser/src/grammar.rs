@@ -564,20 +564,35 @@ fn stmt_assume<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     Ok((input, Statement::Assume(lit)))
 }
 
-/// `TRY [NOT] <atom>` — a hypothesis under test (the abduction voice). Same surface
-/// as `ASSUME` (an optional leading `NOT`, then an atom), but the compiler never
-/// commits it to the model: the engine only reports whether asserting it would close
-/// the open gap.
+/// `TRY [NOT] <atom> [FOR [NOT] <atom>]` — a hypothesis under test (the abduction
+/// voice). Same surface as `ASSUME` (an optional leading `NOT`, then an atom), but
+/// the compiler never commits it to the model. The optional `FOR <goal>` tail asks
+/// the *targeted* question: does this hypothesis explain the goal? (`FOR` is
+/// reserved, so the hypothesis atom can never swallow it as an object.)
 fn stmt_try<'a>(input: Span<'a>) -> PResult<'a, Statement<'a>> {
     let (input, _) = (tag(kw::TRY), space1).parse(input)?;
     let at = input;
-    let (input, lit) = promote(
+    let (input, hypo) = promote(
         literal(input),
         at,
         "TRY expects an atom: [NOT] <Subject> <predicate> [<object>]",
     )?;
+    // Optional `FOR <goal>`. Once FOR matches, a missing goal is a hard failure.
+    let (input, saw_for) = opt(preceded(space1, tag(kw::FOR))).parse(input)?;
+    let (input, goal) = match saw_for {
+        Some(_) => {
+            let at = input;
+            let (input, g) = promote(
+                preceded(space1, literal).parse(input),
+                at,
+                "TRY … FOR expects a goal atom: TRY <hypothesis> FOR [NOT] <Subject> <predicate> [<object>]",
+            )?;
+            (input, Some(g))
+        }
+        None => (input, None),
+    };
     let (input, _) = promote(eol(input), input, "unexpected text after the TRY atom")?;
-    Ok((input, Statement::Try(lit)))
+    Ok((input, Statement::Try { hypo, goal }))
 }
 
 /// `PROVE [NOT] <atom>` — an entailment goal (the ⊨ question). Same surface as

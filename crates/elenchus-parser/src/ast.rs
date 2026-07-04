@@ -244,13 +244,22 @@ pub enum Statement<'a> {
     /// assumptions cannot all hold the solver names which to drop, and it never
     /// blames a `FACT`/`PREMISE`. The `Literal` carries the optional `NOT`.
     Assume(Located<'a, Literal<'a>>),
-    /// `TRY [NOT] <atom>` — a *hypothesis under test*, never committed. Unlike a
-    /// `FACT`/`ASSUME`, it does not enter the model or affect the verdict; the engine
-    /// runs one side-check and reports whether asserting it would **close** the open
-    /// model, **conflict** with what is established, or leave it **still open** — the
-    /// abduction (L5) voice, where the LLM supplies the candidate and the engine only
-    /// checks it. The `Literal` carries the optional `NOT`.
-    Try(Located<'a, Literal<'a>>),
+    /// `TRY [NOT] <atom> [FOR [NOT] <atom>]` — a *hypothesis under test*, never
+    /// committed. Unlike a `FACT`/`ASSUME`, it does not enter the model or affect
+    /// the verdict; the engine runs bounded side-checks and reports. Without `FOR`
+    /// (plain L5 abduction): would asserting the hypothesis **close** the open
+    /// model, **conflict** with what is established, or leave it **still open**?
+    /// With `FOR <goal>` (targeted abduction): the textbook question *which
+    /// missing premise explains G?* — the hypothesis is accepted only if (a)
+    /// `theory + H` stays consistent and (b) `theory + H` **entails** the goal
+    /// (the PROVE machine). The LLM supplies both candidates; the engine only
+    /// checks. Each `Literal` carries its optional `NOT`.
+    Try {
+        /// The candidate hypothesis, with its optional leading `NOT`.
+        hypo: Located<'a, Literal<'a>>,
+        /// The goal the hypothesis is supposed to explain (`FOR …`), if any.
+        goal: Option<Located<'a, Literal<'a>>>,
+    },
     /// `PROVE [NOT] <atom>` — an *entailment goal*: does the theory entail this
     /// literal (⊨)? The sibling of `TRY`: TRY asks *compatibility*, PROVE asks
     /// *consequence*. Checked refutationally post-verdict (theory ∧ ¬goal

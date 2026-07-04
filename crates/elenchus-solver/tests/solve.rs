@@ -1522,3 +1522,62 @@ fn total_is_fed_by_a_qualified_cross_file_pair() {
     assert_eq!(r.status, Status::Consistent, "{:?}", r.warnings);
     assert!(r.warnings.is_empty());
 }
+
+// --- TRY <H> FOR <G> (targeted abduction, F6) ----------------------------------
+
+#[test]
+fn try_for_a_hypothesis_that_explains_the_goal() {
+    // The textbook abduction question, completed: H is consistent with the theory
+    // AND theory + H entails G — the missing premise genuinely explains the goal.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY deploys is_ready FOR deploys unblocked\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried.len(), 1);
+    assert_eq!(r.tried[0].outcome, TryOutcome::Explains);
+    assert_eq!(r.tried[0].goal.as_deref(), Some("t.deploys unblocked"));
+}
+
+#[test]
+fn try_for_a_hypothesis_that_does_not_explain() {
+    // H is compatible, but the goal still does not follow — no explanation.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY backup done FOR deploys unblocked\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::NotExplaining);
+}
+
+#[test]
+fn try_for_a_contradicting_hypothesis_conflicts() {
+    // Check (a) comes first: an H that clashes with the theory can explain
+    // nothing, whatever the goal.
+    let r = vs("FACT deploys is_ready\nTRY NOT deploys is_ready FOR deploys unblocked\nCHECK\n")
+        .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::Conflicts);
+}
+
+#[test]
+fn plain_try_and_targeted_try_coexist() {
+    // The goal-less line keeps the exact L5 outcomes; the targeted one answers the
+    // FOR question. One program, both voices.
+    let r = vs(
+        "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nCHECK BIDIRECTIONAL\nTRY deploys is_ready\nTRY deploys is_ready FOR deploys unblocked\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried.len(), 2);
+    assert_eq!(r.tried[0].outcome, TryOutcome::Closes);
+    assert_eq!(r.tried[0].goal, None);
+    assert_eq!(r.tried[1].outcome, TryOutcome::Explains);
+}
+
+#[test]
+fn try_for_with_negated_goal() {
+    // Polarity flows through the goal slot: H entails NOT G here.
+    let r = vs(
+        "RULE off:\n    WHEN power cut\n    THEN NOT lamp on\nTRY power cut FOR NOT lamp on\nCHECK\n",
+    )
+    .unwrap();
+    assert_eq!(r.tried[0].outcome, TryOutcome::Explains);
+    assert_eq!(r.tried[0].goal.as_deref(), Some("NOT t.lamp on"));
+}

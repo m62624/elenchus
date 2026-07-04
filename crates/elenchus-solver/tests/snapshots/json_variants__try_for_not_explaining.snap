@@ -1,0 +1,5 @@
+---
+source: crates/elenchus-solver/tests/json_variants.rs
+expression: json
+---
+{"status":"CONSISTENT","exit_code":0,"conflicts":[],"warnings":[],"derived":[],"defeated":[],"underdetermined":null,"unsat_core":[],"retract":[],"hints":[],"orphans":[],"unused_imports":[],"placeholders":[],"tried":[{"premise":null,"kind":"TRY","source":"v.vrf","line":5,"label":"d.backup done","for":"d.deploys unblocked","outcome":"not_explaining"}],"goals":[],"derivation":[],"beliefs":[]}

@@ -562,10 +562,28 @@ pub(crate) fn tried_hypotheses(
     for h in &c.hypotheses {
         // Assume the candidate literal (positive unless written `TRY NOT …`).
         let lit = sat::SatLit::new(h.lit.atom, !h.lit.negated);
-        let outcome = match count2(&mut inc, &[lit])? {
-            0 => TryOutcome::Conflicts,
-            1 if !base_unique => TryOutcome::Closes,
-            _ => TryOutcome::StillOpen,
+        let outcome = match &h.goal {
+            // Plain TRY (L5 abduction): count models under the candidate.
+            None => match count2(&mut inc, &[lit])? {
+                0 => TryOutcome::Conflicts,
+                1 if !base_unique => TryOutcome::Closes,
+                _ => TryOutcome::StillOpen,
+            },
+            // `TRY H FOR G` (targeted abduction): the textbook pair of checks —
+            // (a) theory + H must stay consistent, (b) theory + H ⊨ G, decided
+            // refutationally (theory + H + ¬G unsatisfiable). Both are plain
+            // verdict-only solves; a past session's retired guard cannot affect
+            // them (its blocking clause is satisfied at level 0 forever).
+            Some(g) => match inc.solve(&[lit])? {
+                sat::Solved::Unsat(_) => TryOutcome::Conflicts,
+                sat::Solved::Sat(_) => {
+                    let goal = sat::SatLit::new(g.atom, !g.negated);
+                    match inc.solve(&[lit, goal.negate()])? {
+                        sat::Solved::Unsat(_) => TryOutcome::Explains,
+                        sat::Solved::Sat(_) => TryOutcome::NotExplaining,
+                    }
+                }
+            },
         };
         let name = label(c, h.lit.atom);
         let text = if h.lit.negated {
@@ -573,9 +591,11 @@ pub(crate) fn tried_hypotheses(
         } else {
             name
         };
+        let goal_text = h.goal.as_ref().map(|g| lit_label(c, g));
         tried.push(Tried {
             origin: h.origin.clone(),
             label: text,
+            goal: goal_text,
             outcome,
         });
     }

@@ -116,7 +116,13 @@ pub(crate) fn collect_prefixes(stmt: &Statement, out: &mut BTreeSet<Option<Strin
             }
         }
         Statement::Negation(a) => add(&a.data),
-        Statement::Assume(l) | Statement::Try(l) | Statement::Prove(l) => add(&l.data.atom),
+        Statement::Assume(l) | Statement::Prove(l) => add(&l.data.atom),
+        Statement::Try { hypo, goal } => {
+            add(&hypo.data.atom);
+            if let Some(g) = goal {
+                add(&g.data.atom);
+            }
+        }
         // The agent is a bare label (no domain); only the claimed atom carries one.
         Statement::Knows { hypo, .. } => add(&hypo.data.atom),
         // The conclusion and every FROM reference may carry a `domain.` prefix (a

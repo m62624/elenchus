@@ -197,6 +197,13 @@ pub enum TryOutcome {
     /// Adding the candidate keeps the program satisfiable but still not unique — it
     /// does not, by itself, pin the model down.
     StillOpen,
+    /// Only for `TRY … FOR <goal>` (targeted abduction): the hypothesis is
+    /// consistent with the theory **and** `theory + hypothesis` entails the goal —
+    /// it genuinely explains it.
+    Explains,
+    /// Only for `TRY … FOR <goal>`: the hypothesis is consistent with the theory,
+    /// but the goal still does not follow — it does not explain it.
+    NotExplaining,
 }
 
 /// One `TRY <literal>` hypothesis and the engine's checked verdict on it. Purely
@@ -209,6 +216,8 @@ pub struct Tried {
     /// The ready-to-print candidate literal (e.g. `net.deploys is_ready` or
     /// `NOT net.deploys is_ready`).
     pub label: String,
+    /// The ready-to-print `FOR <goal>` literal, when the `TRY` was targeted.
+    pub goal: Option<String>,
     /// The engine's checked verdict on asserting this candidate.
     pub outcome: TryOutcome,
 }

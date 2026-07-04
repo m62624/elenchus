@@ -301,8 +301,8 @@ impl Compiler {
                 };
                 self.add_fact(source, &located, value, kw::ASSUME, true, ctx)?;
             }
-            Statement::Try(l) => {
-                self.add_hypothesis(source, l, ctx)?;
+            Statement::Try { hypo, goal } => {
+                self.add_hypothesis(source, hypo, goal.as_ref(), ctx)?;
             }
             Statement::Prove(l) => {
                 self.add_goal(source, l, ctx)?;
@@ -461,22 +461,35 @@ impl Compiler {
         Ok(())
     }
 
-    /// Record a `TRY <literal>` hypothesis. The candidate atom is interned here so it
-    /// has a SAT variable in the side-solve (an otherwise-unmentioned atom would have
-    /// no id). No fact and no clause are emitted — the hypothesis never enters the
-    /// model or the verdict; the solver only re-solves the program *plus* this literal
-    /// and reports whether it closes the open gap.
+    /// Record a `TRY <literal> [FOR <goal>]` hypothesis. The candidate atom (and the
+    /// goal's, when present) is interned here so it has a SAT variable in the
+    /// side-solves (an otherwise-unmentioned atom would have no id). No fact and no
+    /// clause are emitted — the hypothesis never enters the model or the verdict;
+    /// the solver only runs the bounded side-checks and reports.
     fn add_hypothesis(
         &mut self,
         source: &str,
         lit: &Located<Literal>,
+        goal: Option<&Located<Literal>>,
         ctx: &DomainCtx,
     ) -> Result<(), CompileError> {
         let key = ctx.key(&lit.data.atom)?;
         self.intern(&key);
+        let goal = match goal {
+            Some(g) => {
+                let gkey = ctx.key(&g.data.atom)?;
+                self.intern(&gkey);
+                Some(RawLit {
+                    key: gkey,
+                    negated: g.data.negated,
+                })
+            }
+            None => None,
+        };
         self.hypotheses.push(RawHypothesis {
             key,
             negated: lit.data.negated,
+            goal,
             origin: Origin {
                 source: source.to_string(),
                 line: lit.span.location_line(),
@@ -1462,6 +1475,10 @@ impl Compiler {
                     atom: id_of(&h.key),
                     negated: h.negated,
                 },
+                goal: h.goal.as_ref().map(|g| Lit {
+                    atom: id_of(&g.key),
+                    negated: g.negated,
+                }),
                 origin: h.origin,
             })
             .collect();

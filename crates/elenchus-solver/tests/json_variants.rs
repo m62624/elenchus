@@ -205,6 +205,16 @@ fn cases() -> Vec<(&'static str, &'static str)> {
             "FACT x a\nRULE r:\n    WHEN x b\n    THEN x c\nPROVE x c\nCHECK x\n",
         ),
         ("prove_vacuous", "FACT x a\nNOT x a\nPROVE x b\nCHECK x\n"),
+        // TRY … FOR (targeted abduction): both goal outcomes, so the populated
+        // `tried` array shape with a non-null `for` is snapshotted.
+        (
+            "try_for_explains",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY deploys is_ready FOR deploys unblocked\nCHECK\n",
+        ),
+        (
+            "try_for_not_explaining",
+            "RULE gate:\n    WHEN deploys is_ready\n    THEN deploys unblocked\nTRY backup done FOR deploys unblocked\nCHECK\n",
+        ),
         // HENCE steps (checked derivation): a holding step and a gap, so the
         // populated `derivation` array shape is snapshotted for both verdicts.
         (

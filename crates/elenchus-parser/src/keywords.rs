@@ -135,9 +135,9 @@ pub const KEYWORDS: &[Keyword] = &[
         text: kw::TRY,
         top_level: true,
         card: card(
-            "TRY [NOT] <Subject> <predicate> [<object>]",
-            "test a hypothesis without committing it: does asserting this atom close the gap? (advisory — never changes the verdict)",
-            "TRY release is_ready",
+            "TRY [NOT] <Subject> <predicate> [<object>] [FOR [NOT] <atom>]",
+            "test a hypothesis without committing it: does asserting this atom close the gap? with FOR <goal>: does it explain the goal — stay consistent AND entail it? (advisory — never changes the verdict)",
+            "TRY release is_ready FOR release unblocked",
         ),
     },
     Keyword {

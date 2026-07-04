@@ -95,7 +95,7 @@ statement  (2 problems)
       FACT [<domain>.]<Subject> <predicate> [<object>]
       NOT <Subject> <predicate> [<object>]
       ASSUME [NOT] <Subject> <predicate> [<object>]
-      TRY [NOT] <Subject> <predicate> [<object>]
+      TRY [NOT] <Subject> <predicate> [<object>] [FOR [NOT] <atom>]
       PROVE [NOT] <Subject> <predicate> [<object>]
       HENCE [NOT] <Subject> <predicate> [<object>] FROM <ref>[, <ref>]
       KNOWS <Agent> [NOT] <Subject> <predicate> [<object>]

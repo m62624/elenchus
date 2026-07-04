@@ -32,10 +32,11 @@ pub(crate) struct RawJustification {
 }
 
 /// A `TRY` hypothesis keyed by atom identity (pre-interning counterpart of
-/// [`crate::ir::Hypothesis`]).
+/// [`crate::ir::Hypothesis`]). `goal` carries the optional `FOR <goal>` target.
 pub(crate) struct RawHypothesis {
     pub(crate) key: AtomKey,
     pub(crate) negated: bool,
+    pub(crate) goal: Option<RawLit>,
     pub(crate) origin: Origin,
 }
 

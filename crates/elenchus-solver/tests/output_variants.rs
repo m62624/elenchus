@@ -421,6 +421,24 @@ fn total_with_missing_witnesses_warns_by_name() {
     ));
 }
 
+// --- TRY <H> FOR <G> (targeted abduction) ------------------------------------
+
+#[test]
+fn try_for_explains_and_not_explaining() {
+    // Two candidates for the same goal: the right one explains it, the unrelated
+    // one does not — the engine's answer to "which missing premise explains G?".
+    insta::assert_snapshot!(report(
+        r#"
+        RULE gate:
+            WHEN deploys is_ready
+            THEN deploys unblocked
+        TRY deploys is_ready FOR deploys unblocked
+        TRY backup done FOR deploys unblocked
+        CHECK
+        "#
+    ));
+}
+
 // --- KNOWS / BELIEVES: the modal/epistemic (L6) layer -----------------------
 
 #[test]
