@@ -74,6 +74,15 @@ mod indent {
     pub const ITEM: usize = 6;
     /// A line nested under an item (a `why:` trace step, a `CORE` member).
     pub const NESTED: usize = 8;
+    /// The tag column on a section line: a one-word verdict tag (`WARNING`,
+    /// `DERIVED`, `TRY`, `PROVE`, …) is left-justified and padded to this width
+    /// so every payload starts in the same column. This is the **single** place
+    /// that column is defined — emit these lines through [`section!`] with the
+    /// bare keyword, never a hand-counted run of trailing spaces. (Long prose
+    /// headers — `CORE`, `RETRACT`, `UNDERDETERMINED`, `UNUSED IMPORT` — do not
+    /// use this column; they are a keyword and a two-space separator, so they
+    /// stay on [`emit!`].)
+    pub const TAG: usize = 10;
 }
 
 /// The human report's one output primitive. It owns the indentation rule so
@@ -94,6 +103,24 @@ impl ReportWriter<'_, '_> {
     fn tail(&mut self, indent: usize, args: fmt::Arguments<'_>) -> fmt::Result {
         write!(self.f, "{:width$}{}", "", args, width = indent)
     }
+
+    /// Write a verdict section line: the [`SECTION`](indent::SECTION) indent, then
+    /// the `tag` keyword left-justified to the [`TAG`](indent::TAG) column so the
+    /// payload lines up with every other section, then the formatted payload and a
+    /// newline. The single place the tag column is applied — callers pass the bare
+    /// keyword and never hand-count the spaces after it.
+    fn section(&mut self, tag: &str, args: fmt::Arguments<'_>) -> fmt::Result {
+        write!(
+            self.f,
+            "{:si$}{:tag$}{}",
+            "",
+            tag,
+            args,
+            si = indent::SECTION,
+            tag = indent::TAG
+        )?;
+        self.f.write_str("\n")
+    }
 }
 
 /// `emit!(out, LEVEL, "fmt", args…)` — one indented report line. A thin wrapper
@@ -102,6 +129,18 @@ impl ReportWriter<'_, '_> {
 macro_rules! emit {
     ($out:expr, $indent:expr, $($arg:tt)*) => {
         $out.line($indent, format_args!($($arg)*))
+    };
+}
+
+/// `section!(out, "WARNING", "fmt", args…)` — one verdict section line whose tag
+/// column is applied automatically by [`ReportWriter::section`]. The format string
+/// carries only the payload; the keyword is a separate argument and the spaces
+/// after it are computed, never typed. Use this for every aligned tag line
+/// (`CONFLICT`, `WARNING`, `DERIVED`, `TRY`, `PROVE`, `HENCE`, …); the wider prose
+/// headers stay on [`emit!`].
+macro_rules! section {
+    ($out:expr, $tag:expr, $($arg:tt)*) => {
+        $out.section($tag, format_args!($($arg)*))
     };
 }
 
@@ -144,7 +183,7 @@ impl Report {
             }
         } else {
             for c in &self.conflicts {
-                emit!(out, SECTION, "CONFLICT  {}", premise_tag(&c.origin))?;
+                section!(out, "CONFLICT", "{}", premise_tag(&c.origin))?;
                 for a in &c.atoms {
                     emit!(out, ITEM, "{}", a)?;
                 }
@@ -186,7 +225,7 @@ impl Report {
         // hint is still in the JSON for tools that select/filter programmatically.
         let mut shown_fixes: Vec<&str> = Vec::new();
         for w in &self.warnings {
-            emit!(out, SECTION, "WARNING   {}", premise_tag(&w.origin))?;
+            section!(out, "WARNING", "{}", premise_tag(&w.origin))?;
             emit!(out, ITEM, "blocked by: {}", w.blocked_by.join(", "))?;
             if let Some(hint) = &w.hint
                 && !shown_fixes.contains(&hint.as_str())
@@ -200,10 +239,10 @@ impl Report {
         // 0, like DEFEATED) — never a CONFLICT (that is reserved for `KNOWS` — you cannot
         // *know* a falsehood) and it never raises the verdict.
         for b in &self.beliefs {
-            emit!(
+            section!(
                 out,
-                SECTION,
-                "BELIEF    {} believes {} — but it is FALSE (a false belief)   [{}:{}]",
+                "BELIEF",
+                "{} believes {} — but it is FALSE (a false belief)   [{}:{}]",
                 b.agent,
                 b.claim,
                 b.origin.source,
@@ -223,8 +262,8 @@ impl Report {
         // the candidate was never committed, so this never changed the result above.
         for t in &self.tried {
             match &t.goal {
-                Some(g) => emit!(out, SECTION, "TRY       {} FOR {}", t.label, g)?,
-                None => emit!(out, SECTION, "TRY       {}", t.label)?,
+                Some(g) => section!(out, "TRY", "{} FOR {}", t.label, g)?,
+                None => section!(out, "TRY", "{}", t.label)?,
             }
             let verdict = match t.outcome {
                 TryOutcome::Closes => "closes the gap: the model is now pinned",
@@ -243,13 +282,7 @@ impl Report {
         // engine's per-step verdict — the first `does not follow` line is the gap.
         // Advisory — steps were never committed, the result above is untouched.
         for h in &self.derivation {
-            emit!(
-                out,
-                SECTION,
-                "HENCE     {} FROM {}",
-                h.conclusion,
-                h.from.join(", ")
-            )?;
+            section!(out, "HENCE", "{} FROM {}", h.conclusion, h.from.join(", "))?;
             if h.holds {
                 emit!(out, ITEM, "holds: the cited premises entail it   (checked)")?;
             } else {
@@ -264,7 +297,7 @@ impl Report {
         // refutation-checked verdict on whether the theory entails it. Advisory —
         // the goal was never committed, so this never changed the result above.
         for g in &self.goals {
-            emit!(out, SECTION, "PROVE     {}", g.label)?;
+            section!(out, "PROVE", "{}", g.label)?;
             let verdict = match g.outcome {
                 ProveOutcome::Proved => "PROVED: it follows from the theory",
                 ProveOutcome::Refuted => "REFUTED: its negation follows from the theory",
@@ -280,30 +313,30 @@ impl Report {
                 Value::True => "TRUE",
                 Value::False => "FALSE",
             };
-            emit!(
+            section!(
                 out,
-                SECTION,
-                "DERIVED   {} = {}   from {}",
+                "DERIVED",
+                "{} = {}   from {}",
                 d.atom,
                 v,
                 premise_tag(&d.origin)
             )?;
         }
         for d in &self.defeated {
-            emit!(
+            section!(
                 out,
-                SECTION,
-                "DEFEATED  {}   default {} suppressed by {}",
+                "DEFEATED",
+                "{}   default {} suppressed by {}",
                 premise_tag(&d.origin),
                 d.consequent,
                 d.blocked_by.join(", ")
             )?;
         }
         for h in &self.hints {
-            emit!(
+            section!(
                 out,
-                SECTION,
-                "HINT      possible typo — '{}' and '{}' look like the same atom ({})",
+                "HINT",
+                "possible typo — '{}' and '{}' look like the same atom ({})",
                 h.a,
                 h.b,
                 h.reason
@@ -317,10 +350,10 @@ impl Report {
             } else {
                 alloc::format!("{} {}", o.origin.kind, o.atom)
             };
-            emit!(
+            section!(
                 out,
-                SECTION,
-                "ORPHAN    {} — not used by any premise or rule (no effect on the result)",
+                "ORPHAN",
+                "{} — not used by any premise or rule (no effect on the result)",
                 surface
             )?;
         }
@@ -343,10 +376,10 @@ impl Report {
         if show_placeholders {
             for p in &self.placeholders {
                 match p.status {
-                    PlaceholderStatus::Supplied => emit!(
+                    PlaceholderStatus::Supplied => section!(
                         out,
-                        SECTION,
-                        "PARAM     {} = {}   (supplied{})",
+                        "PARAM",
+                        "{} = {}   (supplied{})",
                         p.key,
                         bool_word(p.value),
                         p.origin
@@ -354,17 +387,17 @@ impl Report {
                             .map(|o| alloc::format!(": {o}"))
                             .unwrap_or_default()
                     )?,
-                    PlaceholderStatus::DefaultUsed => emit!(
+                    PlaceholderStatus::DefaultUsed => section!(
                         out,
-                        SECTION,
-                        "PARAM     {} = {}   (DEFAULT)",
+                        "PARAM",
+                        "{} = {}   (DEFAULT)",
                         p.key,
                         bool_word(p.value)
                     )?,
-                    PlaceholderStatus::Unset => emit!(
+                    PlaceholderStatus::Unset => section!(
                         out,
-                        SECTION,
-                        "PARAM     {} = UNKNOWN   (no value supplied, no DEFAULT)",
+                        "PARAM",
+                        "{} = UNKNOWN   (no value supplied, no DEFAULT)",
                         p.key
                     )?,
                 }
