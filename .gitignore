@@ -2,6 +2,11 @@
 **/*.rs.bk
 *.pdb
 
+# npm dev dependencies for the wasm package's dev harness (biome lint only);
+# installed locally and in CI via `npm install`, never committed.
+node_modules/
+crates/elenchus-wasm/package-lock.json
+
 # proptest failure-seed files (regenerated locally on a failing case; we don't
 # pin them — a real regression should land as an explicit #[test], not a seed)
 **/*.proptest-regressions

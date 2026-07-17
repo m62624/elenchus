@@ -70,6 +70,34 @@ test("checkFileWithImports: a missing import surfaces as an error, not a crash",
   assert.match(out, /not found/i);
 });
 
+test("checkWithResolver: resolves IMPORT through a virtual (non-fs) store", () => {
+  // The headline JS-only surface: back IMPORT with an arbitrary in-memory
+  // `read(path) => string`, no filesystem involved. entry imports lib and
+  // asserts both fast and slow paths, which lib declares mutually EXCLUSIVE.
+  const store = {
+    "entry.vrf":
+      'DOMAIN demo\nIMPORT "lib.vrf"\nFACT physics.Motor uses fast_path\nFACT physics.Motor uses slow_path\nCHECK\n',
+    "lib.vrf":
+      "DOMAIN physics\nPREMISE fast_xor_slow:\n    EXCLUSIVE\n        Motor uses fast_path\n        Motor uses slow_path\n",
+  };
+  const read = (path) => {
+    if (!(path in store)) throw new Error(`no such module: ${path}`);
+    return store[path];
+  };
+  assert.match(e.checkWithResolver("entry.vrf", read), /"status":"CONFLICT"/);
+});
+
+test("checkWithResolver: a read() that throws surfaces as an import error, not a crash", () => {
+  // Only the entry exists; its IMPORT of lib.vrf makes `read` throw, which the
+  // bridge must turn into a not-found error string, never an uncaught throw.
+  const store = { "entry.vrf": 'DOMAIN demo\nIMPORT "lib.vrf"\nCHECK\n' };
+  const read = (path) => {
+    if (!(path in store)) throw new Error(`missing: ${path}`);
+    return store[path];
+  };
+  assert.match(e.checkWithResolver("entry.vrf", read), /not found/i);
+});
+
 test("values: an inline VAR template is driven by a values record", () => {
   // The template's RULE only fires when both ports are true.
   const out = e.checkFile(fx("template.vrf"), "json", 0, 0, {
