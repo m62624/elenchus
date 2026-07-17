@@ -1146,7 +1146,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.15.0 -->
+<!-- skill-version: 0.15.1 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
