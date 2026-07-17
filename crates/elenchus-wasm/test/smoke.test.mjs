@@ -6,6 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -37,6 +38,19 @@ test("version reports the engine; skill marker is version-shaped", () => {
 test("skill/about: skill is the SKILL.md text, about points to it", () => {
   assert.match(e.skill(), /name: elenchus/);
   assert.match(e.about(), /elenchus/);
+});
+
+test("skill: the CLI/MCP 'Run it' transport+version appendix is stripped for wasm", () => {
+  const s = e.skill();
+  assert.doesNotMatch(s, /## Run it/);
+  assert.doesNotMatch(s, /Step 0c/);
+  assert.doesNotMatch(s, /pick your transport/);
+  assert.doesNotMatch(s, /wasm-strip:(begin|end)/);
+  // The DSL how-to a wasm consumer needs still ships…
+  assert.match(s, /Reading the report/);
+  // …and the shipped SKILL.md file matches skill() (both stripped identically).
+  const shipped = readFileSync(join(here, "..", "pkg", "SKILL.md"), "utf8");
+  assert.doesNotMatch(shipped, /## Run it/);
 });
 
 test("checkFile: reads and checks a standalone file", () => {

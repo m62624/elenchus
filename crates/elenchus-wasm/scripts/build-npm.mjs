@@ -24,10 +24,30 @@ if (!process.argv.includes("--no-build")) {
   );
 }
 
-// Node entry + companion skill, copied next to the wasm-pack artifacts.
+/** Drop the CLI/MCP "Run it" appendix fenced by `<!-- wasm-strip:begin/end -->`
+ * (markers included) from the canonical skill, matching the Rust `skill()`
+ * accessor: a wasm host has one transport and always ships skill + engine from
+ * the same release, so that ceremony never applies. Returns the text unchanged
+ * if the fence is absent. */
+function stripWasmExcluded(text) {
+  const begin = "<!-- wasm-strip:begin -->";
+  const end = "<!-- wasm-strip:end -->";
+  const start = text.indexOf(begin);
+  const stop = text.indexOf(end);
+  if (start === -1 || stop === -1 || stop < start) return text;
+  const head = text.slice(0, start).replace(/\s+$/, "");
+  const tail = text.slice(stop + end.length).replace(/^\s+/, "");
+  return tail ? `${head}\n\n${tail}` : `${head}\n`;
+}
+
+// Node entry + companion skill, copied next to the wasm-pack artifacts. The
+// skill is stripped to the wasm-relevant subset (see stripWasmExcluded).
 copyFileSync(join(crateDir, "npm", "index.js"), join(pkg, "index.js"));
 copyFileSync(join(crateDir, "npm", "index.d.ts"), join(pkg, "index.d.ts"));
-copyFileSync(join(repoRoot, "skill", "SKILL.md"), join(pkg, "SKILL.md"));
+writeFileSync(
+  join(pkg, "SKILL.md"),
+  stripWasmExcluded(readFileSync(join(repoRoot, "skill", "SKILL.md"), "utf8")),
+);
 copyFileSync(join(crateDir, "README.md"), join(pkg, "README.md"));
 copyFileSync(join(repoRoot, "LICENSE"), join(pkg, "LICENSE"));
 
