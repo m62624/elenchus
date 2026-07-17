@@ -1,0 +1,24 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        // index.js is CommonJS (require/module.exports): it runs as CJS from the
+        // assembled pkg/, where `use strict` is NOT redundant. Biome sees this dev
+        // harness's `type: module` and misreads the file as ESM, so this rule is a
+        // false positive here.
+        "noRedundantUseStrict": "off"
+      }
+    }
+  },
+  // Lint only. The hand-written JS/TS keeps its own 2-space indent and wrapping;
+  // we gate on lint rules, not Biome's formatting opinions, so nothing is reformatted.
+  "formatter": {
+    "enabled": false
+  },
+  "files": {
+    "includes": ["**", "!pkg/**"]
+  }
+}

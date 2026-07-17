@@ -6,6 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -39,6 +40,19 @@ test("skill/about: skill is the SKILL.md text, about points to it", () => {
   assert.match(e.about(), /elenchus/);
 });
 
+test("skill: the CLI/MCP 'Run it' transport+version appendix is stripped for wasm", () => {
+  const s = e.skill();
+  assert.doesNotMatch(s, /## Run it/);
+  assert.doesNotMatch(s, /Step 0c/);
+  assert.doesNotMatch(s, /pick your transport/);
+  assert.doesNotMatch(s, /wasm-strip:(begin|end)/);
+  // The DSL how-to a wasm consumer needs still ships…
+  assert.match(s, /Reading the report/);
+  // …and the shipped SKILL.md file matches skill() (both stripped identically).
+  const shipped = readFileSync(join(here, "..", "pkg", "SKILL.md"), "utf8");
+  assert.doesNotMatch(shipped, /## Run it/);
+});
+
 test("checkFile: reads and checks a standalone file", () => {
   assert.match(e.checkFile(fx("consistent.vrf")), /"status":"CONSISTENT"/);
 });
@@ -54,6 +68,34 @@ test("checkFileWithImports: resolves multi-file IMPORT (consistent)", () => {
 test("checkFileWithImports: a missing import surfaces as an error, not a crash", () => {
   const out = e.checkFileWithImports(fx("entry-missing.vrf"));
   assert.match(out, /not found/i);
+});
+
+test("checkWithResolver: resolves IMPORT through a virtual (non-fs) store", () => {
+  // The headline JS-only surface: back IMPORT with an arbitrary in-memory
+  // `read(path) => string`, no filesystem involved. entry imports lib and
+  // asserts both fast and slow paths, which lib declares mutually EXCLUSIVE.
+  const store = {
+    "entry.vrf":
+      'DOMAIN demo\nIMPORT "lib.vrf"\nFACT physics.Motor uses fast_path\nFACT physics.Motor uses slow_path\nCHECK\n',
+    "lib.vrf":
+      "DOMAIN physics\nPREMISE fast_xor_slow:\n    EXCLUSIVE\n        Motor uses fast_path\n        Motor uses slow_path\n",
+  };
+  const read = (path) => {
+    if (!(path in store)) throw new Error(`no such module: ${path}`);
+    return store[path];
+  };
+  assert.match(e.checkWithResolver("entry.vrf", read), /"status":"CONFLICT"/);
+});
+
+test("checkWithResolver: a read() that throws surfaces as an import error, not a crash", () => {
+  // Only the entry exists; its IMPORT of lib.vrf makes `read` throw, which the
+  // bridge must turn into a not-found error string, never an uncaught throw.
+  const store = { "entry.vrf": 'DOMAIN demo\nIMPORT "lib.vrf"\nCHECK\n' };
+  const read = (path) => {
+    if (!(path in store)) throw new Error(`missing: ${path}`);
+    return store[path];
+  };
+  assert.match(e.checkWithResolver("entry.vrf", read), /not found/i);
 });
 
 test("values: an inline VAR template is driven by a values record", () => {

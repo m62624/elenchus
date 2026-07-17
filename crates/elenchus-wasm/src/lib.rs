@@ -232,11 +232,39 @@ pub fn about() -> String {
     ABOUT.to_string()
 }
 
-/// The full companion skill text (`SKILL.md`), so a consumer can persist it next
-/// to the engine (e.g. into an agent's skills directory) without a second fetch.
+/// The companion skill text (`SKILL.md`), so a consumer can persist it next to
+/// the engine (e.g. into an agent's skills directory) without a second fetch.
+/// The CLI/MCP "Run it" appendix (transport selection + the mandatory version
+/// check) is stripped: in a wasm host there is one transport — an imported
+/// function — and `skill()` always ships from the same release as the engine, so
+/// that ceremony can never apply. See [`strip_wasm_excluded`].
 #[wasm_bindgen]
 pub fn skill() -> String {
-    SKILL_MD.to_string()
+    strip_wasm_excluded(SKILL_MD)
+}
+
+/// Remove the block fenced by `<!-- wasm-strip:begin -->` / `<!-- wasm-strip:end -->`
+/// in the canonical `SKILL.md` (the fence markers included). Returns the input
+/// unchanged if either marker is absent or they are out of order, so a canonical
+/// skill without the fence still round-trips. `skill_version()` reads the raw
+/// `SKILL_MD` const, so the `<!-- skill-version -->` marker living inside the
+/// fenced block is unaffected by this strip.
+fn strip_wasm_excluded(skill: &str) -> String {
+    const BEGIN: &str = "<!-- wasm-strip:begin -->";
+    const END: &str = "<!-- wasm-strip:end -->";
+    let (Some(start), Some(end)) = (skill.find(BEGIN), skill.find(END)) else {
+        return skill.to_string();
+    };
+    if end < start {
+        return skill.to_string();
+    }
+    let head = skill[..start].trim_end();
+    let tail = skill[end + END.len()..].trim_start();
+    if tail.is_empty() {
+        format!("{head}\n")
+    } else {
+        format!("{head}\n\n{tail}")
+    }
 }
 
 /// The skill's `<!-- skill-version: X -->` marker (the engine version the skill
@@ -381,6 +409,60 @@ mod tests {
         let generous = check(php, None, None, None, None, None, Some(1_000_000));
         assert_eq!(free, generous);
         assert!(free.contains("exit_code"));
+    }
+
+    #[test]
+    fn wasm_skill_omits_transport_appendix_but_keeps_the_marker_api() {
+        let text = skill();
+        // The CLI/MCP "Run it" ceremony is gone from the wasm-shipped skill…
+        assert!(
+            !text.contains("## Run it"),
+            "the Run-it appendix must be stripped"
+        );
+        assert!(
+            !text.contains("Step 0c"),
+            "the version-check step must be stripped"
+        );
+        assert!(
+            !text.contains("pick your transport"),
+            "the transport-selection step must be stripped"
+        );
+        // …including the fence markers themselves.
+        assert!(!text.contains("wasm-strip:begin"));
+        assert!(!text.contains("wasm-strip:end"));
+        // But the body a wasm consumer actually needs is intact…
+        assert!(text.contains("name: elenchus"), "frontmatter must survive");
+        assert!(
+            text.contains("Reading the report"),
+            "the DSL how-to must survive"
+        );
+        // …and the version API still works: it reads the raw const, not skill(),
+        // so the marker inside the stripped block is still parseable even though
+        // the human-readable text no longer carries it.
+        assert!(
+            !text.contains("skill-version:"),
+            "the marker line rides in the stripped block"
+        );
+        assert!(
+            !skill_version().is_empty(),
+            "skill_version() still resolves from the const"
+        );
+    }
+
+    #[test]
+    fn strip_wasm_excluded_cuts_the_fenced_block_and_tolerates_absence() {
+        let stripped = strip_wasm_excluded(
+            "head\n\n<!-- wasm-strip:begin -->\nMIDDLE\n<!-- wasm-strip:end -->\n",
+        );
+        assert_eq!(stripped, "head\n");
+        assert!(!stripped.contains("MIDDLE"));
+        // No fence -> returned verbatim.
+        assert_eq!(strip_wasm_excluded("no fence here"), "no fence here");
+        // Content after the end fence is preserved.
+        assert_eq!(
+            strip_wasm_excluded("a\n<!-- wasm-strip:begin -->\nx\n<!-- wasm-strip:end -->\nb\n"),
+            "a\n\nb\n",
+        );
     }
 
     #[test]

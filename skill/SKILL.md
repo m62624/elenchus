@@ -1084,6 +1084,8 @@ the backward (`BIDIRECTIONAL`) pass explores assignments, so keep element/value
 counts modest — elenchus is for *checking the logic of* a constraint problem, not
 an industrial-scale solver.
 
+<!-- wasm-strip:begin -->
+
 ## Run it — do these three steps first, in order (every session)
 
 Before you write a single program, set up and verify the engine. Do **not** skip
@@ -1144,7 +1146,7 @@ This skill targets the version in the marker below. Read the engine's version an
 elenchus version check: skill <marker> vs engine <reported> → OK | MISMATCH
 ```
 
-<!-- skill-version: 0.15.0 -->
+<!-- skill-version: 0.15.1 -->
 
 - **CLI:** `elenchus-cli --version` (or `-V`) → `elenchus-cli x.y.z`.
 - **MCP:** call `elenchus_version` → `elenchus x.y.z` (you can't see
@@ -1170,3 +1172,5 @@ provides have diverged, so any result may be wrong. Do ALL of this:**
    assumes.
 4. Proceed **only if the user explicitly says to continue**. If they do, tag every
    result *"unverified — version mismatch"* until the versions are aligned.
+
+<!-- wasm-strip:end -->

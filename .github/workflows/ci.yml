@@ -99,6 +99,12 @@ jobs:
           node-version: 22
       - name: Install wasm-pack
         run: npm install -g wasm-pack
+      - name: Install JS dev dependencies (biome)
+        working-directory: crates/elenchus-wasm
+        run: npm install
+      - name: Lint the JS/TS with biome
+        working-directory: crates/elenchus-wasm
+        run: npm run lint
       - name: Build and assemble the npm package
         working-directory: crates/elenchus-wasm
         run: node scripts/build-npm.mjs
